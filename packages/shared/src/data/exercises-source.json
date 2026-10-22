@@ -1,0 +1,14 @@
+{
+  "repository": "hasaneyldrm/exercises-dataset",
+  "url": "https://github.com/hasaneyldrm/exercises-dataset",
+  "commit": "7455efae41b330c265e7cd4b78dfa848e7ce5ebd",
+  "sourcePath": "data/exercises.json",
+  "sourceBlobSha1": "3cbb77b678c40d7342897d38e4c61e9502f829a7",
+  "sourceBytes": 17391530,
+  "count": 1324,
+  "license": "MIT",
+  "licenseUrl": "/licenses/exercises-dataset-LICENSE.txt",
+  "copyright": "Copyright (c) 2026 Hasan Emir Yıldırım",
+  "scope": "Non-media exercise metadata and English instruction steps only. Images, GIFs, media IDs, and media URLs are excluded. The upstream media has separate licensing terms.",
+  "fields": ["id", "name", "category", "equipment", "target", "muscleGroup", "secondaryMuscles", "instructions"]
+}

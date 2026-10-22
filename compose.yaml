@@ -1,0 +1,21 @@
+services:
+  corner:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      CORNER_DEPLOYMENT: local
+      CORNER_ORIGIN: http://127.0.0.1:3000
+      CORNER_HOST: 0.0.0.0
+      CORNER_PORT: "3000"
+      CORNER_DATA_DIR: /app/data
+    volumes:
+      - corner-data:/app/data
+    init: true
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  corner-data:
+

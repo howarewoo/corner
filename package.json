@@ -1,0 +1,32 @@
+{
+  "name": "corner",
+  "version": "0.3.0",
+  "private": true,
+  "type": "module",
+  "description": "Independent nutrition and training planning, organized as a Turborepo.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/howarewoo/corner.git"
+  },
+  "packageManager": "npm@11.9.0",
+  "engines": {
+    "node": ">=24.15.0 <25"
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "check": "turbo run check",
+    "test": "turbo run test",
+    "start": "npm run start --workspace=@corner/server",
+    "smoke": "node scripts/smoke.mjs",
+    "package": "python3 scripts/package.py",
+    "smoke:dev": "node scripts/dev-smoke.mjs"
+  },
+  "devDependencies": {
+    "turbo": "2.11.10"
+  }
+}

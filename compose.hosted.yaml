@@ -1,0 +1,49 @@
+# Self-host on one Linux server. The only public listener is the HTTPS edge.
+# Prepare .env.hosted first; see HOSTING.md. This file creates no cloud resources.
+services:
+  corner:
+    build: .
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      CORNER_DEPLOYMENT: hosted
+      CORNER_ORIGIN: https://${CORNER_DOMAIN:?Set CORNER_DOMAIN in .env.hosted}
+      CORNER_HOST: 0.0.0.0
+      CORNER_PORT: "3000"
+      CORNER_DATA_DIR: /app/data
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?Generate BETTER_AUTH_SECRET}
+      CORNER_TOKEN_ENCRYPTION_KEY: ${CORNER_TOKEN_ENCRYPTION_KEY:?Generate CORNER_TOKEN_ENCRYPTION_KEY}
+      CORNER_PROXY_SECRET: ${CORNER_PROXY_SECRET:?Generate CORNER_PROXY_SECRET}
+      RESEND_API_KEY: ${RESEND_API_KEY:?Configure RESEND_API_KEY}
+      CORNER_EMAIL_FROM: ${CORNER_EMAIL_FROM:?Configure CORNER_EMAIL_FROM}
+    volumes:
+      - corner-data:/app/data
+    init: true
+    stop_grace_period: 30s
+    security_opt:
+      - no-new-privileges:true
+
+  edge:
+    image: caddy:2.11.7-alpine
+    restart: unless-stopped
+    depends_on:
+      corner:
+        condition: service_healthy
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      CORNER_DOMAIN: ${CORNER_DOMAIN:?Set CORNER_DOMAIN in .env.hosted}
+      CORNER_PROXY_SECRET: ${CORNER_PROXY_SECRET:?Generate CORNER_PROXY_SECRET}
+    volumes:
+      - ./deployment/caddy:/etc/caddy:ro
+      - corner-caddy-data:/data
+      - corner-caddy-config:/config
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  corner-data:
+  corner-caddy-data:
+  corner-caddy-config:

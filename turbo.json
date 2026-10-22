@@ -1,0 +1,63 @@
+{
+  "$schema": "https://turborepo.com/schema.json",
+  "globalDependencies": [
+    "tsconfig.base.json",
+    "scripts/test.mjs"
+  ],
+  "tasks": {
+    "build": {
+      "dependsOn": [
+        "^build"
+      ],
+      "outputs": [
+        "dist/**"
+      ],
+      "env": [
+        "NODE_ENV",
+        "VITE_*"
+      ]
+    },
+    "check": {
+      "dependsOn": [
+        "^build"
+      ],
+      "outputs": []
+    },
+    "test": {
+      "dependsOn": [
+        "^build"
+      ],
+      "cache": false
+    },
+    "dev": {
+      "dependsOn": [
+        "^build"
+      ],
+      "cache": false,
+      "persistent": true,
+      "passThroughEnv": [
+        "CORNER_ORIGIN",
+        "CORNER_DEV_API_PORT"
+      ]
+    },
+    "@corner/server#dev": {
+      "dependsOn": [
+        "^build"
+      ],
+      "cache": false,
+      "persistent": true,
+      "passThroughEnv": [
+        "CORNER_*",
+        "BETTER_AUTH_SECRET",
+        "RESEND_API_KEY"
+      ]
+    },
+    "@corner/shared#dev": {
+      "dependsOn": [
+        "build"
+      ],
+      "cache": false,
+      "persistent": true
+    }
+  }
+}

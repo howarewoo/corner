@@ -1,0 +1,12 @@
+**/node_modules
+**/dist
+**/.turbo
+/data
+**/.env
+**/.env.*
+.git
+**/*.sqlite*
+**/*.zip
+**/*.tgz
+**/*.tar.gz
+**/*.log

@@ -1,0 +1,41 @@
+FROM node:24-bookworm-slim AS workspace
+WORKDIR /app
+COPY package.json package-lock.json ./
+COPY apps/server/package.json ./apps/server/package.json
+COPY apps/web/package.json ./apps/web/package.json
+COPY packages/shared/package.json ./packages/shared/package.json
+
+FROM workspace AS build
+RUN npm ci --ignore-scripts --no-audit --no-fund
+COPY . .
+RUN npm run build
+
+# Install into a manifest-only tree so the runtime keeps all workspace links
+# and any nested production dependencies without copying source or build tools.
+FROM workspace AS production-dependencies
+RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund
+
+FROM node:24-bookworm-slim AS runtime
+WORKDIR /app
+ENV NODE_ENV=production \
+    CORNER_DEPLOYMENT=local \
+    CORNER_ORIGIN=http://127.0.0.1:3000 \
+    CORNER_HOST=0.0.0.0 \
+    CORNER_PORT=3000 \
+    CORNER_DATA_DIR=/app/data
+COPY --from=production-dependencies --chown=node:node /app/package.json /app/package-lock.json ./
+COPY --from=production-dependencies --chown=node:node /app/node_modules ./node_modules
+COPY --from=production-dependencies --chown=node:node /app/apps ./apps
+COPY --from=production-dependencies --chown=node:node /app/packages ./packages
+COPY --from=build --chown=node:node /app/apps/server/dist ./apps/server/dist
+COPY --from=build --chown=node:node /app/apps/web/dist ./apps/web/dist
+COPY --from=build --chown=node:node /app/packages/shared/dist ./packages/shared/dist
+COPY --from=build --chown=node:node /app/scripts/healthcheck.mjs ./scripts/healthcheck.mjs
+RUN mkdir -p /app/data && chown node:node /app/data && chmod 700 /app/data
+USER node
+VOLUME ["/app/data"]
+EXPOSE 3000
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+  CMD node scripts/healthcheck.mjs
+CMD ["node", "--env-file-if-exists=.env", "apps/server/dist/index.js"]
+

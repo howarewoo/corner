@@ -1,0 +1,13 @@
+node_modules/
+dist/
+.turbo/
+/data/
+.env
+.env.*
+!.env.example
+*.sqlite*
+*.zip
+*.tgz
+*.tar.gz
+coverage/
+*.log

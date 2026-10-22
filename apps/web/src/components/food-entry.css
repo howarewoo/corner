@@ -1,0 +1,18 @@
+.food-entry-mode { display: flex; gap: 4px; padding: 4px; margin: 2px 30px 24px; border-radius: 26px; background: var(--surface-inset); }
+.food-entry-mode > button { display: flex; align-items: center; justify-content: center; gap: 8px; flex: 1; min-width: 0; min-height: 44px; padding: 9px 13px; border-radius: 22px; color: var(--muted); font-size: 13px; font-weight: 600; }
+.food-entry-mode > button[aria-pressed=true] { background: var(--forest); color: var(--on-accent); }
+.food-entry-mode > button:hover:not([aria-pressed=true]) { background: var(--surface-hover); color: var(--ink); }
+.food-entry-mode-panel[hidden] { display: none; }
+.food-entry-description { padding: 0 30px 30px; }
+.food-entry-estimate-note { display: flex; align-items: flex-start; gap: 10px; padding: 16px 18px; border-radius: 16px; background: var(--success-surface); color: var(--success-text); font-size: 13px; line-height: 1.7; }
+.food-entry-estimate-note > svg { margin-top: 3px; }
+.food-entry-estimate-note b { font-weight: 600; }
+@media (max-width: 560px) {
+  .food-entry-mode { margin: 2px 18px 22px; }
+  .food-entry-mode > button { gap: 6px; padding: 9px 8px; font-size: 12px; }
+  .food-entry-description { padding: 0 18px 24px; }
+}
+@media (forced-colors: active) {
+  .food-entry-mode > button { outline: 1px solid ButtonText; outline-offset: -2px; }
+  .food-entry-mode > button[aria-pressed=true] { background: Highlight; color: HighlightText; forced-color-adjust: none; }
+}
