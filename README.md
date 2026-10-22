@@ -4,6 +4,8 @@ Corner is a self-hostable app for meal planning, nutrition logging, workouts, pr
 
 This is a separate application. Existing personal Corner data enters only when its owner chooses to import a Corner JSON export. The repository uses Turborepo with npm workspaces: `apps/server`, `apps/web`, and `packages/shared`.
 
+The intended direction is a hosted service for performance-focused trainees, with an approved hosted ChatGPT integration. That is future direction, not a claim that this release provides a public service or hosted AI access; see [PRODUCT.md](PRODUCT.md) in a repository checkout.
+
 ## Start development
 
 Install **Node.js 24.15 or newer in the Node 24 series**. The repository records npm 11.9.0 as its package manager and includes a single root lockfile. Clone it, then run:
@@ -171,6 +173,17 @@ The provider contract is implemented against the official documentation above. A
 | `apps/server/tests/` | Accounts, email, data isolation, agent, provider, and proxy regression checks |
 | `scripts/` | Workspace test runner, production/development smoke checks, configuration, and packaging |
 | `deployment/` | HTTPS edge configuration for the optional hosted Compose deployment |
+
+## Project guidance
+
+- [PRODUCT.md](PRODUCT.md): intended audience, current capabilities, hosted direction, and open decisions.
+- [DESIGN.md](DESIGN.md): the implemented visual system and interaction guidance.
+- [ARCHITECTURE.md](ARCHITECTURE.md): component responsibilities, data flows, and safety boundaries.
+- [AGENTS.md](AGENTS.md): repository operations and change-specific verification.
+- [HOSTING.md](HOSTING.md): current deployment, proxy, backup, and recovery procedures.
+- [RELEASE-NOTES.md](RELEASE-NOTES.md): release history and historical verification limits.
+
+The four contributor guides above are available in repository checkouts. The current source-ZIP allowlist does not include them; the ZIP still includes this README, hosting guidance, and release notes.
 
 ## Exercise data and third-party notices
 
