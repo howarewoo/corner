@@ -8,20 +8,16 @@
     "type": "git",
     "url": "git+https://github.com/howarewoo/corner.git"
   },
-  "packageManager": "npm@11.9.0",
+  "packageManager": "pnpm@10.33.2",
   "engines": {
     "node": ">=24.15.0 <25"
   },
-  "workspaces": [
-    "apps/*",
-    "packages/*"
-  ],
   "scripts": {
     "dev": "turbo run dev",
     "build": "turbo run build",
     "check": "turbo run check",
     "test": "turbo run test",
-    "start": "npm run start --workspace=@corner/server",
+    "start": "pnpm --filter @corner/server start",
     "db:migrate": "node --env-file-if-exists=.env.local --env-file-if-exists=.env apps/server/dist/migrate.js --apply",
     "smoke": "node scripts/smoke.mjs",
     "package": "python3 scripts/package.py",

@@ -14,7 +14,7 @@ const serverEntry = join(root, 'apps/server/dist/index.js');
 try {
   await Promise.all([access(serverEntry), access(join(root, 'apps/web/dist/index.html'))]);
 } catch {
-  throw new Error('Build the workspaces with npm run build before running npm run smoke.');
+  throw new Error('Build the workspaces with pnpm run build before running pnpm run smoke.');
 }
 const temporary = await mkdtemp(join(tmpdir(), 'corner-runtime-smoke-'));
 const proof = 'synthetic-http-proxy-proof-with-more-than-32-characters';

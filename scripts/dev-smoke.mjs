@@ -153,7 +153,7 @@ process.once('SIGTERM', onSignal);
 const deadline = setTimeout(() => interrupted.abort(new Error('The development smoke check exceeded its total deadline.')), 90_000);
 
 try {
-  child = spawn('npm', ['run', 'dev'], { cwd: root, env: environment, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+  child = spawn('pnpm', ['run', 'dev'], { cwd: root, env: environment, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
   exited = new Promise(resolve => {
     child.once('error', () => { childFinished = true; resolve(); });
     child.once('exit', () => { childFinished = true; resolve(); });

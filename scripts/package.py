@@ -9,7 +9,7 @@ root = Path(__file__).resolve().parents[1]
 destination = root.parent / "Corner-Standalone.zip"
 folders = ("apps", "packages", "scripts", "deployment")
 names = (
-    "package.json", "package-lock.json", "turbo.json", "tsconfig.json", "tsconfig.base.json",
+    "package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml", "turbo.json", "tsconfig.json", "tsconfig.base.json",
     "README.md", "RELEASE-NOTES.md", "HOSTING.md", "LICENSE", "LICENSE.md", "NOTICE", "NOTICE.md",
     "Dockerfile", "compose.yaml", "compose.hosted.yaml", ".env.example", ".gitignore", ".dockerignore", ".nvmrc",
     ".github/workflows/ci.yml",

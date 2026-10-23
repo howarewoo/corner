@@ -14,24 +14,24 @@ Follow this file first when it conflicts with generic agent defaults. Preserve a
 
 ## Commands and working directories
 
-Use Node `>=24.15.0 <25`; the root manifest records `npm@11.9.0`. Use the root lockfile and npm workspaces. Setup is `npm ci` from the repository root when dependency installation is authorized; do not create workspace lockfiles. Manifest scripts, [turbo.json](turbo.json), and [CI](.github/workflows/ci.yml) remain authoritative.
+Use Node `>=24.15.0 <25`; the root manifest records `pnpm@10.33.2`. Enable bundled Corepack with `corepack enable`. Use the root `pnpm-lock.yaml` and `pnpm-workspace.yaml`; setup is `pnpm install --frozen-lockfile` from the repository root when dependency installation is authorized. Do not create workspace lockfiles. Manifest scripts, [turbo.json](turbo.json), and [CI](.github/workflows/ci.yml) remain authoritative.
 
 All commands below run from the repository root with dependencies installed:
 
 | Command | Purpose and conditions |
 | --- | --- |
-| `npm run dev` | Shared build followed by web/API development processes and shared watcher; browser `http://127.0.0.1:3000`, internal API `3001` by default |
-| `npm run check` | Type-check all workspaces; Turbo builds shared dependencies first |
-| `npm test` | Server and rendered-web suites through Turbo; no separate shared-package test task exists |
-| `npm test -- --filter=@corner/server` | Server suite, retaining Turbo's shared-build prerequisite |
-| `npm test -- --filter=@corner/web` | Rendered-web and Vite configuration suite, retaining the shared-build prerequisite |
-| `npm run build` | Compile shared/server outputs and type-check/build the web app |
-| `npm run db:migrate` | After a build: apply checked-in PostgreSQL migrations via the direct `DATABASE_URL_UNPOOLED`; no schema writes occur at app startup |
-| `npm run smoke` | After a full build: disposable production servers on loopback ports `43137` and `43138` |
-| `npm run smoke:dev` | Actual development-stack integration on ports `43139` and `43140`; Linux/macOS, clean checkout without local environment files |
-| `npm start` | After a full build: compiled production server serving the web app and API on port `3000` by default |
+| `pnpm run dev` | Shared build followed by web/API development processes and shared watcher; browser `http://127.0.0.1:3000`, internal API `3001` by default |
+| `pnpm run check` | Type-check all workspaces; Turbo builds shared dependencies first |
+| `pnpm test` | Server and rendered-web suites through Turbo; no separate shared-package test task exists |
+| `pnpm test --filter=@corner/server` | Server suite, retaining Turbo's shared-build prerequisite |
+| `pnpm test --filter=@corner/web` | Rendered-web and Vite configuration suite, retaining the shared-build prerequisite |
+| `pnpm run build` | Compile shared/server outputs and type-check/build the web app |
+| `pnpm run db:migrate` | After a build: apply checked-in PostgreSQL migrations via the direct `DATABASE_URL_UNPOOLED`; no schema writes occur at app startup |
+| `pnpm run smoke` | After a full build: disposable production servers on loopback ports `43137` and `43138` |
+| `pnpm run smoke:dev` | Actual development-stack integration on ports `43139` and `43140`; Linux/macOS, clean checkout without local environment files |
+| `pnpm start` | After a full build: compiled production server serving the web app and API on port `3000` by default |
 
-These are configured commands, not assertions of passing execution. No lint script is configured. For build selection, existing supported examples are `npm run build -- --filter=@corner/server` and `npm run build -- --filter=@corner/web`.
+These are configured commands, not assertions of passing execution. No lint script is configured. For build selection, existing supported examples are `pnpm run build --filter=@corner/server` and `pnpm run build --filter=@corner/web`.
 
 ## Test placement
 
@@ -43,14 +43,14 @@ A layout migration must update discovery, relative imports, and TypeScript inclu
 
 ## Select verification for the change
 
-- **Shared schemas, calculations, or mutation rules:** run `npm run check`, consuming server/web suites, and the build. Shared exports are compiled into `packages/shared/dist`; a direct workspace command does not automatically rebuild them as Turbo does.
+- **Shared schemas, calculations, or mutation rules:** run `pnpm run check`, consuming server/web suites, and the build. Shared exports are compiled into `packages/shared/dist`; a direct workspace command does not automatically rebuild them as Turbo does.
 - **UI behavior:** run the relevant web suite; inspect the actual changed screen at desktop and phone widths. Rendered component tests do not prove browser layout, focus behavior, or mobile usability.
 - **Account or AI lifecycle:** run the affected server suite and web suite when controls change. Provider/mail fixtures are simulated; do not use real grants, paid inference, or email delivery without explicit authorization.
 - **HTTP runtime, origin/proxy handling, development configuration, or workspace integration:** build, then exercise the relevant production/development smoke checks. Broaden to both smoke checks when changing the shared startup/origin contract.
 - **Deployment:** use the checks and manual account/recovery scenario in `HOSTING.md`. Node smoke success does not prove Docker execution, certificates, inbox delivery, or live model access.
 - **Documentation only:** check local paths, anchors, commands, and source claims. Do not install dependencies or launch application/provider workflows just to validate prose.
 
-CI provisions PostgreSQL and runs `npm ci`, `npm test`, `npm run build`, `npm run smoke`, and `npm run smoke:dev`. It does not run the separate root `check` command. Server suites and smoke checks require `CORNER_TEST_DATABASE_URL` pointing to a disposable PostgreSQL database; they never use the real `DATABASE_URL`. Each fixture creates and drops only its own random schema. Preserve the distinction between inspected commands and executed checks.
+CI provisions PostgreSQL and runs `pnpm install --frozen-lockfile`, `pnpm test`, `pnpm run build`, `pnpm run smoke`, and `pnpm run smoke:dev`. It does not run the separate root `check` command. Server suites and smoke checks require `CORNER_TEST_DATABASE_URL` pointing to a disposable PostgreSQL database; they never use the real `DATABASE_URL`. Each fixture creates and drops only its own random schema. Preserve the distinction between inspected commands and executed checks.
 
 [scripts/test.mjs](scripts/test.mjs) runs each workspace's test files in separate processes, sequentially, keeping database hooks and browser mocks private. Preserve that isolation when selecting or changing test execution. Use the existing runner and native selection before introducing replacement tooling; no measured test-performance bottleneck is established in the repository guidance.
 

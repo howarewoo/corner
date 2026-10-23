@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { ArrowRight, Check, ChevronLeft, Loader2, Mail } from 'lucide-react';
-import { createAuthClient } from '@neondatabase/auth';
+import { createAuthClient, isAuthError } from '@neondatabase/auth';
 import { BetterAuthVanillaAdapter } from '@neondatabase/auth/vanilla/adapters';
 import { api, post, RequestError } from './api';
 
@@ -29,7 +29,7 @@ function removeAccountQuery() {
 }
 
 function readableError(failure: unknown): string {
-  if (failure instanceof RequestError) {
+  if (failure instanceof RequestError || isAuthError(failure)) {
     if (failure.status === 429) return 'Please wait a little before trying again.';
     return failure.message;
   }
@@ -129,7 +129,7 @@ export default function AccountAccess({ onSignedIn, initialRoute = emptyRoute }:
       await onSignedInRef.current();
     } catch (failure) {
       if (!current(pending.id)) return;
-      if (failure instanceof RequestError && failure.code === 'EMAIL_NOT_VERIFIED') { setEmail(submittedEmail); show('verify'); }
+      if ((failure instanceof RequestError && failure.code === 'EMAIL_NOT_VERIFIED') || (isAuthError(failure) && failure.code === 'email_not_confirmed')) { setEmail(submittedEmail); show('verify'); }
       else setError(readableError(failure));
     } finally { finish(pending.id); }
   }

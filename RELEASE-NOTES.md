@@ -1,3 +1,15 @@
+# pnpm workspace migration
+
+The repository now pins pnpm 10.33.2, with one `pnpm-lock.yaml` and workspace membership, existing Better Auth overrides, and esbuild build-script approval in `pnpm-workspace.yaml`. Internal shared-package dependencies use `workspace:*`. The npm lockfile and npm workspace configuration have been removed.
+
+CI installs the pinned pnpm release and caches its store. Docker build and production-dependency stages, root startup, development smoke, source packaging, and current setup/contributor commands use pnpm. Existing release verification below remains historical npm evidence.
+
+Verification: Corepack selected pnpm 10.33.2; frozen installation, `pnpm run check` (4/4 tasks), `pnpm run build` (3/3 tasks), `pnpm test` (9/9 server files and 3/3 web files), and `pnpm run smoke` passed on Node 24.21.0. A credential-free temporary source snapshot passed offline frozen installation, a clean build, `pnpm run smoke:dev`, and source packaging. Both the repository and a separate manifest-only production installation (`--prod --frozen-lockfile --ignore-scripts`) served health and built web HTML with HTTP 200 through `pnpm start`. Database checks used disposable local PostgreSQL and HTTPS Auth fixtures; no live email or model requests were made.
+
+The imported lockfile retained every resolved version from the existing npm lockfile. Import reported a Better Call/Zod peer mismatch; install skipped the funding-only core-js postinstall, and Vite retained its existing chunk-size advisory. `actionlint` passed for both checked-in workflows. Docker image execution and a GitHub Actions run were not verified; the local Docker daemon did not respond.
+
+---
+
 # Pull-request Neon database branches
 
 Added `.github/workflows/neon-preview.yml`: same-repository PR previews use schema-only `production` copies, stable `preview/pr-<number>` names, a 14-day expiration, and 300-second auto-suspend. Live PR-state reconciliation handles delayed events; cleanup accepts already-absent branches and expiry races without suppressing other API failures. Fork/Dependabot PRs are skipped, the create action is commit-pinned, and no credential-bearing job outputs or PR-code execution were added.

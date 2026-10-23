@@ -2,32 +2,36 @@
 
 Corner is a self-hostable app for meal planning, nutrition logging, workouts, progress, and an optional planning agent. Neon Postgres stores application data; managed Neon Auth owns email/password accounts and sessions. It does not read ChatGPT conversations, memories, or the original Corner Site.
 
-This is a separate application. Existing personal Corner data enters only when its owner chooses to import a Corner JSON export. The repository uses Turborepo with npm workspaces: `apps/server`, `apps/web`, and `packages/shared`.
+This is a separate application. Existing personal Corner data enters only when its owner chooses to import a Corner JSON export. The repository uses Turborepo with pnpm workspaces: `apps/server`, `apps/web`, and `packages/shared`.
 
 The intended direction is a hosted service for performance-focused trainees, with an approved hosted ChatGPT integration. That is future direction, not a claim that this release provides a public service or hosted AI access; see [PRODUCT.md](PRODUCT.md) in a repository checkout.
 
 ## Start development
 
-Install **Node.js 24.15 or newer in the Node 24 series**. The repository records npm 11.9.0 as its package manager and includes a single root lockfile. Clone it, then run:
+Install **Node.js 24.15 or newer in the Node 24 series** and enable its bundled Corepack with `corepack enable`. The repository pins pnpm 10.33.2 through `packageManager`; Corepack selects that version automatically. Workspace membership, dependency overrides, and approved dependency build scripts live in `pnpm-workspace.yaml`; all workspaces share `pnpm-lock.yaml`. Clone it, then run:
 
 ```bash
 git clone https://github.com/howarewoo/corner.git
 cd corner
-npm ci
-npm i -g neon@latest
-neon init -y --project-id YOUR_PROJECT_ID --branch production --services postgres,auth
+pnpm install --frozen-lockfile
+pnpm add -g neon@latest
+neon init --agent codex -y --project-id YOUR_PROJECT_ID --branch production --no-config --mcp-auth oauth --mcp-config-location global
 neon deploy
 neon neon-auth domain add http://127.0.0.1:3000
-npm run build
-npm run db:migrate
-npm run dev
+pnpm run build
+pnpm run db:migrate
+pnpm run dev
 ```
 
 Turborepo builds the shared package first, then starts the web app, API server, and shared-code watcher. The browser uses port **3000**; the API listens separately on **3001**. Vite proxies `/api` and `/auth/callback` to the API while preserving the browser origin for account sessions and consent callbacks. The server no longer starts Vite itself.
 
 Open **http://127.0.0.1:3000**. Use that exact address for the subscription callback. Create an account with an email, a name, and a password of at least 12 characters. With verification disabled in Neon, signup signs you in immediately. If verification is enabled, enter the email code and then sign in. Choose **Start fresh** or **Bring an export**.
 
-Install the CLI with `npm i -g neon@latest` or use `npx neon@latest` in place of `neon`. `neon deploy` applies `neon.ts` and pulls server-only Postgres/Auth URLs into `.env.local` (or an existing `.env`). Both files are loaded by the server; `.env` overrides `.env.local`, and existing process environment values win. Never put database credentials in `VITE_` variables.
+The account form uses Neon's `@neondatabase/auth` SDK (`signUp.email` and `signIn.email`) through Corner's same-origin `/api/auth` proxy. After authentication, `/api/session` reads the current managed user server-side. Session tokens stay in HttpOnly cookies; no browser Auth URL or `VITE_` credentials are needed. The setup command targets Codex agent tooling; choose your editor's supported `--agent` value instead if needed. `--no-config` preserves the checked-in `neon.ts`, which already enables Auth.
+
+The SDK is pinned to `0.6.0-beta` to satisfy its bundled `@neondatabase/auth-ui` peer contract; the `0.7.0-beta` release still pulls UI that requires `0.6.0-beta`. Workspace pnpm overrides align Better Auth/core at `1.7.12` and `better-call` at `1.4.4`, avoiding conflicting legacy-UI plugin peers. Corner uses only the programmatic SDK, not those UI components. Revisit these pins together when Neon's published dependency graph is compatible without overrides.
+
+Install the CLI with `pnpm add -g neon@latest` (run `pnpm setup` first if no global bin directory is configured) or use `pnpm dlx neon@latest` in place of `neon`. `neon deploy` applies `neon.ts` and pulls server-only Postgres/Auth URLs into `.env.local` (or an existing `.env`). Both files are loaded by the server; `.env` overrides `.env.local`, and existing process environment values win. Never put database credentials in `VITE_` variables.
 
 `DATABASE_URL` is the pooled application connection; `DATABASE_URL_UNPOOLED` is used only by the explicit, versioned migration command. `NEON_AUTH_BASE_URL` is the managed account service. The app verifies cookies against its uncached session endpoint, so it does not need browser JWTs or `NEON_AUTH_JWKS_URL`. `NEON_AUTH_REQUIRE_EMAIL_VERIFICATION` must match the branch's email/password policy, with verification method **OTP**. SMTP and recovery delivery are configured in Neon; no app-owned Resend adapter remains. See `.env.example`.
 
@@ -36,9 +40,9 @@ Private encryption/session-binding keys still live in the repository-root `data/
 ### Build and run production locally
 
 ```bash
-npm run build
-npm run db:migrate
-npm start
+pnpm run build
+pnpm run db:migrate
+pnpm start
 ```
 
 The build compiles `@corner/shared`, then builds `@corner/server` and `@corner/web` as separate workspace tasks. The compiled server starts on port 3000 and serves `apps/web/dist` alongside its API, preserving the same browser origin. Production runs ordinary JavaScript from `apps/server/dist`; it does not run Vite or require a TypeScript loader.
@@ -47,16 +51,16 @@ The build compiles `@corner/shared`, then builds `@corner/server` and `@corner/w
 
 | Root command | Result |
 | --- | --- |
-| `npm run dev` | Separate web/API development processes and a shared-package watcher |
-| `npm run build` | Cached dependency-aware builds for all three workspaces |
-| `npm run check` | Type checks for the apps and shared package |
-| `npm test` | Independent server and rendered-web test suites |
-| `npm run smoke` | Actual compiled-server account, proxy, health, and shutdown checks |
-| `npm run smoke:dev` | Actual two-app development proxy, session, and shared-catalog checks |
-| `npm start` | The compiled production server and built web app |
-| `npm run db:migrate` | Apply checked-in PostgreSQL migrations through `DATABASE_URL_UNPOOLED`, after a build |
+| `pnpm run dev` | Separate web/API development processes and a shared-package watcher |
+| `pnpm run build` | Cached dependency-aware builds for all three workspaces |
+| `pnpm run check` | Type checks for the apps and shared package |
+| `pnpm test` | Independent server and rendered-web test suites |
+| `pnpm run smoke` | Actual compiled-server account, proxy, health, and shutdown checks |
+| `pnpm run smoke:dev` | Actual two-app development proxy, session, and shared-catalog checks |
+| `pnpm start` | The compiled production server and built web app |
+| `pnpm run db:migrate` | Apply checked-in PostgreSQL migrations through `DATABASE_URL_UNPOOLED`, after a build |
 
-For a focused build, use `npm run build -- --filter=@corner/server` or `npm run build -- --filter=@corner/web`. Turbo also builds their shared dependency. Each app declares its own dependencies; domain models and validation are imported through `@corner/shared/<module>` rather than relative paths into the other app.
+For a focused build, use `pnpm run build --filter=@corner/server` or `pnpm run build --filter=@corner/web`. Turbo also builds their shared dependency. Each app declares its own dependencies; domain models and validation are imported through `@corner/shared/<module>` rather than relative paths into the other app.
 
 ### Docker option
 
@@ -144,7 +148,7 @@ For a complete backup:
 
 Restore the database and its original keys together, then verify sign-in and saved records before reopening access. Retention and restore capabilities depend on your Neon plan; exercise recovery rather than assuming persistence is a backup.
 
-Upgrades run `npm ci`, `npm run build`, and the explicit `npm run db:migrate` before restarting one Corner process. Migrations in `apps/server/migrations` are ordered, checksummed, transactional, and serialized; startup does not perform schema changes. Never edit an applied migration.
+Upgrades run `pnpm install --frozen-lockfile`, `pnpm run build`, and the explicit `pnpm run db:migrate` before restarting one Corner process. Migrations in `apps/server/migrations` are ordered, checksummed, transactional, and serialized; startup does not perform schema changes. Never edit an applied migration.
 
 This cutover does not silently claim or merge old SQLite accounts by email. Before upgrading an old installation, export each owner's workspace and preserve the complete original SQLite directory and keys. Create a managed account and use the existing previewed import into its empty workspace. Passwords, old sessions, agent history, and ChatGPT grants are not included in workspace exports.
 
@@ -164,18 +168,18 @@ Keep one Corner process: agent background tasks still execute in memory, and sta
 # Start a disposable Postgres instance first (or supply another test database):
 docker run --rm --name corner-test-postgres -e POSTGRES_PASSWORD=corner-test-only -e POSTGRES_DB=corner_test -p 127.0.0.1:45432:5432 -d postgres:17
 export CORNER_TEST_DATABASE_URL=postgresql://postgres:corner-test-only@127.0.0.1:45432/corner_test
-npm run check
-npm test
-npm run build
-npm run smoke
-npm run smoke:dev
+pnpm run check
+pnpm test
+pnpm run build
+pnpm run smoke
+pnpm run smoke:dev
 ```
 
 Server tests and both smoke checks require `CORNER_TEST_DATABASE_URL`; they never fall back to the real `DATABASE_URL`. Each fixture owns a random PostgreSQL schema and drops only that schema. Test files still run sequentially in separate processes. Better Auth is a **test-only** dependency for a local managed-service fixture; no test sends real account email or model requests.
 
 Production smoke starts disposable compiled servers on loopback ports 43137 and 43138. Development smoke starts all Turbo development processes on 43139 and 43140. Both use actual PostgreSQL and a private local HTTPS auth fixture, exercise cookie sessions and proxy boundaries, and clean up only their own resources. Run development smoke in a clean checkout without `.env`, `.env.local`, or Vite environment files; never remove a user's configuration just to pass it.
 
-CI provisions PostgreSQL, then runs tests, build, and both smoke checks. It does not deploy or run the separate `npm run check` command. Tests cover owner isolation, concurrent/idempotent writes, atomic proposal application, stale plans, cancellation, protected history, OAuth identity/PKCE, encrypted credentials, refresh/disconnect races, and inference stream validation.
+CI provisions PostgreSQL, then runs tests, build, and both smoke checks. It does not deploy or run the separate `pnpm run check` command. Tests cover owner isolation, concurrent/idempotent writes, atomic proposal application, stale plans, cancellation, protected history, OAuth identity/PKCE, encrypted credentials, refresh/disconnect races, and inference stream validation.
 
 The provider contract is implemented against the official documentation above. A real account must complete consent before live subscription inference can be verified. Browser visual verification and Docker execution are reported separately in the release notes; automated success should not be mistaken for those checks.
 
@@ -216,5 +220,5 @@ The four contributor guides above are available in repository checkouts. The cur
 
 The exercise catalog is derived from [hasaneyldrm/exercises-dataset](https://github.com/hasaneyldrm/exercises-dataset). Its source metadata is in `packages/shared/src/data/exercises-source.json`; its supplied license and attribution notice are preserved in `apps/web/public/licenses/`. Exercise information is a movement reference, not a personalized prescribed load.
 
-The source package contains no personal workspace export, private database, runtime secret, ChatGPT token, original Sites deployment identity, or `node_modules`. Dependency versions and integrity hashes are recorded in `package-lock.json`.
+The source package contains no personal workspace export, private database, runtime secret, ChatGPT token, original Sites deployment identity, or `node_modules`. Dependency versions and integrity hashes are recorded in `pnpm-lock.yaml`.
 

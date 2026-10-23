@@ -2,7 +2,7 @@ import { readdirSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { join, relative, resolve } from 'node:path';
 
-// npm runs each workspace script from its package directory.
+// Workspace scripts run from their package directory.
 const root = process.cwd();
 const files = readdirSync(resolve(root, 'tests')).filter(name => name.endsWith('.test.ts')).map(name => join('tests', name));
 function collect(directory) {
