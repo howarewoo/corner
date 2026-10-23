@@ -1,8 +1,8 @@
 "use client";
 
 import { useMemo, useState } from 'react';
-import { getMealPlanSummary } from '@corner/shared/meal-plan-summary';
-import type { AppState, Macros } from '@corner/shared/types';
+import { getMealPlanSummary } from '@packages/shared/meal-plan-summary';
+import type { AppState, Macros } from '@packages/shared/types';
 import './meal-planner-summary.css';
 
 const metrics = [

@@ -35,11 +35,11 @@ You need a Cloudflare account with a domain/zone you control, a Neon Postgres/Au
 3. Authenticate Wrangler interactively, then upload each secret through its prompt from the repository root:
 
    ```bash
-   pnpm --filter @corner/server exec wrangler login
-   pnpm --filter @corner/server exec wrangler secret put DATABASE_URL
-   pnpm --filter @corner/server exec wrangler secret put NEON_AUTH_BASE_URL
-   pnpm --filter @corner/server exec wrangler secret put BETTER_AUTH_SECRET
-   pnpm --filter @corner/server exec wrangler secret put CORNER_TOKEN_ENCRYPTION_KEY
+   pnpm --filter server exec wrangler login
+   pnpm --filter server exec wrangler secret put DATABASE_URL
+   pnpm --filter server exec wrangler secret put NEON_AUTH_BASE_URL
+   pnpm --filter server exec wrangler secret put BETTER_AUTH_SECRET
+   pnpm --filter server exec wrangler secret put CORNER_TOKEN_ENCRYPTION_KEY
    ```
 
    `DATABASE_URL` is the pooled Neon URL; `NEON_AUTH_BASE_URL` includes the full managed database/auth path. Create the two application keys once in private secret storage: a cryptographically random secret of at least 32 characters for `BETTER_AUTH_SECRET`, and exactly 32 random bytes encoded as base64 for `CORNER_TOKEN_ENCRYPTION_KEY`. Use the original keys when moving an existing installation, not newly generated replacements. Do not upload `DATABASE_URL_UNPOOLED` or a proxy secret to the Worker.
@@ -75,7 +75,7 @@ Open the configured origin and complete the account, verification-code, manual-s
 
 Workers Logs are enabled, but automatic invocation logs are disabled to avoid retaining reset-link query tokens. Do not log cookies, request bodies, credentials, or health-related records. Inspect failures using Cloudflare's dashboard without publishing private logs.
 
-Keep the existing Neon backup/restore procedures and the matching application secrets. Workers have no durable local `data/` directory to back up. Use Cloudflare's deployment history or `pnpm --filter @corner/server exec wrangler rollback` to restore a prior Worker version; this does **not** undo SQL migrations. Restore database/schema and keys together when needed. Before switching from Node, stop new work and let the single old process finish/shut down; do not copy running in-memory tasks to Workers. Hosted AI remains unavailable, including when old local grants exist in the database.
+Keep the existing Neon backup/restore procedures and the matching application secrets. Workers have no durable local `data/` directory to back up. Use Cloudflare's deployment history or `pnpm --filter server exec wrangler rollback` to restore a prior Worker version; this does **not** undo SQL migrations. Restore database/schema and keys together when needed. Before switching from Node, stop new work and let the single old process finish/shut down; do not copy running in-memory tasks to Workers. Hosted AI remains unavailable, including when old local grants exist in the database.
 
 References: [Workers Static Assets](https://developers.cloudflare.com/workers/static-assets/), [PostgreSQL connectivity](https://developers.cloudflare.com/workers/tutorials/postgres/), [Worker secrets](https://developers.cloudflare.com/workers/configuration/secrets/), [custom domains](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/), [rollback](https://developers.cloudflare.com/workers/configuration/versions-and-deployments/rollbacks/).
 

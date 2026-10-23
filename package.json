@@ -17,13 +17,13 @@
     "build": "turbo run build",
     "check": "turbo run check",
     "test": "turbo run test",
-    "start": "pnpm --filter @corner/server start",
+    "start": "pnpm --filter server start",
     "db:migrate": "node --env-file-if-exists=.env.local --env-file-if-exists=.env apps/server/dist/migrate.js --apply",
     "smoke": "node scripts/smoke.mjs",
     "package": "python3 scripts/package.py",
     "smoke:dev": "node scripts/dev-smoke.mjs",
-    "build:workers": "pnpm run build && pnpm --filter @corner/server exec wrangler deploy --dry-run --outdir dist/worker",
-    "deploy:workers": "pnpm run build && pnpm --filter @corner/server exec wrangler deploy",
+    "build:workers": "pnpm run build && pnpm --filter server exec wrangler deploy --dry-run --outdir dist/worker",
+    "deploy:workers": "pnpm run build && pnpm --filter server exec wrangler deploy",
     "smoke:workers": "node scripts/workers-smoke.mjs"
   },
   "devDependencies": {

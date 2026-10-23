@@ -7,7 +7,7 @@ import { createApp, type AppEnvironment } from '../src/app.ts';
 import type { Config } from '../src/config.ts';
 import { json } from '../src/http.ts';
 import { WorkspaceStore } from '../src/store.ts';
-import { createInitialState } from '@corner/shared/seed';
+import { createInitialState } from '@packages/shared/seed';
 
 const config: Config = { ...neonTestConfig, origin: 'http://127.0.0.1:3000', host: '127.0.0.1', port: 3000, dataDir: '/tmp', deployment: 'local', authSecret: 'unit-test-auth-secret-that-is-long-enough-to-use', tokenEncryptionKey: Buffer.alloc(32, 7) }
 let db: Pool;

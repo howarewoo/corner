@@ -1,8 +1,8 @@
 import { useState, type FormEvent } from 'react';
 import { Check, Loader2, SlidersHorizontal } from 'lucide-react';
-import type { Macros, Settings } from '@corner/shared/types';
-import { SettingsSchema } from '@corner/shared/domain';
-import { DEFAULT_PROFILE } from '@corner/shared/seed';
+import type { Macros, Settings } from '@packages/shared/types';
+import { SettingsSchema } from '@packages/shared/domain';
+import { DEFAULT_PROFILE } from '@packages/shared/seed';
 
 const metrics: Array<{ key: keyof Macros; label: string; max: number }> = [
   { key: 'calories', label: 'Calories · kcal', max: 10000 },

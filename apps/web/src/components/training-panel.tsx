@@ -2,12 +2,12 @@
 
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { Activity, ArrowDown, ArrowRight, ArrowUp, CalendarDays, Check, CheckCircle2, ChevronLeft, ChevronRight, Clock3, Copy, Dumbbell, ExternalLink, Leaf, Loader2, Pencil, Play, Plus, RefreshCw, SkipForward, Sparkles, Timer, Trash2, TrendingUp, X } from 'lucide-react';
-import type { AppState, Mutation } from '@corner/shared/types';
-import type { LoadType, TrainingCheckIn, TrainingRequest, TrainingReview, WorkoutExercise, WorkoutKind, WorkoutSession, WorkoutSet, WorkoutStatus, WorkoutTemplate } from '@corner/shared/training-types';
-import { createSessionFromTemplate, exerciseHistory, trainingStats } from '@corner/shared/training';
-import { dateKey, shiftDate, weekDates } from '@corner/shared/domain';
-import { convertTrainingWeight, getWorkoutPrefill, type WorkoutPrefill } from '@corner/shared/training-prefill';
-import type { ExerciseCatalogEntry } from '@corner/shared/exercise-catalog';
+import type { AppState, Mutation } from '@packages/shared/types';
+import type { LoadType, TrainingCheckIn, TrainingRequest, TrainingReview, WorkoutExercise, WorkoutKind, WorkoutSession, WorkoutSet, WorkoutStatus, WorkoutTemplate } from '@packages/shared/training-types';
+import { createSessionFromTemplate, exerciseHistory, trainingStats } from '@packages/shared/training';
+import { dateKey, shiftDate, weekDates } from '@packages/shared/domain';
+import { convertTrainingWeight, getWorkoutPrefill, type WorkoutPrefill } from '@packages/shared/training-prefill';
+import type { ExerciseCatalogEntry } from '@packages/shared/exercise-catalog';
 import ExercisePicker, { ExerciseReference } from './exercise-picker';
 
 type Props = { state: AppState; selectedDate: string; onDateChange: (date: string) => void; mutate: (mutation: Mutation, success?: string) => Promise<boolean>; busy: boolean; notify: (message: string, error?: boolean) => void; onRefresh: () => void; onOpenAgent: (prompt?: string) => void };

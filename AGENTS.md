@@ -23,15 +23,15 @@ All commands below run from the repository root with dependencies installed:
 | `pnpm run dev` | Shared build followed by web/API development processes and shared watcher; browser `http://127.0.0.1:3000`, internal API `3001` by default |
 | `pnpm run check` | Type-check all workspaces; Turbo builds shared dependencies first |
 | `pnpm test` | Server and rendered-web suites through Turbo; no separate shared-package test task exists |
-| `pnpm test --filter=@corner/server` | Server suite, retaining Turbo's shared-build prerequisite |
-| `pnpm test --filter=@corner/web` | Rendered-web and Vite configuration suite, retaining the shared-build prerequisite |
+| `pnpm test --filter=server` | Server suite, retaining Turbo's shared-build prerequisite |
+| `pnpm test --filter=web` | Rendered-web and Vite configuration suite, retaining the shared-build prerequisite |
 | `pnpm run build` | Compile shared/server outputs and type-check/build the web app |
 | `pnpm run db:migrate` | After a build: apply checked-in PostgreSQL migrations via the direct `DATABASE_URL_UNPOOLED`; no schema writes occur at app startup |
 | `pnpm run smoke` | After a full build: disposable production servers on loopback ports `43137` and `43138` |
 | `pnpm run smoke:dev` | Actual development-stack integration on ports `43139` and `43140`; Linux/macOS, clean checkout without local environment files |
 | `pnpm start` | After a full build: compiled production server serving the web app and API on port `3000` by default |
 
-These are configured commands, not assertions of passing execution. No lint script is configured. For build selection, existing supported examples are `pnpm run build --filter=@corner/server` and `pnpm run build --filter=@corner/web`.
+These are configured commands, not assertions of passing execution. No lint script is configured. For build selection, existing supported examples are `pnpm run build --filter=server` and `pnpm run build --filter=web`.
 
 ## Test placement
 
@@ -58,7 +58,8 @@ Both smoke scripts use actual disposable PostgreSQL schemas and a local HTTPS Be
 
 ## Boundaries and pitfalls
 
-- Import shared domain code through `@corner/shared/<module>`, not relative paths into another app. Put credentials, database access, and provider I/O in the server, never shared or browser modules.
+- Package names follow their folders: `apps/<name>/package.json` uses `<name>`; `packages/<name>/package.json` uses `@packages/<name>`.
+- Import shared domain code through `@packages/shared/<module>`, not relative paths into another app. Put credentials, database access, and provider I/O in the server, never shared or browser modules.
 - Preserve owner-scoped reads/writes, request fingerprinting, atomic proposal application, and stale-proposal rejection. Ordinary manual mutations do not all carry `expectedRevision`; inspect the actual route and record-level concurrency rules before claiming otherwise.
 - AI proposes plans and targets; users approve changes and record actual food, measurements, and training. Preserve server/shared validation that protects started and recorded workouts. Draft recipes and food estimates must remain editable before saving.
 - Hosted mode currently has no enabled AI provider. The agreed direction is an approved hosted ChatGPT integration, not permission to bypass the local gate, reuse local tokens publicly, or introduce an implicit separately billed fallback.

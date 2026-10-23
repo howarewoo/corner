@@ -2,10 +2,10 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { BookOpen, Check, ChevronDown, Dumbbell, Loader2, Plus, Search, X } from 'lucide-react';
-import type { ExerciseCatalogEntry } from '@corner/shared/exercise-catalog';
+import type { ExerciseCatalogEntry } from '@packages/shared/exercise-catalog';
 import './exercise-picker.css';
 
-type Catalog = typeof import('@corner/shared/exercise-catalog');
+type Catalog = typeof import('@packages/shared/exercise-catalog');
 const label = (value: string) => value ? value.charAt(0).toUpperCase() + value.slice(1) : value;
 
 function useCatalog() {
@@ -15,7 +15,7 @@ function useCatalog() {
   useEffect(() => {
     let active = true;
     setError(false);
-    import('@corner/shared/exercise-catalog').then(value => { if (active) setCatalog(value); }).catch(() => { if (active) setError(true); });
+    import('@packages/shared/exercise-catalog').then(value => { if (active) setCatalog(value); }).catch(() => { if (active) setError(true); });
     return () => { active = false; };
   }, [attempt]);
   return { catalog, error, retry: () => setAttempt(value => value + 1) };

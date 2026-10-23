@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { Check, Loader2, Sparkles } from 'lucide-react';
-import { FOOD_DESCRIPTION_MAX_LENGTH, FoodDescriptionSchema, FoodEstimateResultSchema, type EstimatedFood, type FoodEstimateResult } from '@corner/shared/food-estimate';
+import { FOOD_DESCRIPTION_MAX_LENGTH, FoodDescriptionSchema, FoodEstimateResultSchema, type EstimatedFood, type FoodEstimateResult } from '@packages/shared/food-estimate';
 
 type EstimatePayload = {
   estimate?: unknown;

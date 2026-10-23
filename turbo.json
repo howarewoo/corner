@@ -42,7 +42,7 @@
         "CORNER_DEV_API_PORT"
       ]
     },
-    "@corner/server#dev": {
+    "server#dev": {
       "dependsOn": [
         "^build"
       ],
@@ -56,7 +56,7 @@
         "NODE_EXTRA_CA_CERTS"
       ]
     },
-    "@corner/shared#dev": {
+    "@packages/shared#dev": {
       "dependsOn": [
         "build"
       ],

@@ -1,10 +1,10 @@
 import { createHash } from 'node:crypto';
 import type { Pool, PoolClient } from 'pg';
 import { z } from 'zod';
-import { applyMutation, FoodEntrySchema, MutationSchema, PlanEntrySchema, RecipeRequestSchema, RecipeSchema, SettingsSchema } from '@corner/shared/domain';
-import { createInitialState } from '@corner/shared/seed';
-import { TrainingStateSchema } from '@corner/shared/training';
-import type { AppState, Mutation } from '@corner/shared/types';
+import { applyMutation, FoodEntrySchema, MutationSchema, PlanEntrySchema, RecipeRequestSchema, RecipeSchema, SettingsSchema } from '@packages/shared/domain';
+import { createInitialState } from '@packages/shared/seed';
+import { TrainingStateSchema } from '@packages/shared/training';
+import type { AppState, Mutation } from '@packages/shared/types';
 import { ApiError, requestIdSchema, revisionSchema } from './http.js';
 
 export const MAX_STATE_BYTES = 1_800_000;

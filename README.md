@@ -45,7 +45,7 @@ pnpm run db:migrate
 pnpm start
 ```
 
-The build compiles `@corner/shared`, then builds `@corner/server` and `@corner/web` as separate workspace tasks. The compiled server starts on port 3000 and serves `apps/web/dist` alongside its API, preserving the same browser origin. Production runs ordinary JavaScript from `apps/server/dist`; it does not run Vite or require a TypeScript loader.
+The build compiles `@packages/shared`, then builds `server` and `web` as separate workspace tasks. The compiled server starts on port 3000 and serves `apps/web/dist` alongside its API, preserving the same browser origin. Production runs ordinary JavaScript from `apps/server/dist`; it does not run Vite or require a TypeScript loader.
 
 ### Workspace commands
 
@@ -63,7 +63,7 @@ The build compiles `@corner/shared`, then builds `@corner/server` and `@corner/w
 | `pnpm run deploy:workers` | Build and publish the configured Cloudflare Worker and web assets |
 | `pnpm run smoke:workers` | Actual local workerd, PostgreSQL, and HTTPS Auth fixture checks, after a build |
 
-For a focused build, use `pnpm run build --filter=@corner/server` or `pnpm run build --filter=@corner/web`. Turbo also builds their shared dependency. Each app declares its own dependencies; domain models and validation are imported through `@corner/shared/<module>` rather than relative paths into the other app.
+For a focused build, use `pnpm run build --filter=server` or `pnpm run build --filter=web`. Turbo also builds their shared dependency. Each app declares its own dependencies; domain models and validation are imported through `@packages/shared/<module>` rather than relative paths into the other app.
 
 ### Docker option
 

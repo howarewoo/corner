@@ -1,5 +1,5 @@
 {
-  "name": "@corner/server",
+  "name": "server",
   "version": "0.3.0",
   "private": true,
   "type": "module",
@@ -14,7 +14,7 @@
     "start": "node --env-file-if-exists=../../.env.local --env-file-if-exists=../../.env dist/index.js"
   },
   "dependencies": {
-    "@corner/shared": "workspace:*",
+    "@packages/shared": "workspace:*",
     "hono": "4.13.13",
     "jose": "6.2.13",
     "pg": "^8.23.1",

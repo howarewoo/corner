@@ -2,11 +2,11 @@ import { randomUUID, createHash } from 'node:crypto';
 import type { Pool } from 'pg';
 import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
-import { AgentRequestSchema, AgentResultSchema, proposalMutations, validateRecipeEstimate, type AgentRequest, type AgentResult, type AgentRun } from '@corner/shared/agent';
-import { RecipeSchema, macroTotal, shiftDate } from '@corner/shared/domain';
-import { FoodDescriptionSchema, FoodEstimateResultSchema, FOOD_ESTIMATE_INSTRUCTIONS } from '@corner/shared/food-estimate';
-import { searchExerciseCatalog } from '@corner/shared/exercise-catalog';
-import type { AppState, Recipe } from '@corner/shared/types';
+import { AgentRequestSchema, AgentResultSchema, proposalMutations, validateRecipeEstimate, type AgentRequest, type AgentResult, type AgentRun } from '@packages/shared/agent';
+import { RecipeSchema, macroTotal, shiftDate } from '@packages/shared/domain';
+import { FoodDescriptionSchema, FoodEstimateResultSchema, FOOD_ESTIMATE_INSTRUCTIONS } from '@packages/shared/food-estimate';
+import { searchExerciseCatalog } from '@packages/shared/exercise-catalog';
+import type { AppState, Recipe } from '@packages/shared/types';
 import type { WorkspaceStore } from './store.js';
 
 export interface InferenceProvider {

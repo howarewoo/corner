@@ -3,9 +3,9 @@ import assert from 'node:assert/strict';
 import type { Pool } from 'pg'; import { testDatabase, closeTestDatabase, createTestAuth, neonTestConfig } from './helpers.ts'
 import { WorkspaceStore } from '../src/store.js';
 import { PlanningAgent, buildContext, type InferenceProvider } from '../src/planning-agent.js';
-import { proposalMutations, type AgentResult, type AgentRun } from '@corner/shared/agent';
-import { createInitialState } from '@corner/shared/seed';
-import type { AppState, Recipe } from '@corner/shared/types';
+import { proposalMutations, type AgentResult, type AgentRun } from '@packages/shared/agent';
+import { createInitialState } from '@packages/shared/seed';
+import type { AppState, Recipe } from '@packages/shared/types';
 
 const at = '2026-10-22T12:00:00.000Z';
 const date = '2026-10-22';

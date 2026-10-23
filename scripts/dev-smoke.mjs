@@ -15,7 +15,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const origin = 'http://127.0.0.1:43139';
 const apiPort = 43140;
 const password = 'synthetic-development-smoke-password-not-used-elsewhere';
-const tasks = ['@corner/shared', '@corner/server', '@corner/web'];
+const tasks = ['@packages/shared', 'server', 'web'];
 const seenTasks = new Set();
 const interrupted = new AbortController();
 let child;

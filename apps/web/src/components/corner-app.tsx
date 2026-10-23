@@ -7,15 +7,15 @@ import {
   Home, Leaf, Loader2, LogOut, Menu, MoreHorizontal, Pencil, Plus, RefreshCw, Search, Settings2,
   ShoppingBasket, SlidersHorizontal, Sparkles, Sprout, Trash2, UtensilsCrossed, X,
 } from 'lucide-react';
-import type { AppState, FoodEntry, Ingredient, Macros, MealSlot, Mutation, PlanEntry, Recipe, RecipeCategory, RecipeRequest, Settings } from '@corner/shared/types';
-import { SLOTS } from '@corner/shared/types';
-import { activityForStateDate, applyMutation, dateKey, groceryList, macroTotal, mondayOf, shiftDate, targetForStateDate, weekDates } from '@corner/shared/domain';
+import type { AppState, FoodEntry, Ingredient, Macros, MealSlot, Mutation, PlanEntry, Recipe, RecipeCategory, RecipeRequest, Settings } from '@packages/shared/types';
+import { SLOTS } from '@packages/shared/types';
+import { activityForStateDate, applyMutation, dateKey, groceryList, macroTotal, mondayOf, shiftDate, targetForStateDate, weekDates } from '@packages/shared/domain';
 import ProfileForm from '../profile-form';
 import AgentPanel, { AgentConnection } from '../agent-panel';
 import TrainingPanel from './training-panel';
 import MealPlannerSummary, { PlannerDayMacros } from './meal-planner-summary';
 import FoodEstimator from './food-estimator';
-import { foodEstimateToDraft, type EstimatedFood } from '@corner/shared/food-estimate';
+import { foodEstimateToDraft, type EstimatedFood } from '@packages/shared/food-estimate';
 import './training.css';
 import './food-estimator.css';
 import './food-entry.css';

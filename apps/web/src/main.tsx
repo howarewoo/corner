@@ -2,7 +2,7 @@ import { StrictMode, useCallback, useEffect, useRef, useState, type FormEvent } 
 import { createRoot } from 'react-dom/client';
 import { ArrowRight, ArrowUpFromLine, Check, ChevronLeft, Loader2, LogOut } from 'lucide-react';
 import CornerApp from '@/components/corner-app';
-import type { AppState, Settings, StateResponse } from '@corner/shared/types';
+import type { AppState, Settings, StateResponse } from '@packages/shared/types';
 import ProfileForm from './profile-form';
 import AccountAccess, { readAccountRoute } from './account-access';
 import { api, post, errorMessage } from './api';

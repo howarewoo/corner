@@ -2,8 +2,8 @@ import assert from 'node:assert/strict';
 import { afterEach, beforeEach, test } from 'node:test';
 import type { Pool, PoolClient } from 'pg';
 import { testDatabase, closeTestDatabase } from './helpers.ts';
-import { createInitialState } from '@corner/shared/seed';
-import type { AppState, Recipe } from '@corner/shared/types';
+import { createInitialState } from '@packages/shared/seed';
+import type { AppState, Recipe } from '@packages/shared/types';
 import { ApiError } from '../src/http.ts';
 import { inspectImport, WorkspaceStore } from '../src/store.ts';
 

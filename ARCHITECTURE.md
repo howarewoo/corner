@@ -12,7 +12,7 @@ This describes the implemented architecture and the boundaries a change must pre
 | `scripts` | Workspace test runner, disposable production/development smoke checks, hosted configuration initializer, health check, and source packaging. |
 | `deployment` | [Caddy edge configuration](deployment/caddy/Caddyfile) for the optional hosted Compose deployment. |
 
-Both apps depend on `@corner/shared/<module>` through its compiled package exports. Shared domain code does not own HTTP, storage, account credentials, or provider calls. Server I/O stays server-side; web components render state and send authenticated requests. The workspace map is the current allocation of responsibilities, not a prohibition on a justified future topology change.
+Both apps depend on `@packages/shared/<module>` through its compiled package exports. Shared domain code does not own HTTP, storage, account credentials, or provider calls. Server I/O stays server-side; web components render state and send authenticated requests. The workspace map is the current allocation of responsibilities, not a prohibition on a justified future topology change.
 
 Neon is managed infrastructure, not another deployable application. Root [neon.ts](neon.ts) configures Auth and branch policy; database access, the managed Auth proxy, and application SQL migrations remain owned by `apps/server`. There is no separate Neon app or database package.
 

@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { ArrowRight, Check, ChevronDown, Link2, Loader2, RefreshCw, Sparkles, Square, Unplug } from 'lucide-react';
-import type { AgentChange, AgentRun } from '@corner/shared/agent';
-import type { AppState, Macros, Recipe, StateResponse } from '@corner/shared/types';
-import type { ExerciseTarget, WorkoutSession, WorkoutTemplate } from '@corner/shared/training-types';
+import type { AgentChange, AgentRun } from '@packages/shared/agent';
+import type { AppState, Macros, Recipe, StateResponse } from '@packages/shared/types';
+import type { ExerciseTarget, WorkoutSession, WorkoutTemplate } from '@packages/shared/training-types';
 import { api, errorMessage, post } from './api';
 import './agent.css';
 
