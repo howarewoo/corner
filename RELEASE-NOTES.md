@@ -1,3 +1,17 @@
+# Hono server routing
+
+`apps/server` now returns a Hono application and mounts a Hono connection/agent route group instead of using custom path dispatch. Node and Cloudflare Workers call the same app's `fetch` handler while retaining their existing host/proxy checks, static asset handling, database lifecycles, and shutdown boundaries. Verified principals, exact-origin writes, managed account cookies, input limits, error envelopes, and hosted AI restrictions remain in place.
+
+The existing Vite/React web workspace is unchanged. Neon remains managed infrastructure configured by root `neon.ts`, with server-owned authentication integration, database access, and SQL migrations; no additional app or database package was introduced.
+
+Verification on Node 24.21.0: `pnpm run check`, server suites (10/10 files), web suites (3/3 files), `pnpm run build:workers`, `pnpm run smoke`, and `pnpm run smoke:workers` passed. A credential-free snapshot passed offline frozen installation, a clean build, and `pnpm run smoke:dev`. The first development smoke failed in its process-group cleanup probe with `EPERM`; a terminal-backed rerun passed without changing the smoke code or assertions.
+
+Routing regression coverage caught Hono's default percent-decoding accepting a formerly unmatched path. The app now uses literal URL pathnames and retains regression coverage for exact paths, unsupported HEAD requests, authentication on route misses, and origin checks. Real HTTP checks also distinguished invalid/encoded/oversized run IDs from a valid missing run.
+
+Browser verification at desktop and phone widths exercised account creation, workspace setup/save, reload persistence, sign-out rejection, fresh-session restoration, and a second account's isolated empty workspace. The 390-pixel phone layout had no horizontal overflow. Checks used disposable PostgreSQL and local Auth fixtures; no live Neon service, email, paid inference, or cloud deployment was exercised. Existing Better Call/Zod peer and Vite chunk-size warnings remain.
+
+---
+
 # Cloudflare Workers deployment preparation
 
 Added a hosted-only Fetch entrypoint and pinned Wrangler tooling in `apps/server`, with Workers Static Assets for the built interface. Account/workspace/history routes retain the existing managed-session boundary and PostgreSQL transaction/receipt rules. Pools are request-scoped and closed before returning; isolates never generate private keys or perform process-wide agent recovery. Hosted ChatGPT authorization/inference remains disabled.

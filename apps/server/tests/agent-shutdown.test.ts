@@ -41,20 +41,20 @@ test('an accepted planning request cannot launch background work after shutdown 
   };
   const agent = new PlanningAgent(store, provider);
   await agent.initialize();
-  const app = createApp({ config, auth, store, extraRoute: createAIRouter(provider as unknown as SubscriptionProvider, agent) });
+  const app = createApp({ config, auth, store, extraRoutes: createAIRouter(provider as unknown as SubscriptionProvider, agent) });
   let pendingResponse: Promise<Response> | undefined;
   try {
-    const signup = await app(new Request(`${config.origin}/api/auth/sign-up/email`, {
+    const signup = await app.request(`${config.origin}/api/auth/sign-up/email`, {
       method: 'POST', headers: { Origin: config.origin, 'Content-Type': 'application/json' },
       body: JSON.stringify({ name: 'Shutdown test', email: 'shutdown@example.test', password: 'synthetic-shutdown-test-password' }),
-    }));
+    });
     assert.equal(signup.status, 200);
     const cookie = signup.headers.getSetCookie().map(value => value.split(';', 1)[0]).join('; ');
     assert(cookie);
 
     // This real authenticated handler has already passed origin/session checks
     // and parsed its request. Hold it at an asynchronous pre-launch boundary.
-    pendingResponse = app(new Request(`${config.origin}/api/agent/runs`, {
+    pendingResponse = Promise.resolve(app.request(`${config.origin}/api/agent/runs`, {
       method: 'POST', headers: { Origin: config.origin, Cookie: cookie, 'Content-Type': 'application/json' },
       body: JSON.stringify({ requestId: 'shutdown-race', prompt: 'Help me plan a breakfast.', referenceDate: '2026-10-22' }),
     }));

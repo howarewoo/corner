@@ -48,7 +48,7 @@ describe('authenticated planning routes with fake inference only', { concurrency
     if (options.cookie) headers.set('Cookie', options.cookie);
     if (options.origin !== null) headers.set('Origin', options.origin ?? config.origin);
     if (options.body !== undefined) headers.set('Content-Type', 'application/json');
-    return app(new Request(config.origin + path, { headers, method: options.body === undefined ? 'GET' : 'POST', ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }) }));
+    return app.request(config.origin + path, { headers, method: options.body === undefined ? 'GET' : 'POST', ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }) });
   }
   async function error(response: Response, status: number, code: string) {
     assert.equal(response.status, status);
@@ -76,7 +76,7 @@ describe('authenticated planning routes with fake inference only', { concurrency
     };
     agent = new PlanningAgent(store, provider);
     await agent.initialize();
-    app = createApp({ config, auth, store, aiAvailable: async () => connectionDTO(await status()).available, extraRoute: createAIRouter(provider as unknown as SubscriptionProvider, agent) });
+    app = createApp({ config, auth, store, aiAvailable: async () => connectionDTO(await status()).available, extraRoutes: createAIRouter(provider as unknown as SubscriptionProvider, agent) });
     async function register(name: string) {
       const response = await send('/api/auth/sign-up/email', { body: { name, email: `${name.toLowerCase()}@example.test`, password: 'unit-test-only-long-password' } });
       assert.equal(response.status, 200);

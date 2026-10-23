@@ -71,9 +71,9 @@ export default {
         const app = createApp({
           config, auth: createAuth(config), store,
           aiAvailable: async principal => connectionDTO(await provider.status(principal.userId)).available,
-          extraRoute: createAIRouter(provider, agent),
+          extraRoutes: createAIRouter(provider, agent),
         });
-        return secure(await app(incoming), true);
+        return secure(await app.fetch(incoming), true);
       } finally {
         await agent.close();
         await db.end();

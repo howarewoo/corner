@@ -1,15 +1,18 @@
+import { Hono } from 'hono';
 import { z } from 'zod';
 import { accountPolicy, getPrincipal, requirePrincipal, type CornerAuth, type Principal } from './auth.js';
 import type { Config } from './config.js';
 import { ApiError, errorResponse, json, readJson, requestIdSchema, requireSameOrigin, revisionSchema } from './http.js';
 import { isEmptyWorkspace, type WorkspaceSnapshot, type WorkspaceStore } from './store.js';
 
+export type AppEnvironment = { Variables: { principal: Principal } };
+
 export type AppOptions = {
   config: Config;
   auth: CornerAuth;
   store: WorkspaceStore;
   aiAvailable?: (principal: Principal) => Promise<boolean> | boolean;
-  extraRoute?: (request: Request, principal: Principal) => Promise<Response | null>;
+  extraRoutes?: Hono<AppEnvironment>;
 };
 
 const mutationInput = z.object({ mutation: z.unknown(), requestId: requestIdSchema, expectedRevision: revisionSchema.optional() }).strict();
@@ -42,62 +45,77 @@ function accountBody(path: string, raw: unknown, config: Config): unknown {
   return body;
 }
 
-/** Web-standard API handler; the Node entrypoint serves UI assets separately. */
-export function createApp({ config, auth, store, aiAvailable, extraRoute }: AppOptions): (request: Request) => Promise<Response> {
+/** Shared Hono API app; runtime entrypoints own listeners, assets, and resources. */
+export function createApp({ config, auth, store, aiAvailable, extraRoutes }: AppOptions) {
+  // Preserve literal API paths instead of Hono's default percent-decoding.
+  const app = new Hono<AppEnvironment>({ getPath: request => new URL(request.url).pathname });
   const stateResponse = async (principal: Principal, snapshot?: WorkspaceSnapshot) => json({ ...(snapshot ?? await store.read(principal.userId, principal.name)), aiAvailable: Boolean(await aiAvailable?.(principal)) });
-  const handle = async (request: Request): Promise<Response> => {
-    try {
-      const path = new URL(request.url).pathname;
-      if (path === '/api/health' && request.method === 'GET') return json({ ok: true });
-      if (path === '/api/account-policy' && request.method === 'GET') return json(accountPolicy(config));
-      if (path === '/api/session' && request.method === 'GET') {
-        const principal = await getPrincipal(auth, request);
-        return json({ user: principal ? { id: principal.userId, name: principal.name, email: principal.email } : null });
-      }
-      if (path === '/api/auth' || path.startsWith('/api/auth/')) {
-        // Cookie writes use the same exact-origin rule as the workspace API.
-        if (!['GET', 'HEAD', 'OPTIONS'].includes(request.method)) {
-          requireSameOrigin(request, config.origin);
-          const body = accountBody(path, await readJson(request, 16 * 1024), config);
-          const headers = new Headers(request.headers);
-          headers.delete('Content-Length');
-          // Resend is a public recovery action: do not expose whether the
-          // supplied address matches a different, already signed-in account.
-          if (path === '/api/auth/email-otp/send-verification-otp') headers.delete('Cookie');
-          const forwarded = new Request(request, { headers, body: JSON.stringify(body) });
-          const response = auth.withCookies(forwarded, await auth.handler(forwarded));
-          if (response.status >= 500) throw new ApiError(503, 'ACCOUNT_SERVICE_UNAVAILABLE', 'The account service is temporarily unavailable. Try again later.');
-          return response;
-        }
-        const url = new URL(request.url);
-        for (const key of redirectFields) {
-          for (const value of url.searchParams.getAll(key)) accountRedirect(value, config);
-        }
-        const forwarded = new Request(url, request);
-        return auth.withCookies(forwarded, await auth.handler(forwarded));
-      }
-      if (!path.startsWith('/api/') && path !== '/auth/callback') throw new ApiError(404, 'NOT_FOUND', 'This endpoint does not exist.');
-      const principal = await requirePrincipal(auth, request);
-      if (!['GET', 'HEAD', 'OPTIONS'].includes(request.method)) requireSameOrigin(request, config.origin);
-      if (path === '/api/state' && request.method === 'GET') return await stateResponse(principal);
-      if (path === '/api/mutate' && request.method === 'POST') {
-        const input = mutationInput.parse(await readJson(request));
-        return await stateResponse(principal, (await store.mutate(principal.userId, input.requestId, input.mutation, input.expectedRevision)));
-      }
-      if (path === '/api/import/preview' && request.method === 'POST') {
-        const input = importPreviewInput.parse(await readJson(request, 2 * 1024 * 1024));
-        const inspected = store.inspectImport(input.state);
-        const current = (await store.read(principal.userId, principal.name));
-        return json({ summary: { ...inspected.counts, bytes: inspected.bytes }, canImport: isEmptyWorkspace(current.state), revision: current.revision });
-      }
-      if (path === '/api/import' && request.method === 'POST') {
-        const input = importInput.parse(await readJson(request, 2 * 1024 * 1024));
-        return await stateResponse(principal, (await store.replaceImport(principal.userId, input.requestId, input.state, input.expectedRevision)));
-      }
-      const extra = await extraRoute?.(request, principal);
-      if (extra) return extra;
+  app.onError(errorResponse);
+  app.notFound(() => errorResponse(new ApiError(404, 'NOT_FOUND', 'This endpoint does not exist.')));
+  app.use('*', async (c, next) => {
+    await next();
+    c.res = auth.withCookies(c.req.raw, c.res);
+  });
+
+  // Hono also dispatches HEAD to GET. Only GET is public in the existing API.
+  app.get('/api/health', (c, next) => c.req.method === 'GET' ? json({ ok: true }) : next());
+  app.get('/api/account-policy', (c, next) => c.req.method === 'GET' ? json(accountPolicy(config)) : next());
+  app.get('/api/session', async (c, next) => {
+    if (c.req.method !== 'GET') return next();
+    const principal = await getPrincipal(auth, c.req.raw);
+    return json({ user: principal ? { id: principal.userId, name: principal.name, email: principal.email } : null });
+  });
+  app.on('ALL', ['/api/auth', '/api/auth/*'], async c => {
+    const request = c.req.raw;
+    const path = c.req.path;
+    // Cookie writes use the same exact-origin rule as the workspace API.
+    if (!['GET', 'HEAD', 'OPTIONS'].includes(request.method)) {
+      requireSameOrigin(request, config.origin);
+      const body = accountBody(path, await readJson(request, 16 * 1024), config);
+      const headers = new Headers(request.headers);
+      headers.delete('Content-Length');
+      // Resend must not reveal a different, already signed-in account.
+      if (path === '/api/auth/email-otp/send-verification-otp') headers.delete('Cookie');
+      const forwarded = new Request(request, { headers, body: JSON.stringify(body) });
+      const response = auth.withCookies(forwarded, await auth.handler(forwarded));
+      if (response.status >= 500) throw new ApiError(503, 'ACCOUNT_SERVICE_UNAVAILABLE', 'The account service is temporarily unavailable. Try again later.');
+      return response;
+    }
+    const url = new URL(request.url);
+    for (const key of redirectFields) {
+      for (const value of url.searchParams.getAll(key)) accountRedirect(value, config);
+    }
+    const forwarded = new Request(url, request);
+    return auth.withCookies(forwarded, await auth.handler(forwarded));
+  });
+
+  app.use('*', async (c, next) => {
+    if (!c.req.path.startsWith('/api/') && c.req.path !== '/auth/callback') {
       throw new ApiError(404, 'NOT_FOUND', 'This endpoint does not exist.');
-    } catch (error) { return errorResponse(error); }
-  };
-  return async request => auth.withCookies(request, await handle(request));
+    }
+    c.set('principal', await requirePrincipal(auth, c.req.raw));
+    if (!['GET', 'HEAD', 'OPTIONS'].includes(c.req.method)) requireSameOrigin(c.req.raw, config.origin);
+    if (c.req.method === 'HEAD') return c.notFound();
+    await next();
+  });
+  app.get('/api/state', c => stateResponse(c.get('principal')));
+  app.post('/api/mutate', async c => {
+    const input = mutationInput.parse(await readJson(c.req.raw));
+    const principal = c.get('principal');
+    return stateResponse(principal, await store.mutate(principal.userId, input.requestId, input.mutation, input.expectedRevision));
+  });
+  app.post('/api/import/preview', async c => {
+    const input = importPreviewInput.parse(await readJson(c.req.raw, 2 * 1024 * 1024));
+    const inspected = store.inspectImport(input.state);
+    const principal = c.get('principal');
+    const current = await store.read(principal.userId, principal.name);
+    return json({ summary: { ...inspected.counts, bytes: inspected.bytes }, canImport: isEmptyWorkspace(current.state), revision: current.revision });
+  });
+  app.post('/api/import', async c => {
+    const input = importInput.parse(await readJson(c.req.raw, 2 * 1024 * 1024));
+    const principal = c.get('principal');
+    return stateResponse(principal, await store.replaceImport(principal.userId, input.requestId, input.state, input.expectedRevision));
+  });
+  if (extraRoutes) app.route('/', extraRoutes);
+  return app;
 }

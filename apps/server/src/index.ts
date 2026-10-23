@@ -26,7 +26,7 @@ await agent.initialize();
 const app = createApp({
   config, auth, store,
   aiAvailable: async principal => connectionDTO(await provider.status(principal.userId)).available,
-  extraRoute: createAIRouter(provider, agent),
+  extraRoutes: createAIRouter(provider, agent),
 });
 const server = createServer();
 const dist = join(REPOSITORY_ROOT, 'apps', 'web', 'dist');
@@ -61,7 +61,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse) {
     }
     if (path.startsWith('/api/') || path === '/auth/callback') {
       const request = toWebRequest(req);
-      await sendWebResponse(res, await app(request)); return;
+      await sendWebResponse(res, await app.fetch(request)); return;
     }
     if (!['GET', 'HEAD'].includes(req.method ?? 'GET')) { res.writeHead(405); res.end(); return; }
     if (development) {

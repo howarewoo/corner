@@ -1,8 +1,9 @@
+import { Hono } from 'hono';
 import assert from 'node:assert/strict';
 import { after, before, test } from 'node:test';
 import type { Pool } from 'pg'; import { testDatabase, closeTestDatabase, createTestAuth, neonTestConfig } from './helpers.ts'
 import type { CornerAuth } from '../src/auth.ts';
-import { createApp } from '../src/app.ts';
+import { createApp, type AppEnvironment } from '../src/app.ts';
 import type { Config } from '../src/config.ts';
 import { json } from '../src/http.ts';
 import { WorkspaceStore } from '../src/store.ts';
@@ -23,7 +24,7 @@ function request(path: string, options: { body?: unknown; cookie?: string; metho
   if (options.body !== undefined) headers.set('Content-Type', 'application/json');
   if (options.origin !== null) headers.set('Origin', options.origin ?? config.origin);
   if (options.cookie) headers.set('Cookie', options.cookie);
-  return app(new Request(`${config.origin}${path}`, { method, headers, ...(options.body !== undefined ? { body: JSON.stringify(options.body) } : {}) }));
+  return app.request(`${config.origin}${path}`, { method, headers, ...(options.body !== undefined ? { body: JSON.stringify(options.body) } : {}) });
 }
 
 async function account(name: string, email: string) {
@@ -47,11 +48,11 @@ before(async () => {
   db = await testDatabase();
   auth = await createTestAuth(config, db);
   store = new WorkspaceStore(db);
-  app = createApp({ config, auth, store, extraRoute: async (req, principal) => {
-    const path = new URL(req.url).pathname;
-    if (path === '/api/identity-test' || path === '/auth/callback') return json({ owner: principal.userId, hasVerifiedSession: Boolean(principal.sessionId) });
-    return null;
-  } });
+  const extraRoutes = new Hono<AppEnvironment>().on('GET', ['/api/identity-test', '/auth/callback'], c => {
+    const principal = c.get('principal');
+    return json({ owner: principal.userId, hasVerifiedSession: Boolean(principal.sessionId) });
+  });
+  app = createApp({ config, auth, store, extraRoutes });
   alice = await account('Alice', 'alice@example.test');
   bob = await account('Bob', 'bob@example.test');
 });
@@ -124,11 +125,12 @@ test('import preview performs no writes and imported records belong only to the 
 
 test('JSON/body limits and error envelopes avoid internal data exposure', async () => {
   const large = new Request(`${config.origin}/api/mutate`, { method: 'POST', headers: { Cookie: alice.cookie, Origin: config.origin, 'Content-Type': 'application/json' }, body: JSON.stringify({ junk: 'x'.repeat(192 * 1024) }) });
-  await expectError(await app(large), 413, 'REQUEST_TOO_LARGE');
+  await expectError(await app.fetch(large), 413, 'REQUEST_TOO_LARGE');
   const nonJson = new Request(`${config.origin}/api/mutate`, { method: 'POST', headers: { Cookie: alice.cookie, Origin: config.origin, 'Content-Type': 'text/plain' }, body: 'hello' });
-  await expectError(await app(nonJson), 415, 'JSON_REQUIRED');
-  const failed = createApp({ config, auth, store, extraRoute: async () => { throw new Error('private-database-details-and-secret'); } });
-  const response = await failed(new Request(`${config.origin}/api/failing`, { headers: { Cookie: alice.cookie } }));
+  await expectError(await app.fetch(nonJson), 415, 'JSON_REQUIRED');
+  const extraRoutes = new Hono<AppEnvironment>().get('/api/failing', () => { throw new Error('private-database-details-and-secret'); });
+  const failed = createApp({ config, auth, store, extraRoutes });
+  const response = await failed.request(`${config.origin}/api/failing`, { headers: { Cookie: alice.cookie } });
   const safe = await expectError(response, 503, 'SERVICE_UNAVAILABLE');
   assert(!JSON.stringify(safe).includes('private-database'));
 });
