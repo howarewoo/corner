@@ -6,6 +6,9 @@
     "scripts/test.mjs"
   ],
   "tasks": {
+    "@packages/ui#build": {
+      "outputs": []
+    },
     "build": {
       "dependsOn": [
         "^build"

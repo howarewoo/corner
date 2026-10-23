@@ -1,0 +1,77 @@
+@import './tokens.css';
+
+/* Opt-in shadcn semantic names: legacy product --muted remains text-colored. */
+:root[data-corner-theme] {
+  color-scheme: light;
+  --background: var(--paper);
+  --foreground: var(--ink);
+  --card: var(--surface-secondary);
+  --card-foreground: var(--ink);
+  --popover: var(--paper);
+  --popover-foreground: var(--ink);
+  --primary: var(--forest);
+  --primary-foreground: #ffffff;
+  --secondary: var(--surface-inset);
+  --secondary-foreground: var(--ink);
+  --muted: var(--surface-secondary);
+  --muted-foreground: #485e50;
+  --accent: var(--surface-accent);
+  --accent-foreground: var(--forest);
+  --destructive: var(--danger-text);
+  --destructive-foreground: #ffffff;
+  --border: #c9d8ce;
+  --ring: var(--forest);
+  --control-bg: #637369;
+  --control-fg: #ffffff;
+  --control-hover: #536459;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 14px;
+  --radius-xl: 24px;
+  --sidebar: var(--paper);
+  --sidebar-foreground: var(--ink);
+  --sidebar-primary: var(--primary);
+  --sidebar-primary-foreground: var(--primary-foreground);
+  --sidebar-accent: var(--accent);
+  --sidebar-accent-foreground: var(--accent-foreground);
+  --sidebar-border: var(--border);
+  --sidebar-ring: var(--ring);
+  --chart-1: var(--forest);
+  --chart-2: #759780;
+  --chart-3: #a8bcae;
+  --chart-4: #87652d;
+  --chart-5: var(--danger-text);
+}
+
+:root[data-corner-theme='dark'] {
+  color-scheme: dark;
+  --backdrop: #14231b;
+  --paper: #1c2e23;
+  --surface-secondary: #263c2e;
+  --surface-inset: #304a39;
+  --surface-hover: #3a5743;
+  --surface-accent: #35553f;
+  --ink: #edf4ee;
+  --text: #d2dfd5;
+  --forest: #b0d1b7;
+  --forest-hover: #c4dfca;
+  --on-accent: #17291d;
+  --primary-foreground: #17291d;
+  --muted-foreground: #b2c5b7;
+  --control-bg: #526b59;
+  --control-hover: #5d7865;
+  --control-fg: #ffffff;
+  --input: var(--control-bg);
+  --input-hover: var(--control-hover);
+  --input-text: var(--control-fg);
+  --border: #49614f;
+  --progress-track: #3a5743;
+  --warning-surface: #493d23;
+  --warning-text: #f1d99b;
+  --danger-surface: #4a3029;
+  --danger-text: #f2b4a5;
+  --scrim: rgb(5 15 9 / 65%);
+  --chart-2: #6f9b7b;
+  --chart-3: #4f765b;
+  --chart-4: var(--warning-text);
+}

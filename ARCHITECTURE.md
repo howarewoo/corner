@@ -9,16 +9,18 @@ This describes the implemented architecture and the boundaries a change must pre
 | `apps/web` | React/Vite interface. [main.tsx](apps/web/src/main.tsx) bootstraps sessions and onboarding; [corner-app.tsx](apps/web/src/components/corner-app.tsx) owns the main workspace shell; training and agent features have dedicated panels. |
 | `apps/server` | Hono HTTP app for accounts, persistence, and AI integration. [index.ts](apps/server/src/index.ts) composes the single-process Node runtime; [worker.ts](apps/server/src/worker.ts) composes hosted-only Workers requests/static assets. [app.ts](apps/server/src/app.ts) composes account/workspace routes and shared middleware; [ai-routes.ts](apps/server/src/ai-routes.ts) supplies the connection and agent Hono route group. |
 | `packages/shared` | Types, Zod schemas, domain mutations, nutrition/training calculations, proposal rules, and exercise data. Start with [domain.ts](packages/shared/src/domain.ts), [training.ts](packages/shared/src/training.ts), and [agent.ts](packages/shared/src/agent.ts). |
+| `apps/design` | Standalone React/Vite developer catalog on loopback port `3002`, with no API, accounts, private environment configuration, or runtime registry access. |
+| `packages/ui` | Shared source-exported React controls backed by Base UI, canonical Corner light tokens, and opt-in shadcn semantic themes. `apps/design` consumes the controls; `apps/web` consumes only the unchanged light token values. |
 | `scripts` | Workspace test runner, disposable production/development smoke checks, hosted configuration initializer, health check, and source packaging. |
 | `deployment` | [Caddy edge configuration](deployment/caddy/Caddyfile) for the optional hosted Compose deployment. |
 
-Both apps depend on `@packages/shared/<module>` through its compiled package exports. Shared domain code does not own HTTP, storage, account credentials, or provider calls. Server I/O stays server-side; web components render state and send authenticated requests. The workspace map is the current allocation of responsibilities, not a prohibition on a justified future topology change.
+The product apps depend on `@packages/shared/<module>` through its compiled package exports. Shared domain code does not own HTTP, storage, account credentials, or provider calls. Server I/O stays server-side; web components render state and send authenticated requests. The workspace map is the current allocation of responsibilities, not a prohibition on a justified future topology change.
 
 Neon is managed infrastructure, not another deployable application. Root [neon.ts](neon.ts) configures Auth and branch policy; database access, the managed Auth proxy, and application SQL migrations remain owned by `apps/server`. There is no separate Neon app or database package.
 
 ## Runtime and origin boundary
 
-Development runs three Turbo tasks: Vite on browser port `3000`, the API on loopback port `3001`, and a shared-package compiler watcher. [vite.config.ts](apps/web/vite.config.ts) proxies `/api` and `/auth/callback` without rewriting the canonical browser Host/Origin. Turbo builds shared exports before consumers; see [turbo.json](turbo.json).
+Development runs product Vite on browser port `3000`, the API on loopback port `3001`, a shared-package compiler watcher, and the independent design catalog on `3002`. [vite.config.ts](apps/web/vite.config.ts) proxies `/api` and `/auth/callback` without rewriting the canonical browser Host/Origin. Turbo builds shared dependencies before consumers; see [turbo.json](turbo.json).
 
 Production runs compiled JavaScript from `apps/server/dist`; the same Node process serves `apps/web/dist` and API routes on one origin. It runs neither Vite nor a TypeScript loader. The hosted template adds Caddy in front of this process, not a second application backend.
 

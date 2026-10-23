@@ -31,7 +31,7 @@ export function developmentServer(environment: Record<string, string | undefined
     },
     fs: {
       strict: true,
-      allow: [webRoot, fileURLToPath(new URL('../../packages/shared/dist', import.meta.url)), fileURLToPath(new URL('../../node_modules', import.meta.url))],
+      allow: [webRoot, fileURLToPath(new URL('../../packages/shared/dist', import.meta.url)), fileURLToPath(new URL('../../packages/ui/src/tokens.css', import.meta.url)), fileURLToPath(new URL('../../node_modules', import.meta.url))],
       deny: ['**/.env', '**/.env.*', '**/*.{crt,pem,key}', '**/.git/**', '**/.npmrc', fileURLToPath(new URL('../../data/**', import.meta.url)), '**/private-config.json', '**/*.sqlite*', '**/*.db', '**/*.db-*'],
     },
   };

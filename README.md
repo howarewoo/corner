@@ -51,9 +51,9 @@ The build compiles `@packages/shared`, then builds `server` and `web` as separat
 
 | Root command | Result |
 | --- | --- |
-| `pnpm run dev` | Separate web/API development processes and a shared-package watcher |
-| `pnpm run build` | Cached dependency-aware builds for all three workspaces |
-| `pnpm run check` | Type checks for the apps and shared package |
+| `pnpm run dev` | Web/API processes, a shared-package watcher, and the design catalog |
+| `pnpm run build` | Cached dependency-aware builds for all workspaces |
+| `pnpm run check` | Type checks for all apps and shared packages |
 | `pnpm test` | Independent server and rendered-web test suites |
 | `pnpm run smoke` | Actual compiled-server account, proxy, health, and shutdown checks |
 | `pnpm run smoke:dev` | Actual two-app development proxy, session, and shared-catalog checks |
@@ -64,6 +64,14 @@ The build compiles `@packages/shared`, then builds `server` and `web` as separat
 | `pnpm run smoke:workers` | Actual local workerd, PostgreSQL, and HTTPS Auth fixture checks, after a build |
 
 For a focused build, use `pnpm run build --filter=server` or `pnpm run build --filter=web`. Turbo also builds their shared dependency. Each app declares its own dependencies; domain models and validation are imported through `@packages/shared/<module>` rather than relative paths into the other app.
+
+### Shared design system
+
+`apps/design` is the internal, backend-free component catalog. Run `pnpm --filter design dev` and open **http://127.0.0.1:3002**. `pnpm run dev` also starts this app alongside the product stack. Build only the catalog with `pnpm run build --filter=design`; serve its built assets with `pnpm --filter design preview`.
+
+Shared React controls live in `packages/ui`, exposed as `@packages/ui`. They adapt current Base UI-backed shadcn compositions to Corner's forest/sage palette and flat tonal surfaces. The product and catalog import the same canonical light tokens; the catalog opts into shadcn semantic aliases and a dark theme. Existing product controls and account/data behavior are not migrated.
+
+Use the live specimens and their source as the implementation reference. The [catalog coverage record](apps/design/README.md) identifies the complete current shadcn inventory, provenance, theme contract, composition distinctions, and ownership. The catalog itself uses the shared Base UI-backed Sidebar.
 
 ### Docker option
 

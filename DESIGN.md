@@ -6,7 +6,7 @@ This records the implemented web interface, not a proposed redesign or a browser
 
 The UI supports daily planning and tracking: readable quantities, editable records, and clear review of suggested changes take precedence over decoration. Planned activity, actual activity, estimates, and saved data must remain distinguishable.
 
-Canonical tokens and responsive rules live in [globals.css](apps/web/src/components/globals.css). Feature styles extend them in [standalone.css](apps/web/src/standalone.css), [agent.css](apps/web/src/agent.css), and the [component styles](apps/web/src/components/). Reuse those sources rather than creating a parallel token system. This prose-only record intentionally has no duplicate YAML token authority.
+Canonical light tokens live in [packages/ui/src/tokens.css](packages/ui/src/tokens.css), imported by [globals.css](apps/web/src/components/globals.css), which still owns product responsive rules and control styles. Feature styles extend them in [standalone.css](apps/web/src/standalone.css), [agent.css](apps/web/src/agent.css), and the [component styles](apps/web/src/components/). The opt-in [shared theme](packages/ui/src/theme.css) maps these colors to shadcn semantic names and supplies the catalog's dark extension. This prose record is not a duplicate token authority.
 
 ## Colors
 
@@ -70,7 +70,7 @@ Focus is an interaction cue, not a permanent border treatment. Preserve the exis
 | AI connection and proposal review | [agent-panel.tsx](apps/web/src/agent-panel.tsx) and agent styles; retain current/proposed comparisons, explicit Apply, and stale-proposal feedback |
 | Food estimates | [food-estimator.tsx](apps/web/src/components/food-estimator.tsx); show clarification and assumptions, then an editable draft before saving |
 
-There is no separate component-library package. General and training dialogs currently have separate implementations; preserve their keyboard and focus behavior when changing either rather than assuming one shared primitive exists.
+The [shared component package](packages/ui/) provides Base UI-backed controls for new consumers. The [design app](apps/design/) presents live specimens in a dashboard-style sidebar layout; its [coverage record](apps/design/README.md) identifies provenance and exclusions. Flat tonal surfaces retain the incumbent colors and control radii, with no ordinary panel shadows. Existing product controls are not migrated: general and training dialogs still have separate implementations; preserve their keyboard and focus behavior when changing either.
 
 ## Do's and Don'ts
 
