@@ -1,3 +1,13 @@
+# Pull-request Neon database branches
+
+Added `.github/workflows/neon-preview.yml`: same-repository PR previews use schema-only `production` copies, stable `preview/pr-<number>` names, a 14-day expiration, and 300-second auto-suspend. Live PR-state reconciliation handles delayed events; cleanup accepts already-absent branches and expiry races without suppressing other API failures. Fork/Dependabot PRs are skipped, the create action is commit-pinned, and no credential-bearing job outputs or PR-code execution were added.
+
+Verification: `actionlint .github/workflows/ci.yml .github/workflows/neon-preview.yml` passed. A throwaway Node 24.21.0 smoke ran the byte-verified pinned create-action bundle and actual cleanup shell against a local API fixture with synthetic credentials. It covered current-state routing across all four events, fork/Dependabot skips, GNU-date expiry, schema-only creation, reuse without deadline renewal, exact-preview deletion, absent/expired cleanup, and failure propagation for HTTP 403/503. The actual PR-state shell also read PR #1 as `open` through GitHub.
+
+The repository project variable and API-key secret metadata were confirmed present; the secret value and its Neon permissions were not inspected. No live Neon preview was created/deleted, no GitHub Actions run was triggered, and the application build/suites were not rerun for this workflow/documentation-only change. This does not configure application or Auth previews.
+
+---
+
 # Neon migration
 
 Corner now uses Neon Postgres and managed Neon Auth in project `weathered-tooth-40264904`, branch `production`. `neon init` and `neon deploy` completed, pulled five server-only environment variables into ignored `.env.local`, and linked both services through `neon.ts`.

@@ -179,6 +179,16 @@ CI provisions PostgreSQL, then runs tests, build, and both smoke checks. It does
 
 The provider contract is implemented against the official documentation above. A real account must complete consent before live subscription inference can be verified. Browser visual verification and Docker execution are reported separately in the release notes; automated success should not be mistaken for those checks.
 
+### Pull-request database branches
+
+[The Neon preview workflow](.github/workflows/neon-preview.yml) requires the GitHub repository variable `NEON_PROJECT_ID` and repository secret `NEON_API_KEY`, authorized to create and delete branches in that project. Corner's project is `weathered-tooth-40264904`. Never put a database connection URL in a repository variable or publish it as a job output.
+
+For same-repository, non-Dependabot PRs, opened/reopened/synchronize/closed events reconcile the PR's **current** GitHub state. An open PR creates or reuses `preview/pr-<number>`; a closed or merged PR deletes it. Per-PR concurrency and a live state read avoid replaying stale event state. Already-expired branches are a successful cleanup no-op; other API failures remain failures.
+
+Previews copy only the `production` schema, not account or health records, and suspend after 300 idle seconds. Expiration is 14 days from initial creation; synchronization does not reset data or renew the deadline. [Schema-only branches](https://neon.com/docs/guides/branching-schema-only) consume Neon's root-branch quota. Fork and Dependabot PRs are skipped, and no PR application code is executed with the API key.
+
+This workflow manages database branches only: it does not deploy a preview app, configure preview Auth, or run Corner migrations. Schema-only copies omit migration-history rows too; future migration automation needs an explicit baseline strategy for the copied schema rather than blindly applying the bootstrap migration.
+
 ### Main source areas
 
 | Folder | Responsibility |

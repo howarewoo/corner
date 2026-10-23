@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { ArrowRight, Check, ChevronLeft, Loader2, Mail } from 'lucide-react';
+import { createAuthClient } from '@neondatabase/auth';
+import { BetterAuthVanillaAdapter } from '@neondatabase/auth/vanilla/adapters';
 import { api, post, RequestError } from './api';
 
 export type AccountPolicy = { emailVerificationRequired: boolean; passwordResetAvailable: boolean };
@@ -35,6 +37,9 @@ function readableError(failure: unknown): string {
 }
 
 export default function AccountAccess({ onSignedIn, initialRoute = emptyRoute }: { onSignedIn: () => Promise<void>; initialRoute?: AccountRoute }) {
+  const [authClient] = useState(() => createAuthClient(new URL('/api/auth', window.location.origin).href, {
+    adapter: BetterAuthVanillaAdapter({ fetchOptions: { credentials: 'same-origin', cache: 'no-store', retry: 0 } }),
+  }));
   const [mode, setMode] = useState<Mode>(() => initialRoute.kind === 'reset' ? initialRoute.token ? 'reset' : 'reset-invalid' : 'signin');
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -112,13 +117,15 @@ export default function AccountAccess({ onSignedIn, initialRoute = emptyRoute }:
     const pending = begin(); if (!pending) return;
     const submittedEmail = email.trim();
     try {
-      const result = await post<{ token?: string | null }>(`/api/auth/${signup ? 'sign-up' : 'sign-in'}/email`, {
-        email: submittedEmail, password,
-        ...(signup ? { name: name.trim() } : {}),
-      }, pending.controller.signal);
+      const credentials = { email: submittedEmail, password };
+      const options = { signal: pending.controller.signal };
+      const result = signup
+        ? await authClient.signUp.email({ ...credentials, name: name.trim() }, options)
+        : await authClient.signIn.email(credentials, options);
+      if (result.error) throw new RequestError(result.error.message || 'Sign-in could not be completed. Please try again.', result.error.status, result.error.code);
       if (!current(pending.id)) return;
       setEmail(submittedEmail); setPassword('');
-      if (signup && (policy.emailVerificationRequired || result?.token === null)) { show('verify'); return; }
+      if (signup && (policy.emailVerificationRequired || result.data?.token === null)) { show('verify'); return; }
       await onSignedInRef.current();
     } catch (failure) {
       if (!current(pending.id)) return;
