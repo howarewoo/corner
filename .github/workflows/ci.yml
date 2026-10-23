@@ -48,11 +48,14 @@ jobs:
       - name: Run workspace tests
         run: pnpm test
 
-      - name: Build workspaces
-        run: pnpm run build
+      - name: Build workspaces and bundle the Worker
+        run: pnpm run build:workers
 
       - name: Check compiled production HTTP behavior
         run: pnpm run smoke
 
       - name: Check three-workspace development behavior
         run: pnpm run smoke:dev
+
+      - name: Check hosted Workers runtime behavior
+        run: pnpm run smoke:workers

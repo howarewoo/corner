@@ -59,6 +59,9 @@ The build compiles `@corner/shared`, then builds `@corner/server` and `@corner/w
 | `pnpm run smoke:dev` | Actual two-app development proxy, session, and shared-catalog checks |
 | `pnpm start` | The compiled production server and built web app |
 | `pnpm run db:migrate` | Apply checked-in PostgreSQL migrations through `DATABASE_URL_UNPOOLED`, after a build |
+| `pnpm run build:workers` | Build all workspaces and dry-run the Cloudflare Worker/assets bundle without deploying |
+| `pnpm run deploy:workers` | Build and publish the configured Cloudflare Worker and web assets |
+| `pnpm run smoke:workers` | Actual local workerd, PostgreSQL, and HTTPS Auth fixture checks, after a build |
 
 For a focused build, use `pnpm run build --filter=@corner/server` or `pnpm run build --filter=@corner/web`. Turbo also builds their shared dependency. Each app declares its own dependencies; domain models and validation are imported through `@corner/shared/<module>` rather than relative paths into the other app.
 
@@ -158,9 +161,11 @@ Hosted mode requires an HTTPS origin, the Neon Postgres/Auth URLs, and independe
 
 Neon owns password recovery, verification codes, session expiry, and managed service rate limits. Corner retains its code-entry, reset-password, loading, and error screens, and requires a live managed session before every protected request. No real inbox delivery is implied by an enabled policy.
 
-For a server you control, follow **HOSTING.md**. The hosted Compose template runs one Corner container behind Caddy. `scripts/init-hosted.mjs` creates independent private keys without printing or overwriting them; it does not create a cloud server or configure DNS or SMTP.
+For **Cloudflare Workers**, follow [HOSTING.md → Cloudflare Workers](HOSTING.md#cloudflare-workers). The hosted-only Worker serves the built interface and existing API using Neon, request-scoped database pools, and Cloudflare secrets. Configure your canonical custom domain, upload the existing application keys, and run explicit migrations before `pnpm run deploy:workers`. `pnpm run build:workers` only builds/dry-runs; it does not publish.
 
-Keep one Corner process: agent background tasks still execute in memory, and startup fails interrupted runs. Moving persistence to Postgres is not a multi-instance cutover. Hosted ChatGPT access remains disabled pending the applicable approved integration; there is no separately billed fallback.
+For a **server you control**, the same guide covers one Corner container behind Caddy. `scripts/init-hosted.mjs` creates independent private keys without printing or overwriting them; it does not create a cloud server or configure DNS or SMTP.
+
+Keep one Corner **Node process** because its agent background tasks execute in memory and startup fails interrupted runs. The Workers entrypoint does not perform that process-wide recovery or start inference. Hosted ChatGPT access remains disabled on both platforms pending an approved integration; there is no separately billed fallback.
 
 ## Development and verification
 
@@ -173,13 +178,15 @@ pnpm test
 pnpm run build
 pnpm run smoke
 pnpm run smoke:dev
+pnpm run build:workers
+pnpm run smoke:workers
 ```
 
 Server tests and both smoke checks require `CORNER_TEST_DATABASE_URL`; they never fall back to the real `DATABASE_URL`. Each fixture owns a random PostgreSQL schema and drops only that schema. Test files still run sequentially in separate processes. Better Auth is a **test-only** dependency for a local managed-service fixture; no test sends real account email or model requests.
 
 Production smoke starts disposable compiled servers on loopback ports 43137 and 43138. Development smoke starts all Turbo development processes on 43139 and 43140. Both use actual PostgreSQL and a private local HTTPS auth fixture, exercise cookie sessions and proxy boundaries, and clean up only their own resources. Run development smoke in a clean checkout without `.env`, `.env.local`, or Vite environment files; never remove a user's configuration just to pass it.
 
-CI provisions PostgreSQL, then runs tests, build, and both smoke checks. It does not deploy or run the separate `pnpm run check` command. Tests cover owner isolation, concurrent/idempotent writes, atomic proposal application, stale plans, cancellation, protected history, OAuth identity/PKCE, encrypted credentials, refresh/disconnect races, and inference stream validation.
+CI provisions PostgreSQL, then runs tests, builds the apps/Worker, and runs production, development, and Workers smoke checks. It does not deploy or run the separate root `check` command. Tests cover owner isolation, concurrent/idempotent writes, atomic proposal application, stale plans, cancellation, protected history, OAuth identity/PKCE, encrypted credentials, refresh/disconnect races, and inference stream validation.
 
 The provider contract is implemented against the official documentation above. A real account must complete consent before live subscription inference can be verified. Browser visual verification and Docker execution are reported separately in the release notes; automated success should not be mistaken for those checks.
 

@@ -1,3 +1,17 @@
+# Cloudflare Workers deployment preparation
+
+Added a hosted-only Fetch entrypoint and pinned Wrangler tooling in `apps/server`, with Workers Static Assets for the built interface. Account/workspace/history routes retain the existing managed-session boundary and PostgreSQL transaction/receipt rules. Pools are request-scoped and closed before returning; isolates never generate private keys or perform process-wide agent recovery. Hosted ChatGPT authorization/inference remains disabled.
+
+Configuration validation is shared without importing the Node filesystem adapter into Workers. Explicitly supplied keys no longer require creating a local data directory. Added root `build:workers`, `deploy:workers`, and `smoke:workers` commands, CI Worker bundling/smoke coverage, native workerd build-script approval, and Git/Docker exclusions for `.dev.vars` and `.wrangler`. Deployment instructions cover custom domains, Cloudflare secrets, Neon OTP/SMTP, controlled migrations, cutover, backups, and rollback. Automatic invocation logs are disabled to avoid retaining reset-link query tokens.
+
+Verification on Node 24.21.0: `pnpm run check`, `pnpm test` (9/9 server and 3/3 web files), `pnpm run build:workers`, `pnpm run smoke`, `pnpm run smoke:workers`, and `actionlint` for both workflows passed. The actual local workerd runtime served static/deep-link assets and exercised secure account cookies, sign-out, canonical-origin rejection, owner isolation, concurrent idempotent PostgreSQL writes, and the hosted AI gate against disposable local PostgreSQL/HTTPS Auth fixtures. The final dry-run bundle was 218.12 KiB gzipped.
+
+A credential-free temporary source snapshot passed offline frozen installation, a clean build, and `pnpm run smoke:dev`, covering all three development processes, catalog serving, filesystem isolation, proxy/callback/session handling, and owned-process cleanup. The task-owned snapshot and disposable PostgreSQL container were removed afterward.
+
+No Cloudflare resources were deployed, production migrations run, real account email delivered, or model requests made. Public custom-domain TLS, production Neon connectivity from Cloudflare, SMTP inbox recovery, and a live GitHub Actions run remain unverified. The existing Better Call/Zod peer warning and Vite chunk-size advisory remain.
+
+---
+
 # pnpm workspace migration
 
 The repository now pins pnpm 10.33.2, with one `pnpm-lock.yaml` and workspace membership, existing Better Auth overrides, and esbuild build-script approval in `pnpm-workspace.yaml`. Internal shared-package dependencies use `workspace:*`. The npm lockfile and npm workspace configuration have been removed.

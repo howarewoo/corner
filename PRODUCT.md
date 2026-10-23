@@ -18,7 +18,7 @@ The agreed direction is a future hosted service. Near-term priorities are daily 
 
 ## Operating Context
 
-Today, Corner is a self-hostable web application using managed Neon Auth email/password accounts and owner-scoped Neon Postgres workspaces. Local development and production setup are documented in [README.md](README.md); the optional single-server HTTPS deployment is documented in [HOSTING.md](HOSTING.md).
+Today, Corner is a self-hostable web application using managed Neon Auth email/password accounts and owner-scoped Neon Postgres workspaces. Local setup is documented in [README.md](README.md); Cloudflare Workers and the optional single-server HTTPS deployment are documented in [HOSTING.md](HOSTING.md).
 
 A person sets up their profile or imports a Corner JSON export, plans meals and training, records what actually happened, and reviews progress. Manual tools work without an AI connection. Corner sign-in and ChatGPT authorization are separate; losing model access must not prevent manual tracking.
 
@@ -35,7 +35,7 @@ Corner does not read ChatGPT conversations, memories, an original Corner Site, o
 - Optional local ChatGPT authorization for planning, recipe drafts, and food estimates. Model access depends on the connected account. Drafts and estimates require user review before saving.
 - AI proposals can change plans and targets only after explicit approval. They cannot invent food eaten, measurements, or completed training, or overwrite started or recorded workouts. Applying a stale proposal is rejected.
 
-The runtime remains one Corner process, now backed by Neon Postgres rather than SQLite. Agent tasks still run in memory; this is not a multi-instance service. Hosted mode has no enabled AI connection or alternate inference provider.
+The Node runtime remains one Corner process, backed by Neon Postgres; its agent tasks still run in memory. The hosted-only Cloudflare Workers runtime supports manual tools and persisted history without starting inference or running process-wide recovery. Hosted mode has no enabled AI connection or alternate inference provider on either platform.
 
 ### Agreed direction
 
@@ -45,7 +45,7 @@ Account isolation, user-authored activity records, and explicit approval of AI c
 
 ### Open decisions
 
-Hosted capacity targets, pricing, launch criteria, worker topology, and quantitative usability or planning-quality targets remain undecided. Storage and account services now use Neon; an approved hosted AI implementation remains dependent on access to its real provider contract.
+Hosted capacity targets, pricing, launch criteria, and any future distributed AI-worker topology remain undecided. Storage and account services use Neon; hosted manual tracking can run on Cloudflare Workers. An approved hosted AI implementation remains dependent on access to its real provider contract.
 
 ## Evidence on Hand
 

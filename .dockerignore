@@ -10,3 +10,6 @@
 **/*.tgz
 **/*.tar.gz
 **/*.log
+**/.wrangler
+**/.dev.vars
+**/.dev.vars.*

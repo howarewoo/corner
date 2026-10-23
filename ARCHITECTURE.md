@@ -7,7 +7,7 @@ This describes the implemented architecture and the boundaries a change must pre
 | Area | Responsibility and entrypoints |
 | --- | --- |
 | `apps/web` | React/Vite interface. [main.tsx](apps/web/src/main.tsx) bootstraps sessions and onboarding; [corner-app.tsx](apps/web/src/components/corner-app.tsx) owns the main workspace shell; training and agent features have dedicated panels. |
-| `apps/server` | Node HTTP runtime, accounts, persistence, mail, and AI integration. [index.ts](apps/server/src/index.ts) composes dependencies and serves HTTP/static assets; [app.ts](apps/server/src/app.ts) handles account/workspace routes; [ai-routes.ts](apps/server/src/ai-routes.ts) handles connection and agent routes. |
+| `apps/server` | Accounts, persistence, and AI integration. [index.ts](apps/server/src/index.ts) composes the single-process Node runtime; [worker.ts](apps/server/src/worker.ts) composes hosted-only Workers requests/static assets. [app.ts](apps/server/src/app.ts) handles account/workspace routes; [ai-routes.ts](apps/server/src/ai-routes.ts) handles connection and agent routes. |
 | `packages/shared` | Types, Zod schemas, domain mutations, nutrition/training calculations, proposal rules, and exercise data. Start with [domain.ts](packages/shared/src/domain.ts), [training.ts](packages/shared/src/training.ts), and [agent.ts](packages/shared/src/agent.ts). |
 | `scripts` | Workspace test runner, disposable production/development smoke checks, hosted configuration initializer, health check, and source packaging. |
 | `deployment` | [Caddy edge configuration](deployment/caddy/Caddyfile) for the optional hosted Compose deployment. |
@@ -21,6 +21,10 @@ Development runs three Turbo tasks: Vite on browser port `3000`, the API on loop
 Production runs compiled JavaScript from `apps/server/dist`; the same Node process serves `apps/web/dist` and API routes on one origin. It runs neither Vite nor a TypeScript loader. The hosted template adds Caddy in front of this process, not a second application backend.
 
 [config.ts](apps/server/src/config.ts) resolves data paths from the repository root, independent of workspace working directory. [index.ts](apps/server/src/index.ts) validates the canonical Host; account and workspace writes also require the configured origin. [request-identity.ts](apps/server/src/request-identity.ts) accepts forwarded client identity only with the configured proxy proof. Preserve these boundaries when changing the proxy or callback path; do not trust arbitrary forwarding headers. Deployment details remain in [HOSTING.md](HOSTING.md#proxy-boundary).
+
+Cloudflare Workers use [wrangler.jsonc](apps/server/wrangler.jsonc) to bundle the same web assets and a native Fetch entrypoint. All requests run through the Worker before asset serving, preserving canonical-origin checks, API no-store policy, static security headers, and account-reset deep links. [runtime-config.ts](apps/server/src/runtime-config.ts) validates both runtimes; the Node-only [config.ts](apps/server/src/config.ts) adapter resolves repository paths and generates/reads keys only when explicit secrets are absent. Workers require explicit secret bindings and never import that filesystem adapter at runtime.
+
+The Worker creates/closes one PostgreSQL pool within each API request; sockets are never cached across isolates/requests. It always supplies hosted configuration to the existing provider, so fresh inference remains forbidden while owned persisted history and proposal application retain their existing validation. It deliberately skips provider registration and the Node agent's process-start recovery: an isolate starting is not a global server restart. No distributed background-agent execution is implemented. See [Workers deployment](HOSTING.md#cloudflare-workers) for origin, keys, migration, and cutover procedures.
 
 ## Accounts and workspace persistence
 
@@ -70,7 +74,7 @@ Overlapping Apply requests replay a completed application rather than treating i
 
 Recipe generation returns a draft; food estimation returns clarification or an editable estimate. Neither saves a recipe or food log automatically. Planning results may also be questions or advice with no mutations.
 
-Run records persist, but background tasks still execute in memory in one process. Startup marks interrupted runs failed rather than resuming them. Agent admission is transactionally serialized so asynchronous SQL does not weaken idempotency or concurrency limits. Shutdown stops new agent work, drains accepted handlers/tasks, and closes the PostgreSQL pool. Keep one Corner process; Postgres alone does not establish multi-instance readiness.
+In the Node runtime, run records persist but background tasks still execute in memory in one process. Startup marks interrupted runs failed rather than resuming them. Agent admission is transactionally serialized so asynchronous SQL does not weaken idempotency or concurrency limits. Shutdown stops new agent work, drains accepted handlers/tasks, and closes the PostgreSQL pool. Keep one Corner Node process; Workers support hosted requests without new inference, not distributed execution of these tasks.
 
 ## Credentials and provider availability
 

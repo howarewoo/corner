@@ -12,3 +12,6 @@ dist/
 coverage/
 *.log
 .neon
+.wrangler/
+.dev.vars
+.dev.vars.*

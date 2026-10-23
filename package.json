@@ -21,7 +21,10 @@
     "db:migrate": "node --env-file-if-exists=.env.local --env-file-if-exists=.env apps/server/dist/migrate.js --apply",
     "smoke": "node scripts/smoke.mjs",
     "package": "python3 scripts/package.py",
-    "smoke:dev": "node scripts/dev-smoke.mjs"
+    "smoke:dev": "node scripts/dev-smoke.mjs",
+    "build:workers": "pnpm run build && pnpm --filter @corner/server exec wrangler deploy --dry-run --outdir dist/worker",
+    "deploy:workers": "pnpm run build && pnpm --filter @corner/server exec wrangler deploy",
+    "smoke:workers": "node scripts/workers-smoke.mjs"
   },
   "devDependencies": {
     "turbo": "2.11.10"

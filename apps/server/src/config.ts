@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { chmodSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { loadRuntimeConfig } from './runtime-config.js';
 
 // Both src/config.ts and the compiled dist/config.js live three levels below
 // the repository root. Workspace scripts must share one stable data location.
@@ -24,13 +25,6 @@ export type Config = {
 type LocalSecrets = { authSecret: string; tokenEncryptionKey: string };
 
 
-function encryptionKey(value: string): Buffer {
-  if (!/^[A-Za-z0-9+/]{43}=$/.test(value)) throw new Error('CORNER_TOKEN_ENCRYPTION_KEY must be a base64-encoded 32-byte key.');
-  const decoded = Buffer.from(value, 'base64');
-  if (decoded.length !== 32 || decoded.toString('base64') !== value) throw new Error('CORNER_TOKEN_ENCRYPTION_KEY must be a base64-encoded 32-byte key.');
-  return decoded;
-}
-
 function localSecrets(dataDir: string): LocalSecrets {
   const file = join(dataDir, 'private-config.json');
   try {
@@ -50,61 +44,19 @@ function localSecrets(dataDir: string): LocalSecrets {
   if (!secrets || typeof secrets.authSecret !== 'string' || secrets.authSecret.length < 32 || typeof secrets.tokenEncryptionKey !== 'string') {
     throw new Error('The local private configuration is invalid. Restore it from your backup.');
   }
-  encryptionKey(secrets.tokenEncryptionKey);
   return secrets as LocalSecrets;
 }
 
 /** Reads configuration without printing credentials or silently rotating keys. */
 export function loadConfig(environment: NodeJS.ProcessEnv = process.env, options: { development?: boolean } = {}): Config {
-  const development = options.development === true;
-  const deployment = environment.CORNER_DEPLOYMENT ?? 'local';
-  if (deployment !== 'local' && deployment !== 'hosted') throw new Error('CORNER_DEPLOYMENT must be local or hosted.');
-  const databaseUrl = environment.DATABASE_URL;
-  if (!databaseUrl) throw new Error('DATABASE_URL is required. Run neon deploy to pull Neon configuration.');
-  try {
-    if (!['postgres:', 'postgresql:'].includes(new URL(databaseUrl).protocol)) throw new Error();
-  } catch { throw new Error('DATABASE_URL must be a PostgreSQL connection URL.'); }
-  const authUrl = environment.NEON_AUTH_BASE_URL;
-  if (!authUrl) throw new Error('NEON_AUTH_BASE_URL is required. Run neon deploy to pull Neon configuration.');
-  let neonAuthBaseUrl: string;
-  try {
-    const parsed = new URL(authUrl);
-    if (parsed.protocol !== 'https:' || parsed.username || parsed.password || parsed.search || parsed.hash) throw new Error();
-    neonAuthBaseUrl = parsed.href.replace(/\/$/, '');
-  } catch { throw new Error('NEON_AUTH_BASE_URL must be an HTTPS service URL.'); }
-  if (environment.NEON_AUTH_REQUIRE_EMAIL_VERIFICATION !== undefined && !['true', 'false'].includes(environment.NEON_AUTH_REQUIRE_EMAIL_VERIFICATION)) throw new Error('NEON_AUTH_REQUIRE_EMAIL_VERIFICATION must be true or false.');
-  const neonAuthRequireEmailVerification = environment.NEON_AUTH_REQUIRE_EMAIL_VERIFICATION === 'true';
-  const port = Number(development ? (environment.CORNER_DEV_API_PORT ?? 3001) : (environment.CORNER_PORT ?? environment.PORT ?? 3000));
-  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error(`${development ? 'CORNER_DEV_API_PORT' : 'CORNER_PORT'} must be a valid TCP port.`);
-  const rawOrigin = environment.CORNER_ORIGIN ?? (deployment === 'local' ? `http://127.0.0.1:${development ? 3000 : port}` : '');
-  let url: URL;
-  try { url = new URL(rawOrigin); } catch { throw new Error('Set CORNER_ORIGIN to the public origin of this application.'); }
-  if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.pathname !== '/' || url.search || url.hash) {
-    throw new Error('CORNER_ORIGIN must contain only an HTTP or HTTPS origin.');
-  }
-  if (deployment === 'hosted' && url.protocol !== 'https:') throw new Error('Hosted deployments require an HTTPS CORNER_ORIGIN.');
-  if (deployment === 'local' && !['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname)) {
-    throw new Error('Local deployments require a loopback CORNER_ORIGIN. Use hosted mode for a public origin.');
-  }
-  if (development && Number(url.port || (url.protocol === 'https:' ? 443 : 80)) === port) throw new Error('CORNER_DEV_API_PORT must differ from the browser port in CORNER_ORIGIN.');
-  const host = development ? '127.0.0.1' : environment.CORNER_HOST ?? '127.0.0.1';
-  if (!host || /[\s/\\]/.test(host)) throw new Error('CORNER_HOST must be a bind address.');
   const dataDir = resolve(REPOSITORY_ROOT, environment.CORNER_DATA_DIR ?? 'data');
-  let authSecret = environment.BETTER_AUTH_SECRET;
-  let encodedKey = environment.CORNER_TOKEN_ENCRYPTION_KEY;
-  if (deployment === 'hosted' && (!authSecret || !encodedKey)) throw new Error('Hosted deployments require BETTER_AUTH_SECRET and CORNER_TOKEN_ENCRYPTION_KEY.');
-  // Validate supplied values before creating anything on disk.
-  if (authSecret !== undefined && authSecret.length < 32) throw new Error('BETTER_AUTH_SECRET must contain at least 32 characters.');
-  if (encodedKey !== undefined) encryptionKey(encodedKey);
-  const proxySecret = environment.CORNER_PROXY_SECRET;
-  if (proxySecret !== undefined && (proxySecret.trim().length < 32 || /[\r\n\u0000]/.test(proxySecret))) throw new Error('CORNER_PROXY_SECRET must contain at least 32 characters and no line breaks.');
-  mkdirSync(dataDir, { recursive: true, mode: 0o700 });
-  if (lstatSync(dataDir).isSymbolicLink() || !lstatSync(dataDir).isDirectory()) throw new Error('CORNER_DATA_DIR must be a private directory.');
-  chmodSync(dataDir, 0o700);
-  if (!authSecret || !encodedKey) {
-    const saved = localSecrets(dataDir);
-    authSecret ??= saved.authSecret;
-    encodedKey ??= saved.tokenEncryptionKey;
-  }
-  return { origin: url.origin, host, port, dataDir, deployment, databaseUrl, neonAuthBaseUrl, neonAuthRequireEmailVerification, authSecret, tokenEncryptionKey: encryptionKey(encodedKey), ...(proxySecret ? { proxySecret } : {}) };
+  return loadRuntimeConfig(environment, {
+    ...options, dataDir,
+    localSecrets: () => {
+      mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+      if (lstatSync(dataDir).isSymbolicLink() || !lstatSync(dataDir).isDirectory()) throw new Error('CORNER_DATA_DIR must be a private directory.');
+      chmodSync(dataDir, 0o700);
+      return localSecrets(dataDir);
+    },
+  });
 }

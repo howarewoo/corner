@@ -51,13 +51,13 @@ test('relative data paths resolve from the repository root even when a workspace
 });
 
 test('supplied secrets stay out of the local config and hosted settings fail closed', () => {
-  const dataDir = temporary();
+  const dataDir = join(temporary(), 'no-filesystem-required');
   const env = { ...neonEnvironment, CORNER_DATA_DIR: dataDir, CORNER_DEPLOYMENT: 'hosted', CORNER_ORIGIN: 'https://corner.example', BETTER_AUTH_SECRET: 'unit-test-secret-of-more-than-thirty-two-characters', CORNER_TOKEN_ENCRYPTION_KEY: Buffer.alloc(32, 7).toString('base64') };
   assert.throws(() => loadConfig({ ...neonEnvironment, ...env, BETTER_AUTH_SECRET: undefined }), /Hosted deployments require/);
   assert.throws(() => loadConfig({ ...neonEnvironment, ...env, CORNER_ORIGIN: 'http://corner.example' }), /HTTPS/);
   assert.throws(() => loadConfig({ ...neonEnvironment, ...env, CORNER_TOKEN_ENCRYPTION_KEY: 'not-a-key' }), /32-byte/);
   assert.equal(loadConfig(env).deployment, 'hosted');
-  assert.equal(existsSync(join(dataDir, 'private-config.json')), false);
+  assert.equal(existsSync(dataDir), false);
   assert.throws(() => loadConfig({ ...neonEnvironment, CORNER_DATA_DIR: dataDir, CORNER_ORIGIN: 'http://public.example' }), /loopback/);
 });
 
