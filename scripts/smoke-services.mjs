@@ -6,14 +6,14 @@ import { readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
-import { createDatabase } from '../apps/server/dist/database.js';
-import { migrate } from '../apps/server/dist/migrate.js';
 
 const require = createRequire(new URL('../apps/server/package.json', import.meta.url));
 const { betterAuth } = await import(require.resolve('better-auth'));
 const { getMigrations } = await import(require.resolve('better-auth/db/migration'));
 
-export async function startSmokeServices(directory, origin) {
+export async function startSmokeServices(directory, origin, initialize, databaseFactory) {
+  const createDatabase = databaseFactory ?? (await import('../apps/server/dist/database.js')).createDatabase;
+  initialize ??= (await import('../apps/server/dist/migrate.js')).migrate;
   if (!process.env.CORNER_TEST_DATABASE_URL) throw new Error('Set CORNER_TEST_DATABASE_URL to a disposable PostgreSQL database.');
   const url = new URL(process.env.CORNER_TEST_DATABASE_URL);
   const admin = createDatabase(url.href);
@@ -31,7 +31,7 @@ export async function startSmokeServices(directory, origin) {
     finally { await admin.end(); }
   }
   try {
-    await migrate(database);
+    await initialize(database);
     execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', key, '-out', certificate, '-days', '1', '-subj', '/CN=127.0.0.1', '-addext', 'subjectAltName=IP:127.0.0.1'], { stdio: 'ignore' });
     let auth;
     server = createServer({ key: await readFile(key), cert: await readFile(certificate) }, async (request, response) => {
@@ -57,6 +57,6 @@ export async function startSmokeServices(directory, origin) {
     await (await getMigrations(options)).runMigrations();
     auth = betterAuth(options);
     await auth.$context;
-    return { databaseUrl: url.href, authUrl: baseUrl, certificate, close };
+    return { database, databaseUrl: url.href, authUrl: baseUrl, certificate, close };
   } catch (error) { await close(); throw error; }
 }

@@ -61,3 +61,23 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      - name: Package the exact main revision without rebuilding
+        if: github.event_name == 'push'
+        run: >-
+          pnpm run release:package -- "$RUNNER_TEMP/release/candidate"
+          --source "$GITHUB_SHA"
+
+      - name: Qualify the packaged Worker and migrator
+        if: github.event_name == 'push'
+        run: >-
+          pnpm run release:qualify -- "$RUNNER_TEMP/release/candidate"
+          --bootstrap --report "$RUNNER_TEMP/release/qualification.json"
+
+      - name: Upload qualified release candidate
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: corner-release-${{ github.sha }}
+          path: ${{ runner.temp }}/release/
+          if-no-files-found: error
+          retention-days: 90

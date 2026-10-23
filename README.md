@@ -221,6 +221,8 @@ Without `--apply`, configuration only prints its proposal. Applying configures r
 
 `--report` appends profile/command elapsed times as JSONL, not a qualification receipt. Compare at least three docs/web/full runs with the same runner and cache conditions; report the median, cold-install cost, and runner cost separately. No speed SLA or CI saving is inferred from a plan preview or Turbo cache hit.
 
+Main always runs the full profile, then packages and exercises the standalone payload before uploading `corner-release-<sourceSHA>` with 90-day retention. Keep artifacts referenced by current/recovery deployments available; missing or expired artifacts block promotion. CI does not deploy. Release controls and operator evidence are described in [HOSTING.md](HOSTING.md#build-migrate-and-release).
+
 The provider contract is implemented against the official documentation above. A real account must complete consent before live subscription inference can be verified. Browser visual verification and Docker execution are reported separately in the release notes; automated success should not be mistaken for those checks.
 
 ### Pull-request database branches

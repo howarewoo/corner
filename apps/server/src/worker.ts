@@ -10,6 +10,7 @@ import { connectionDTO, createAIRouter } from './ai-routes.js';
 
 export type WorkerEnvironment = {
   ASSETS: { fetch(request: Request): Promise<Response> };
+  CF_VERSION_METADATA?: { id: string; tag?: string; timestamp?: string };
   CORNER_ORIGIN: string;
   DATABASE_URL: string;
   NEON_AUTH_BASE_URL: string;
@@ -73,7 +74,9 @@ export default {
           aiAvailable: async principal => connectionDTO(await provider.status(principal.userId)).available,
           extraRoutes: createAIRouter(provider, agent),
         });
-        return secure(await app.fetch(incoming), true);
+        const result = secure(await app.fetch(incoming), true);
+        if (url.pathname === '/api/health' && env.CF_VERSION_METADATA?.id) result.headers.set('X-Corner-Version', env.CF_VERSION_METADATA.id);
+        return result;
       } finally {
         await agent.close();
         await db.end();
