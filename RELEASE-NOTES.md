@@ -1,3 +1,15 @@
+# CI development readiness and Neon preview creation
+
+The inherited development-smoke timeout also occurred on `main`: GitHub Actions grouped Turbo output until task exit, so persistent development tasks could serve a healthy API without emitting the readiness markers observed by the smoke check. The smoke subprocess now explicitly streams task-prefixed logs; ordinary interactive development retains its configured TUI.
+
+The branch-added Neon preview workflow requested an explicit 300-second suspend interval, which the project's Free account rejects with HTTP 412. It now passes `0`, Neon's plan-default sentinel, without changing schema-only copying, expiration, reuse, or deletion behavior.
+
+Observed on Node 24.21.0 in a credential-free source snapshot with an owned disposable PostgreSQL 17 container and `GITHUB_ACTIONS=true`: `pnpm test` (10/10 server and 3/3 web files), `pnpm run build:workers`, `pnpm run smoke`, `pnpm run smoke:dev`, and `pnpm run smoke:workers` passed. `actionlint` passed for both CI and Neon preview workflows. Existing Vite chunk-size advisories remain.
+
+An authorized live Neon reproduction using the pinned action's create-request fields returned HTTP 412 with “modifying the suspend interval is not permitted on this account.” Changing only the interval to `0` created the schema-only preview successfully. Both task-owned diagnostic branches/computes were deleted, and a branch-list read confirmed only `production` remained. No production data was written, account email sent, model request made, or application deployed. The GitHub Actions workflows themselves were not rerun.
+
+---
+
 # Existing palette adjustment
 
 Adjusted existing shared light colors from the supplied CSS reference and retuned existing dark colors toward neutral charcoal and muted sage. Token names are retained, catalog surfaces use `--background` again, and the temporary extra theme/component overrides were removed. The product and catalog continue to share the canonical light palette. Layout, component APIs, and interaction behavior are unchanged.

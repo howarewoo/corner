@@ -153,7 +153,9 @@ process.once('SIGTERM', onSignal);
 const deadline = setTimeout(() => interrupted.abort(new Error('The development smoke check exceeded its total deadline.')), 90_000);
 
 try {
-  child = spawn('pnpm', ['run', 'dev'], { cwd: root, env: environment, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+  // GitHub Actions groups logs until a task exits; persistent tasks never flush
+  // their readiness markers unless streaming task-prefixed output is explicit.
+  child = spawn('pnpm', ['run', 'dev', '--ui=stream', '--log-order=stream', '--log-prefix=task'], { cwd: root, env: environment, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
   exited = new Promise(resolve => {
     child.once('error', () => { childFinished = true; resolve(); });
     child.once('exit', () => { childFinished = true; resolve(); });

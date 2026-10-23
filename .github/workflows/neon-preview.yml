@@ -62,7 +62,8 @@ jobs:
           branch_type: schema-only
           api_key: ${{ secrets.NEON_API_KEY }}
           expires_at: ${{ env.EXPIRES_AT }}
-          suspend_timeout: '300'
+          # Free plans reject explicit intervals; 0 uses Neon's plan default.
+          suspend_timeout: '0'
           ssl: verify-full
 
   delete_neon_branch:
