@@ -10,6 +10,10 @@ services:
       CORNER_HOST: 0.0.0.0
       CORNER_PORT: "3000"
       CORNER_DATA_DIR: /app/data
+      DATABASE_URL: ${DATABASE_URL:?Pull the Neon pooled DATABASE_URL}
+      DATABASE_URL_UNPOOLED: ${DATABASE_URL_UNPOOLED:?Pull the Neon direct URL for migrations}
+      NEON_AUTH_BASE_URL: ${NEON_AUTH_BASE_URL:?Pull NEON_AUTH_BASE_URL}
+      NEON_AUTH_REQUIRE_EMAIL_VERIFICATION: ${NEON_AUTH_REQUIRE_EMAIL_VERIFICATION:-false}
     volumes:
       - corner-data:/app/data
     init: true

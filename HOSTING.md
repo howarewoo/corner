@@ -1,16 +1,16 @@
 # Host Corner on your own server
 
-This deployment uses one Corner application container and Caddy for public HTTPS. It works independently of a hosting plugin. The application has its own accounts and database. This guide does not create a server, register a domain, or purchase any service.
+This deployment uses one Corner application container and Caddy for public HTTPS, backed by Neon Postgres and managed Neon Auth. This guide does not create a server, register a domain, or purchase any service.
 
 The repository has separate `apps/server` and `apps/web` workspaces. The supplied production image builds both and serves the compiled web app through the API server to keep account cookies and callbacks on one origin. It runs no Vite or TypeScript loader.
 
-The supplied configuration is intended for one Linux server with Docker Engine and the Docker Compose plugin. Keep a single Corner instance while using SQLite. Deploying a new application image can briefly interrupt the service.
+The supplied configuration is intended for one Linux server with Docker Engine and the Docker Compose plugin. Keep a single Corner instance: agent tasks still run in memory. Deploying a new image can briefly interrupt service.
 
 ## 1. Prepare a hostname and email sender
 
 Choose a hostname you control, such as `corner.your-domain.com`. Point its DNS A record to your server. Add an AAAA record only if the server has the corresponding working public IPv6 address. Allow incoming TCP ports 80 and 443; UDP 443 is optional for HTTP/3.
 
-The current mail adapter uses Resend. Verify a sender domain in your own Resend account and create a sending API key. You can restrict it to the sender domain where supported. The sender must use that verified domain. Account creation and password recovery depend on actual mail delivery; configuration validation alone cannot prove inbox delivery.
+Initialize the intended Neon project with Postgres and Auth in `neon.ts`, then run `neon deploy` to provision services and pull their URLs. Register `https://corner.your-domain.com` with `neon neon-auth domain add`. Configure your own SMTP provider in Neon for production, enable required email verification with method **OTP**, and enable verification-code delivery on signup. Shared Neon SMTP is for development; it is not a production sender configuration.
 
 No real sender, key, DNS record, or cloud account is bundled with Corner. Keep credentials in the server configuration, not in frontend variables or source control.
 
@@ -30,45 +30,48 @@ docker run --rm -v "$PWD:/work" -w /work node:24-bookworm-slim node scripts/init
 
 The helper writes `.env.hosted` with owner-only file permissions and three independent random keys. It prints no secrets and refuses to overwrite an existing file. Preserve those keys across deployments. A container-run initializer may create a root-owned file; edit it with an appropriate local administrator account.
 
-Edit `.env.hosted` on the server and supply your `RESEND_API_KEY` and verified `CORNER_EMAIL_FROM`. For example, the sender's shape is `Corner <accounts@your-domain.com>`. The sample name is not a verified sender.
+Edit `.env.hosted` on the server and supply the pooled `DATABASE_URL`, direct `DATABASE_URL_UNPOOLED`, and `NEON_AUTH_BASE_URL` pulled by Neon. Keep URLs and private keys server-only.
 
 | Setting | Purpose |
 | --- | --- |
 | `CORNER_DOMAIN` | Public hostname without a protocol, port, or path |
-| `BETTER_AUTH_SECRET` | Signs independent Corner account sessions |
+| `BETTER_AUTH_SECRET` | Binds ChatGPT OAuth attempts to the managed Corner session; does not sign login cookies |
 | `CORNER_TOKEN_ENCRYPTION_KEY` | Encrypts stored model credentials; exactly 32 bytes encoded as base64 |
-| `CORNER_PROXY_SECRET` | Allows the HTTPS edge to attest the client IP used for account rate limits |
-| `RESEND_API_KEY` | Server-only account email delivery credential |
-| `CORNER_EMAIL_FROM` | Sender address on your verified domain |
+| `CORNER_PROXY_SECRET` | Allows the HTTPS edge to attest client identity; never trust arbitrary forwarding headers |
+| `DATABASE_URL` | Pooled Neon PostgreSQL application connection |
+| `DATABASE_URL_UNPOOLED` | Direct connection for explicit versioned migrations |
+| `NEON_AUTH_BASE_URL` | Full managed Auth URL, including its database/auth path |
 
-The Compose file derives `CORNER_ORIGIN` as `https://` plus the hostname. The application requires this exact canonical origin for account callbacks, cookies, and browser writes.
+Compose derives `CORNER_ORIGIN` from the hostname and sets `NEON_AUTH_REQUIRE_EMAIL_VERIFICATION=true`. The Neon branch policy must agree. Cookies, redirects, and unsafe browser requests remain restricted to the exact canonical origin.
 
 `.env.hosted` is excluded from Git, source packaging, and Docker build contexts. Make an encrypted backup of it separately from the source package. Do not regenerate its keys during an ordinary upgrade.
 
 ## 3. Launch
 
 ```bash
-docker compose --env-file .env.hosted -f compose.hosted.yaml up --build -d
+docker compose --env-file .env.hosted -f compose.hosted.yaml build
+docker compose --env-file .env.hosted -f compose.hosted.yaml run --rm --no-deps corner node apps/server/dist/migrate.js --apply
+docker compose --env-file .env.hosted -f compose.hosted.yaml up -d
 docker compose --env-file .env.hosted -f compose.hosted.yaml ps
 ```
 
 Open `https://corner.your-domain.com` after the containers become healthy and Caddy has issued its certificate. Caddy provisions and renews HTTPS certificates and redirects HTTP once the hostname, network, and persistent certificate storage are configured correctly.
 
-Only Caddy publishes host ports. Corner listens on the private Compose network and retains outbound access for account emails. Its data lives in the `corner-data` named volume; Caddy certificate data and configuration use separate named volumes.
+Only Caddy publishes host ports. Corner listens on the private Compose network and needs outbound HTTPS to managed Auth and PostgreSQL connectivity to Neon. The `corner-data` volume stores private local configuration, not account/workspace records. Caddy certificate data and configuration use separate named volumes.
 
-The health probe connects to the app's actual local port and sends its configured Host header. It does not call the email or AI provider. The process stops accepting requests during shutdown, finishes existing account handlers, drains pending mail, and closes SQLite. A fixed deadline ends a stuck shutdown before Docker's grace period expires.
+The health probe connects to the app's local port with its canonical Host; it does not prove managed Auth or database availability. Shutdown stops new work, finishes accepted requests, drains agent tasks, and closes the PostgreSQL pool within Docker's grace period. Schema changes run through the explicit migration command, never startup.
 
 ## 4. Verify the deployment
 
 Use your own email address for this first check:
 
-1. Create an account. The app should ask you to check your email without opening a workspace.
-2. Open the verification email and then sign in normally.
+1. Create an account. With verification required, no workspace should open before verification.
+2. Enter the verification code from the email, then sign in normally.
 3. Complete the profile and save a small manual plan or recipe.
 4. Sign out and request a password reset. Open the email, choose a new password, and sign in again.
 5. Confirm the saved record remains. An earlier session should no longer be authenticated after the reset.
 
-Reset and resend screens deliberately use conditional responses; they do not reveal whether another person has an account. Check the delivery provider's dashboard if an expected message does not arrive. The application logs only `ACCOUNT_MAIL_DELIVERY_FAILED` for a delivery problem, without recipient addresses, reset links, or credentials.
+Reset and verification delivery are managed by Neon. Check Neon's email configuration and provider diagnostics if a message does not arrive. Do not log or publish recipients, verification codes, reset links, connection strings, or session cookies.
 
 For application logs:
 
@@ -80,27 +83,15 @@ Do not publish logs or a resolved Compose configuration that could contain envir
 
 ## 5. Back up and upgrade
 
-Persistent volumes survive ordinary container replacement, but persistence is not a backup. Stop Corner before making a raw copy of its SQLite directory so the database and any WAL/SHM files are consistent.
+Neon persistence is not an independent backup. Use the restore/branch facilities available under your plan's retention policy, and maintain encrypted off-service PostgreSQL dumps using `DATABASE_URL_UNPOOLED`. Include application tables and managed `neon_auth` data according to Neon's documented backup/restore procedures. Test the recovery path for both sign-in and owner-scoped records.
 
-One portable archive sequence, run from the same project directory, is below. It creates a private backup directory outside the source/build context, uses owner-only archive permissions, refuses an existing filename, and restarts the app even if archiving fails:
+Back up `.env.hosted` and the original application encryption keys separately from the database. Preserve `corner-data` if local keys were generated there; the hosted template supplies keys explicitly. Keep Caddy certificate volumes persistent. Losing the encryption key makes saved ChatGPT credentials unreadable even when the database survives.
 
-```bash
-mkdir -p ../corner-backups
-chmod 700 ../corner-backups
-(
-  umask 077
-  set -C
-  docker compose --env-file .env.hosted -f compose.hosted.yaml stop corner || exit 1
-  trap 'docker compose --env-file .env.hosted -f compose.hosted.yaml start corner' EXIT
-  docker compose --env-file .env.hosted -f compose.hosted.yaml run --rm -T --no-deps --entrypoint tar corner -C /app/data -czf - . > "../corner-backups/corner-data-$(date -u +%Y%m%dT%H%M%SZ).tgz"
-)
-```
+Before an upgrade, back up, build the image, run the explicit migration command, then replace the single app container. Migrations in `apps/server/migrations` are ordered, checksummed, and transactional. Test schema changes on an isolated database/Neon branch first; do not edit applied migrations.
 
-Check that the archive command succeeded and the app restarted before relying on the file. Remove a partial archive after a failed backup. Keep an encrypted off-server copy and retain the matching `.env.hosted` keys. Protect backups as private account and health-related information. Keep Caddy's certificate volume persistent as well.
+Restore the database and its matching keys together, then verify account recovery, isolation, and saved plans before reopening access. Never run `docker compose down --volumes` when preserving private configuration or certificates.
 
-Before an upgrade, back up, replace the application source while preserving the project directory name, private configuration and volumes, then run the launch command again. Never use `docker compose down --volumes` when you want to keep the installation. Do not run multiple Corner processes against this SQLite volume.
-
-For restoration, stop the app, restore the full saved data directory into the correct volume and restore its original private keys, then start a compatible application version. Verify the account and plan records before opening access again. Replacing the encryption key does not decrypt existing model credentials.
+For an old SQLite installation, export each owner's workspace before cutover and retain its complete original database directory and keys. Managed accounts must be established separately; no identity is claimed by matching email. The empty-workspace import preserves supported records, but does not transfer old passwords, sessions, agent history, or model grants.
 
 ## Proxy boundary
 
@@ -116,7 +107,7 @@ A supported hosted integration can be added after that access exists. Do not rel
 
 ## Verification status for this release
 
-The Node application, account flows with simulated mail delivery, production build, proxy validation, health script, and process shutdown are tested. The Docker/Caddy configuration has been reviewed against official documentation. Docker execution, real certificate issuance, actual email delivery, and live ChatGPT inference have not been verified in this build environment.
+Node build, tests, local PostgreSQL smoke, live Neon service checks, and browser checks are reported in the latest `RELEASE-NOTES.md` entry. These do not prove the Docker/Caddy application deployment, public certificate issuance, SMTP inbox delivery, or live ChatGPT inference.
 
 Official deployment and integration references:
 
@@ -125,7 +116,9 @@ Official deployment and integration references:
 - https://hub.docker.com/_/caddy
 - https://docs.docker.com/compose/how-tos/networking/
 - https://docs.docker.com/engine/storage/volumes/
-- https://resend.com/docs/api-reference/emails/send-email
-- https://better-auth.com/docs/authentication/email-password
+- https://neon.com/docs/auth/production-checklist
+- https://neon.com/docs/auth/guides/configure-domains
+- https://neon.com/docs/connect/connection-pooling
+- https://neon.com/docs/introduction/branch-restore
 - https://developers.openai.com/siwc/token-sharing-open-source
 - https://developers.openai.com/siwc/request-client-id

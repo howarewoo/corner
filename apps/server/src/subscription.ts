@@ -1,5 +1,5 @@
 import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
-import type { DatabaseSync } from 'node:sqlite';
+import type { Pool } from 'pg'
 import { createLocalJWKSet, jwtVerify, type JSONWebKeySet, type JWTPayload } from 'jose';
 
 /**
@@ -96,6 +96,7 @@ interface TokenSet {
 }
 
 interface Registration {
+  generation: number;
   clientId: string;
   issuer: string | null;
   subject: string | null;
@@ -256,10 +257,10 @@ async function jsonResponse(response: Response, signal: AbortSignal): Promise<un
 }
 
 export class SubscriptionProvider {
-  private readonly db: DatabaseSync;
+  private readonly db: Pool;
   private readonly config: SubscriptionConfig;
   private readonly fetcher: Fetch;
-  private readonly hostId: string;
+  private hostId = '';
   private readonly refreshes = new Map<string, Promise<Registration>>();
   private readonly activeRequests = new Map<string, Set<AbortController>>();
   private discoveryCache?: { value: Discovery; until: number };
@@ -267,34 +268,18 @@ export class SubscriptionProvider {
   private jwksCache?: { value: ReturnType<typeof createLocalJWKSet>; until: number };
   private jwksPending?: Promise<ReturnType<typeof createLocalJWKSet>>;
 
-  constructor({ db, config, fetch: fetcher = globalThis.fetch }: { db: DatabaseSync; config: SubscriptionConfig; fetch?: Fetch }) {
+  constructor({ db, config, fetch: fetcher = globalThis.fetch }: { db: Pool; config: SubscriptionConfig; fetch?: Fetch }) {
     if (!Buffer.isBuffer(config.tokenEncryptionKey) || config.tokenEncryptionKey.byteLength !== 32) {
       throw new Error('Subscription token encryption requires a 32-byte key.');
     }
     this.db = db;
     this.config = config;
     this.fetcher = fetcher;
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS corner_subscription_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS corner_subscription_accounts (
-        user_id TEXT PRIMARY KEY,
-        encrypted TEXT NOT NULL,
-        version INTEGER NOT NULL DEFAULT 1,
-        refresh_owner TEXT,
-        refresh_until INTEGER NOT NULL DEFAULT 0
-      );
-      CREATE TABLE IF NOT EXISTS corner_subscription_attempts (
-        state_hash TEXT PRIMARY KEY,
-        user_id TEXT NOT NULL,
-        session_hash TEXT NOT NULL,
-        encrypted TEXT NOT NULL,
-        expires_at INTEGER NOT NULL
-      );
-      CREATE INDEX IF NOT EXISTS corner_subscription_attempt_owner ON corner_subscription_attempts(user_id);
-      CREATE TABLE IF NOT EXISTS corner_subscription_generations (user_id TEXT PRIMARY KEY, generation INTEGER NOT NULL);
-    `);
-    db.prepare('INSERT OR IGNORE INTO corner_subscription_meta(key, value) VALUES (?, ?)').run('host_id', `urn:uuid:${randomUUID()}`);
-    this.hostId = (db.prepare('SELECT value FROM corner_subscription_meta WHERE key = ?').get('host_id') as { value: string }).value;
+  }
+
+  async initialize(): Promise<void> {
+    await this.db.query('INSERT INTO corner_subscription_meta(key, value) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING', ['host_id', `urn:uuid:${randomUUID()}`]);
+    this.hostId = (await this.db.query('SELECT value FROM corner_subscription_meta WHERE key = $1', ['host_id'])).rows[0].value;
   }
 
   private supported(): boolean {
@@ -344,19 +329,71 @@ export class SubscriptionProvider {
     }
   }
 
-  private row(userId: string): StoredRow | undefined {
-    return this.db.prepare('SELECT * FROM corner_subscription_accounts WHERE user_id = ?').get(userId) as StoredRow | undefined;
+  private async row(userId: string): Promise<StoredRow | undefined> {
+    return (await this.db.query("SELECT * FROM corner_subscription_accounts WHERE user_id = $1", [userId])).rows[0] as StoredRow | undefined;
   }
 
-  private registration(userId: string): Registration | null {
-    const row = this.row(userId);
-    return row ? this.unseal<Registration>(userId, 'account', row.encrypted) : null;
+  private async registration(userId: string): Promise<Registration | null> {
+    return (await this.registrationSnapshot(userId)).registration;
   }
 
-  private save(userId: string, registration: Registration): void {
-    this.db.prepare(`INSERT INTO corner_subscription_accounts(user_id, encrypted) VALUES (?, ?)
-      ON CONFLICT(user_id) DO UPDATE SET encrypted = excluded.encrypted, version = corner_subscription_accounts.version + 1`)
-      .run(userId, this.seal(userId, 'account', registration));
+  // Read the encrypted registration, generation and CAS version in one SQL snapshot.
+  private async registrationSnapshot(userId: string): Promise<{ registration: Registration | null; version: number | null }> {
+    const row = (await this.db.query('SELECT a.encrypted, COALESCE(g.generation, 0) AS generation, a.version FROM corner_subscription_accounts a LEFT JOIN corner_subscription_generations g ON g.user_id = a.user_id WHERE a.user_id = $1', [userId])).rows[0];
+    const registration = row ? this.unseal<Registration>(userId, 'account', row.encrypted) : null;
+    if (registration) registration.generation = row.generation;
+    return { registration, version: row?.version ?? null };
+  }
+
+  // Field-specific writes merge inside a short owner-locked transaction that
+  // re-reads the sealed registration, so a rotation racing a catalog/model
+  // write keeps both the rotated credentials and the fresh unrelated fields.
+  // Merge closures never source credentials read outside this transaction.
+  private async mergeSave(
+    userId: string,
+    identity: { generation: number; clientId: string; subject: string | null; refreshToken?: string },
+    merge: (latest: Registration) => Registration | null,
+  ): Promise<Registration> {
+    const connection = await this.db.connect();
+    try {
+      await connection.query('BEGIN');
+      await connection.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`corner:subscription:${userId}`]);
+      const row = (await connection.query('SELECT a.encrypted, COALESCE(g.generation, 0) AS generation FROM corner_subscription_accounts a LEFT JOIN corner_subscription_generations g ON g.user_id = a.user_id WHERE a.user_id = $1', [userId])).rows[0];
+      if (!row) throw new SubscriptionError('connection_changed', 'The ChatGPT connection changed. Please try again.', 409);
+      const latest = this.unseal<Registration>(userId, 'account', row.encrypted);
+      latest.generation = row.generation;
+      if (latest.generation !== identity.generation || latest.clientId !== identity.clientId || latest.subject !== identity.subject
+        || (identity.refreshToken !== undefined && latest.tokens?.refreshToken !== identity.refreshToken)) {
+        throw new SubscriptionError('connection_changed', 'The ChatGPT connection changed. Please try again.', 409);
+      }
+      // A rotation may only persist credentials onto the exact registration it
+      // renewed; any interleaved change fails closed instead of resurrecting
+      // stale credentials or discarding another writer's fresh fields.
+      const next = merge(latest);
+      if (!next) { await connection.query('COMMIT'); return latest; }
+      await connection.query('UPDATE corner_subscription_accounts SET encrypted = $2, version = version + 1 WHERE user_id = $1', [userId, this.seal(userId, 'account', next)]);
+      await connection.query('COMMIT');
+      return next;
+    } catch (error) {
+      await connection.query('ROLLBACK');
+      throw error;
+    } finally { connection.release(); }
+  }
+
+  private async save(userId: string, registration: Registration, expectedVersion: number | null): Promise<void> {
+    const connection = await this.db.connect();
+    try {
+      await connection.query('BEGIN');
+      await connection.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`corner:subscription:${userId}`]);
+      const generation = (await connection.query('SELECT generation FROM corner_subscription_generations WHERE user_id = $1', [userId])).rows[0]?.generation ?? 0;
+      const version = (await connection.query('SELECT version FROM corner_subscription_accounts WHERE user_id = $1', [userId])).rows[0]?.version ?? null;
+      if (generation !== registration.generation || version !== expectedVersion) throw new SubscriptionError('connection_changed', 'The ChatGPT connection changed. Please try again.', 409);
+      await connection.query('INSERT INTO corner_subscription_accounts(user_id, encrypted) VALUES ($1, $2) ON CONFLICT(user_id) DO UPDATE SET encrypted = excluded.encrypted, version = corner_subscription_accounts.version + 1', [userId, this.seal(userId, 'account', registration)]);
+      await connection.query('COMMIT');
+    } catch (error) {
+      await connection.query('ROLLBACK');
+      throw error;
+    } finally { connection.release(); }
   }
 
   private sessionHash(sessionBinding?: string): string {
@@ -366,13 +403,22 @@ export class SubscriptionProvider {
     return createHmac('sha256', this.config.authSecret).update(sessionBinding!).digest('hex');
   }
 
-  private nextGeneration(userId: string): number {
-    return (this.db.prepare(`INSERT INTO corner_subscription_generations(user_id, generation) VALUES (?, 1)
-      ON CONFLICT(user_id) DO UPDATE SET generation = corner_subscription_generations.generation + 1 RETURNING generation`).get(userId) as { generation: number }).generation;
+  private async nextGeneration(userId: string): Promise<number> {
+    const connection = await this.db.connect();
+    try {
+      await connection.query('BEGIN');
+      await connection.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`corner:subscription:${userId}`]);
+      const row = (await connection.query('INSERT INTO corner_subscription_generations(user_id, generation) VALUES ($1, 1) ON CONFLICT(user_id) DO UPDATE SET generation = corner_subscription_generations.generation + 1 RETURNING generation', [userId])).rows[0];
+      await connection.query('COMMIT');
+      return row.generation;
+    } catch (error) {
+      await connection.query('ROLLBACK');
+      throw error;
+    } finally { connection.release(); }
   }
 
-  private generation(userId: string): number {
-    return (this.db.prepare('SELECT generation FROM corner_subscription_generations WHERE user_id = ?').get(userId) as { generation: number } | undefined)?.generation ?? 0;
+  private async generation(userId: string): Promise<number> {
+    return ((await this.db.query("SELECT generation FROM corner_subscription_generations WHERE user_id = $1", [userId])).rows[0] as { generation: number } | undefined)?.generation ?? 0;
   }
 
   async status(userId: string): Promise<SubscriptionStatus> {
@@ -385,7 +431,7 @@ export class SubscriptionProvider {
     };
     if (!base.supported) return { ...base, state: 'unavailable', message: 'ChatGPT plan connections are available in the local open-source app. Hosted integrations require OpenAI partner approval.' };
     let registration: Registration | null;
-    try { registration = this.registration(userId); } catch {
+    try { registration = (await this.registration(userId)); } catch {
       return { ...base, state: 'reauth_required', message: 'The saved ChatGPT connection could not be read. Disconnect and reconnect.' };
     }
     if (!registration) return base;
@@ -409,7 +455,7 @@ export class SubscriptionProvider {
     userKey(userId);
     this.ensureSupported();
     const sessionHash = this.sessionHash(sessionBinding);
-    const registration = this.registration(userId);
+    const registration = (await this.registration(userId));
     const state = randomBytes(32).toString('base64url');
     const verifier = randomBytes(48).toString('base64url');
     const nonce = randomBytes(32).toString('base64url');
@@ -419,11 +465,10 @@ export class SubscriptionProvider {
       clientId: registration?.clientId ?? null,
       issuer: registration?.issuer ?? null,
       subject: registration?.subject ?? null,
-      generation: this.nextGeneration(userId),
+      generation: (await this.nextGeneration(userId)),
     };
-    this.db.prepare('DELETE FROM corner_subscription_attempts WHERE expires_at < ? OR user_id = ?').run(Date.now(), userId);
-    this.db.prepare('INSERT INTO corner_subscription_attempts(state_hash, user_id, session_hash, encrypted, expires_at) VALUES (?, ?, ?, ?, ?)')
-      .run(hash(state), userId, sessionHash, this.seal(userId, 'attempt', pending), Date.now() + ATTEMPT_LIFETIME_MS);
+    await this.db.query("DELETE FROM corner_subscription_attempts WHERE expires_at < $1 OR user_id = $2", [Date.now(), userId]);
+    await this.db.query("INSERT INTO corner_subscription_attempts(state_hash, user_id, session_hash, encrypted, expires_at) VALUES ($1, $2, $3, $4, $5)", [hash(state), userId, sessionHash, this.seal(userId, 'attempt', pending), Date.now() + ATTEMPT_LIFETIME_MS]);
     const url = new URL(AUTHORIZE_URL);
     url.search = new URLSearchParams({
       client_id: pending.clientId ?? REGISTRATION_CLIENT,
@@ -451,14 +496,14 @@ export class SubscriptionProvider {
       if (url.searchParams.getAll(key).length > 1) throw new SubscriptionError('invalid_callback', 'The ChatGPT sign-in response was not valid.', 400);
     }
     const state = boundedString(url.searchParams.get('state'), 256);
-    const row = state ? this.db.prepare('SELECT * FROM corner_subscription_attempts WHERE state_hash = ?').get(hash(state)) as AttemptRow | undefined : undefined;
+    const row = state ? (await this.db.query("SELECT * FROM corner_subscription_attempts WHERE state_hash = $1", [hash(state)])).rows[0] as AttemptRow | undefined : undefined;
     if (!row || row.user_id !== userId || !equalSecret(row.session_hash, sessionHash) || row.expires_at < Date.now()) {
       throw new SubscriptionError('invalid_oauth_state', 'This ChatGPT sign-in does not belong to your current Corner session or has expired. Start again.', 400);
     }
     const pending = this.unseal<PendingAttempt>(userId, 'attempt', row.encrypted);
-    if (this.generation(userId) !== pending.generation) throw new SubscriptionError('invalid_oauth_state', 'This ChatGPT sign-in was superseded. Start again.', 400);
-    const consumed = this.db.prepare('DELETE FROM corner_subscription_attempts WHERE state_hash = ? AND user_id = ? AND session_hash = ?').run(row.state_hash, userId, sessionHash);
-    if (consumed.changes !== 1) throw new SubscriptionError('invalid_oauth_state', 'This ChatGPT sign-in was already used. Start again.', 400);
+    if ((await this.generation(userId)) !== pending.generation) throw new SubscriptionError('invalid_oauth_state', 'This ChatGPT sign-in was superseded. Start again.', 400);
+    const consumed = (await this.db.query("DELETE FROM corner_subscription_attempts WHERE state_hash = $1 AND user_id = $2 AND session_hash = $3", [row.state_hash, userId, sessionHash])).rowCount;
+    if (consumed !== 1) throw new SubscriptionError('invalid_oauth_state', 'This ChatGPT sign-in was already used. Start again.', 400);
     if (url.searchParams.has('error')) {
       throw new SubscriptionError('oauth_access_denied', 'ChatGPT connection was not completed. You can connect again when you are ready.', 400);
     }
@@ -471,16 +516,15 @@ export class SubscriptionProvider {
     if (!clientId || !/^[a-zA-Z0-9_.:-]{1,256}$/.test(clientId) || clientId === REGISTRATION_CLIENT || !code) {
       throw new SubscriptionError('registration_incomplete', 'ChatGPT did not complete this app’s registration. Start again.', 400);
     }
-    const previous = this.registration(userId);
-    const startingVersion = this.row(userId)?.version ?? null;
+    const { registration: previous, version: startingVersion } = await this.registrationSnapshot(userId);
     let tokenResponse: Record<string, unknown>;
     try {
       tokenResponse = await this.exchange(new URLSearchParams({ grant_type: 'authorization_code', client_id: clientId, code, code_verifier: pending.verifier, redirect_uri: pending.redirectUri, resource: RESOURCE }));
     } catch (error) {
       // Keep a newly issued registration after invalid_grant, as documented,
       // without treating an unverified identity or token as connected.
-      if (error instanceof SubscriptionError && error.code === 'invalid_grant' && !previous && !this.row(userId) && this.generation(userId) === pending.generation) {
-        this.save(userId, { clientId, issuer: null, subject: null, email: null, name: null, tokens: null, model: null, models: [], modelsUpdatedAt: 0, needsReauth: true });
+      if (error instanceof SubscriptionError && error.code === 'invalid_grant' && !previous && !(await this.row(userId)) && (await this.generation(userId)) === pending.generation) {
+        await this.save(userId, { generation: pending.generation, clientId, issuer: null, subject: null, email: null, name: null, tokens: null, model: null, models: [], modelsUpdatedAt: 0, needsReauth: true }, null);
       }
       throw error;
     }
@@ -490,16 +534,17 @@ export class SubscriptionProvider {
     if (pending.subject && (identity.sub !== pending.subject || identity.iss !== pending.issuer)) {
       throw new SubscriptionError('account_mismatch', 'This sign-in used a different ChatGPT account. Reconnect the originally selected account.', 409);
     }
-    const latestVersion = this.row(userId)?.version ?? null;
-    if (latestVersion !== startingVersion || this.generation(userId) !== pending.generation) throw new SubscriptionError('connection_changed', 'Your ChatGPT connection changed while signing in. Start again.', 409);
+    const latestVersion = (await this.row(userId))?.version ?? null;
+    if (latestVersion !== startingVersion || (await this.generation(userId)) !== pending.generation) throw new SubscriptionError('connection_changed', 'Your ChatGPT connection changed while signing in. Start again.', 409);
     const tokenSet = this.tokenSet(tokenResponse, idToken);
-    this.save(userId, {
+    (await this.save(userId, {
+      generation: pending.generation,
       clientId, issuer: ISSUER, subject: identity.sub!,
       email: boundedString(identity.email, 320), name: boundedString(identity.name, 200),
       tokens: tokenSet,
       model: previous?.model ?? null, models: previous?.models ?? [], modelsUpdatedAt: previous?.modelsUpdatedAt ?? 0,
       needsReauth: false,
-    });
+    }, startingVersion));
     return this.status(userId);
   }
 
@@ -600,7 +645,7 @@ export class SubscriptionProvider {
   private async authorized(userId: string): Promise<Registration> {
     userKey(userId);
     this.ensureSupported();
-    const registration = this.registration(userId);
+    const registration = (await this.registration(userId));
     if (!registration?.tokens) throw new SubscriptionError('chatgpt_not_connected', 'Connect your ChatGPT plan before using the agent.', 409);
     if (!registration.tokens.scopes.includes(DIRECT_SCOPE)) throw new SubscriptionError('chatgpt_permission_required', 'Enable ChatGPT plan usage when connecting your account.', 403);
     if (registration.tokens.expiresAt > Date.now() + REFRESH_EARLY_MS) return registration;
@@ -616,19 +661,20 @@ export class SubscriptionProvider {
     const lockId = randomUUID();
     const deadline = Date.now() + REFRESH_LEASE_MS;
     while (true) {
-      const current = this.registration(userId);
+      const current = (await this.registration(userId));
       if (!current?.tokens) throw new SubscriptionError('chatgpt_not_connected', 'The ChatGPT connection was disconnected. Connect again to continue.', 409);
       if (!current.tokens.scopes.includes(DIRECT_SCOPE)) throw new SubscriptionError('chatgpt_permission_required', 'Enable ChatGPT plan usage when connecting your account.', 403);
       if (current.tokens.expiresAt > Date.now() + REFRESH_EARLY_MS) return current;
       if (!current.tokens.refreshToken) throw new SubscriptionError('reauth_required', 'Your ChatGPT connection has expired. Please reconnect.', 401);
-      const acquired = this.db.prepare('UPDATE corner_subscription_accounts SET refresh_owner = ?, refresh_until = ? WHERE user_id = ? AND refresh_until < ?')
-        .run(lockId, Date.now() + REFRESH_LEASE_MS, userId, Date.now());
-      if (acquired.changes === 1) break;
+      const acquired = (await this.db.query("UPDATE corner_subscription_accounts SET refresh_owner = $1, refresh_until = $2 WHERE user_id = $3 AND refresh_until < $4", [lockId, Date.now() + REFRESH_LEASE_MS, userId, Date.now()])).rowCount;
+      if (acquired === 1) break;
       if (Date.now() >= deadline) throw new SubscriptionError('refresh_busy', 'Your ChatGPT connection is renewing. Try again in a moment.', 503);
       await new Promise(resolve => setTimeout(resolve, 50));
     }
     try {
-      const original = this.registration(userId)!;
+      const original = await this.registration(userId);
+      if (!original?.tokens) throw new SubscriptionError('connection_changed', 'The ChatGPT connection was disconnected. Connect again to continue.', 409);
+      if (original.tokens.expiresAt > Date.now() + REFRESH_EARLY_MS) return original;
       const originalRefreshToken = original.tokens!.refreshToken!;
       let body: Record<string, unknown>;
       try {
@@ -636,8 +682,10 @@ export class SubscriptionProvider {
       } catch (error) {
         const terminal = new Set(['invalid_grant', 'invalid_refresh_token', 'token_expired', 'refresh_token_expired', 'refresh_token_invalidated', 'refresh_token_reused']);
         if (error instanceof SubscriptionError && terminal.has(error.code)) {
-          const latest = this.registration(userId);
-          if (latest?.tokens?.refreshToken === originalRefreshToken) this.save(userId, { ...latest, tokens: null, needsReauth: true });
+          // Only clear tokens still carrying the refresh token this renewal
+          // used; a rotation that already landed keeps the connection usable.
+          await this.mergeSave(userId, { generation: original.generation, clientId: original.clientId, subject: original.subject }, latest =>
+            latest.tokens?.refreshToken === originalRefreshToken ? { ...latest, tokens: null, needsReauth: true } : null);
         }
         throw error;
       }
@@ -650,21 +698,26 @@ export class SubscriptionProvider {
         }
       }
       const tokenSet = this.tokenSet(body, newIdToken, original.tokens!);
-      const latest = this.registration(userId);
-      if (!latest?.tokens || latest.clientId !== original.clientId || latest.subject !== original.subject || latest.tokens.refreshToken !== originalRefreshToken) {
-        throw new SubscriptionError('connection_changed', 'The ChatGPT connection changed while renewing. Please try again.', 409);
-      }
-      const next = { ...latest, tokens: tokenSet, needsReauth: false };
-      this.save(userId, next);
+      // Rotated credentials merge onto the registration that still carries the
+      // refresh token this renewal used. A catalog or model write that landed
+      // while the exchange ran is preserved, and no interleaved disconnect can
+      // resurrect anything the user removed.
+      const next = await this.mergeSave(userId, {
+        generation: original.generation, clientId: original.clientId, subject: original.subject,
+        refreshToken: originalRefreshToken,
+      }, latest => ({ ...latest, tokens: tokenSet, needsReauth: false }));
       if (!tokenSet.scopes.includes(DIRECT_SCOPE)) throw new SubscriptionError('chatgpt_permission_required', 'Permission to use your ChatGPT plan is no longer enabled. Please reconnect.', 403);
       return next;
     } finally {
-      this.db.prepare('UPDATE corner_subscription_accounts SET refresh_owner = NULL, refresh_until = 0 WHERE user_id = ? AND refresh_owner = ?').run(userId, lockId);
+      await this.db.query("UPDATE corner_subscription_accounts SET refresh_owner = NULL, refresh_until = 0 WHERE user_id = $1 AND refresh_owner = $2", [userId, lockId]);
     }
   }
 
   async models(userId: string): Promise<SubscriptionModel[]> {
-    const registration = await this.authorized(userId);
+    return this.loadModels(userId, await this.authorized(userId));
+  }
+
+  private async loadModels(userId: string, registration: Registration): Promise<SubscriptionModel[]> {
     const models = await this.withDeadline(REQUEST_TIMEOUT_MS, undefined, async signal => {
       const response = await this.fetcher(`${RESOURCE}/models`, { headers: { Authorization: `Bearer ${registration.tokens!.accessToken}`, Accept: 'application/json' }, signal, redirect: 'error' });
       const body = await jsonResponse(response, signal);
@@ -678,33 +731,52 @@ export class SubscriptionProvider {
       }
       return result;
     });
-    const latest = this.registration(userId);
-    if (!latest?.tokens || latest.clientId !== registration.clientId || latest.subject !== registration.subject) {
-      throw new SubscriptionError('connection_changed', 'The ChatGPT connection changed. Please try again.', 409);
-    }
-    const model = models.some(model => model.slug === latest.model) ? latest.model : models[0]?.slug ?? null;
-    this.save(userId, { ...latest, models, model, modelsUpdatedAt: Date.now() });
+    await this.mergeSave(userId, { generation: registration.generation, clientId: registration.clientId, subject: registration.subject }, latest => {
+      if (!latest.tokens) throw new SubscriptionError('connection_changed', 'The ChatGPT connection changed. Please try again.', 409);
+      const model = models.some(model => model.slug === latest.model) ? latest.model : models[0]?.slug ?? null;
+      return { ...latest, models, model, modelsUpdatedAt: Date.now() };
+    });
     return models;
   }
 
   async setModel(userId: string, slug: string): Promise<SubscriptionStatus> {
     if (!boundedString(slug, 128)) throw new SubscriptionError('invalid_model', 'Choose a model available to your ChatGPT account.', 400);
-    const models = await this.models(userId);
+    const registration = await this.authorized(userId);
+    const models = await this.loadModels(userId, registration);
     if (!models.some(model => model.slug === slug)) throw new SubscriptionError('invalid_model', 'That model is not available to the selected ChatGPT account.', 400);
-    const latest = this.registration(userId)!;
-    this.save(userId, { ...latest, model: slug });
+    // The choice merges onto whichever registration the owner lock re-reads,
+    // so a rotation landing during the catalog refresh is not clobbered.
+    await this.mergeSave(userId, { generation: registration.generation, clientId: registration.clientId, subject: registration.subject }, latest => {
+      if (!latest.tokens) throw new SubscriptionError('connection_changed', 'The ChatGPT connection changed. Please try again.', 409);
+      if (!latest.models.some(model => model.slug === slug)) throw new SubscriptionError('invalid_model', 'That model is not available to the selected ChatGPT account.', 400);
+      return { ...latest, model: slug };
+    });
     return this.status(userId);
   }
 
   async disconnect(userId: string): Promise<SubscriptionStatus & { revocationConfirmed: boolean }> {
     userKey(userId);
-    this.nextGeneration(userId);
-    const registration = (() => { try { return this.registration(userId); } catch { return null; } })();
-    this.db.prepare('DELETE FROM corner_subscription_attempts WHERE user_id = ?').run(userId);
     for (const controller of this.activeRequests.get(userId) ?? []) controller.abort();
-    // Stop use immediately; an in-flight refresh cannot restore cleared tokens.
-    if (registration) this.save(userId, { ...registration, tokens: null, model: null, models: [], modelsUpdatedAt: 0, needsReauth: false });
-    else this.db.prepare('DELETE FROM corner_subscription_accounts WHERE user_id = ?').run(userId);
+    const connection = await this.db.connect();
+    let registration: Registration | null = null;
+    try {
+      await connection.query('BEGIN');
+      await connection.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`corner:subscription:${userId}`]);
+      await connection.query('INSERT INTO corner_subscription_generations(user_id, generation) VALUES ($1, 1) ON CONFLICT(user_id) DO UPDATE SET generation = corner_subscription_generations.generation + 1', [userId]);
+      const row = (await connection.query('SELECT encrypted FROM corner_subscription_accounts WHERE user_id = $1', [userId])).rows[0];
+      if (row) {
+        try { registration = this.unseal<Registration>(userId, 'account', row.encrypted); } catch { /* Disconnect also clears unreadable credentials. */ }
+      }
+      await connection.query('DELETE FROM corner_subscription_attempts WHERE user_id = $1', [userId]);
+      if (registration) {
+        const cleared = { ...registration, tokens: null, model: null, models: [], modelsUpdatedAt: 0, needsReauth: false };
+        await connection.query('UPDATE corner_subscription_accounts SET encrypted = $1, version = version + 1 WHERE user_id = $2', [this.seal(userId, 'account', cleared), userId]);
+      } else await connection.query('DELETE FROM corner_subscription_accounts WHERE user_id = $1', [userId]);
+      await connection.query('COMMIT');
+    } catch (error) {
+      await connection.query('ROLLBACK');
+      throw error;
+    } finally { connection.release(); }
     let revocationConfirmed = !registration?.tokens;
     if (registration?.tokens?.refreshToken && this.supported()) {
       try {

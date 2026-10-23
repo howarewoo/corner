@@ -27,7 +27,8 @@
       "dependsOn": [
         "^build"
       ],
-      "cache": false
+      "cache": false,
+      "passThroughEnv": ["CORNER_TEST_DATABASE_URL"]
     },
     "dev": {
       "dependsOn": [
@@ -49,7 +50,9 @@
       "passThroughEnv": [
         "CORNER_*",
         "BETTER_AUTH_SECRET",
-        "RESEND_API_KEY"
+        "DATABASE_URL",
+        "NEON_AUTH_*",
+        "NODE_EXTRA_CA_CERTS"
       ]
     },
     "@corner/shared#dev": {

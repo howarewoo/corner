@@ -1,3 +1,49 @@
+# Neon migration
+
+Corner now uses Neon Postgres and managed Neon Auth in project `weathered-tooth-40264904`, branch `production`. `neon init` and `neon deploy` completed, pulled five server-only environment variables into ignored `.env.local`, and linked both services through `neon.ts`.
+
+## Changes
+
+- Replaced synchronous SQLite persistence with a bounded `pg` pool, explicit versioned SQL migrations, owner-scoped transaction locks, and atomic state/receipt/proposal commits. Agent admission and encrypted provider refresh/disconnect flows retain their concurrency protections across awaited queries.
+- Replaced app-owned Better Auth/Resend runtime with a same-origin managed Auth proxy. Opaque HttpOnly cookies establish sessions through uncached upstream validation; raw session tokens are not exposed as application JSON. The account interface supports Neon's verification-code flow.
+- Updated environment loading, Docker migration assets, Compose configuration, CI PostgreSQL fixtures, colocated test discovery, and production/development smoke checks. Better Auth remains only a deterministic test fixture; test database URLs are explicitly separate from live Neon credentials.
+- Updated setup, SMTP/OTP policy, explicit migrations, backups, and legacy export/import guidance. Existing SQLite identities are not claimed by email, and old passwords/sessions are not migrated implicitly.
+
+## Verification performed
+
+Executed with Node **24.21.0**. This entry supersedes the historical verification sections below.
+
+| Check | Observed result |
+| --- | --- |
+| `npm run check` | 4/4 Turbo tasks passed |
+| `npm run build` | 3/3 Turbo tasks passed; existing Vite chunk-size advisory remains |
+| `npm run db:migrate` | `001_corner.sql` applied to live Neon; repeat reports “Corner PostgreSQL schema is current.” |
+| `npm test` | 9/9 server files and 3/3 web files passed; 78 server and 23 web tests reported |
+| `npm run smoke` | Hosted and local production HTTP, proxy, health, account/session, and shutdown checks passed against disposable PostgreSQL and local HTTPS Auth fixtures |
+| `npm run smoke:dev` | All three real development tasks, catalog serving, filesystem isolation, API proxy, callback authentication, sessions, and owned-process cleanup passed in a credential-free temporary source snapshot |
+| Live managed Auth | Signup, HTTP/browser sign-in, session restoration, two-account isolation, sign-out, and revoked-session 401 confirmed against the requested Neon branch |
+| Live Postgres | Authenticated mutation persisted, duplicate request did not advance revision, browser-saved profile survived app restart, and direct Neon SQL confirmed the final owner workspace at revision 3 |
+| Browser | Desktop and phone account/workspace inspected; OTP form and invalid-code state inspected with isolated simulated responses, without sending mail |
+| Production dependency audit | `npm audit --omit=dev`: zero vulnerabilities |
+
+Final compiled startup reported `Mode: local. Records: Neon Postgres. Accounts: Neon Auth.` Port 3000 was occupied, so live checks used 43201 without disturbing its listener. The local application origin was registered with Neon; temporary live-test accounts, their application records, and the temporary origin were removed after verification.
+
+Early checks exposed stale local-mail code, a cancellation test's synchronous-provider assumption, an unsupported test-only ES2024 API, and a missing development TLS trust environment passthrough. These were corrected; the final check/build/test and both smoke runs passed. An earlier full-suite attempt hit its command deadline. The first live signup rejected the unregistered callback origin; explicit origin registration resolved it.
+
+Pre-commit runtime review found three further regressions: stale catalog/model writes could overwrite rotated credentials, session-renewal cookies could throw on immutable redirect responses, and overlapping Apply requests could report stale or produce mismatched receipt fingerprints. All three were reproduced against the old compiled build and passed compiled-module smokes after correction. Field-specific credential merges now re-read under the owner lock; redirects preserve renewal cookies; Apply rechecks committed status and uses stable run-completion administrative timestamps. The refreshed full suites and production smoke passed. Regression fixture clock/gate setup, request recording, and a missing crypto import were corrected during that verification.
+
+The refreshed development smoke missed its unchanged 30-second startup-readiness deadline while other checks were running. A serialized rerun passed with the same deadline and assertions; no timeout or assertion was weakened.
+
+## Deployment limits
+
+- The requested branch currently permits unverified email/password signup. Hosted Compose requires verification: configure managed OTP delivery/custom SMTP and align `NEON_AUTH_REQUIRE_EMAIL_VERIFICATION` before public launch.
+- No real email delivery, password-reset inbox round trip, paid inference, public application deployment, Caddy certificate issuance, or Docker application-image execution was performed. Live Auth signup/sign-in/session/sign-out and live PostgreSQL persistence were exercised.
+- Keep one application process: persisted agent records do not make in-memory tasks multi-instance-safe. Preserve application encryption keys separately from Neon database backups.
+
+---
+
+# Historical release notes
+
 # Corner — 0.3.0
 
 Prepared 22 October 2026.

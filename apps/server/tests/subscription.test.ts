@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
-import { createHash, randomBytes } from 'node:crypto';
-import { DatabaseSync } from 'node:sqlite';
+import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
+import type { Pool, PoolClient } from 'pg'; import { testDatabase, closeTestDatabase, createTestAuth, neonTestConfig } from './helpers.ts'
 import test, { type TestContext } from 'node:test';
 import { exportJWK, generateKeyPair, SignJWT, type JWTPayload } from 'jose';
 import { SubscriptionError, SubscriptionProvider, type SubscriptionConfig } from '../src/subscription.ts';
@@ -16,7 +16,7 @@ const jwk = { ...(await exportJWK(signingKeys.publicKey)), kid: 'test-key', alg:
 
 interface Call { url: string; init: RequestInit }
 interface Harness {
-  db: DatabaseSync;
+  db: Pool;
   config: SubscriptionConfig;
   provider: SubscriptionProvider;
   calls: Call[];
@@ -29,6 +29,10 @@ interface Harness {
   tokenPatch: Record<string, unknown>;
   refreshPatch: Record<string, unknown>;
   refreshCount: number;
+  modelsGate?: Promise<void>;
+  refreshGate?: Promise<void>;
+  onModels?: () => void;
+  onRefresh?: () => void;
   catalog: unknown;
   tokenHandler?: (params: URLSearchParams) => Promise<Response>;
   inferenceHandler?: (init: RequestInit) => Promise<Response>;
@@ -46,9 +50,9 @@ async function idToken(h: Harness, patch: Partial<JWTPayload> = {}): Promise<str
     .sign(h.useWrongKey ? wrongKeys.privateKey : signingKeys.privateKey);
 }
 
-function harness(t: TestContext, configPatch: Partial<SubscriptionConfig> = {}): Harness {
-  const db = new DatabaseSync(':memory:');
-  t.after(() => db.close());
+async function harness(t: TestContext, configPatch: Partial<SubscriptionConfig> = {}) : Promise<Harness> {
+  const db = await testDatabase();
+  t.after(async () => await closeTestDatabase(db));
   const config: SubscriptionConfig = {
     origin: 'http://127.0.0.1:3000', host: '127.0.0.1', port: 3000, dataDir: '/tmp/corner-subscription-test',
     deployment: 'local', authSecret: 'synthetic-test-session-secret-not-an-actual-credential', tokenEncryptionKey: randomBytes(32), ...configPatch,
@@ -67,12 +71,17 @@ function harness(t: TestContext, configPatch: Partial<SubscriptionConfig> = {}):
       if (h.tokenHandler) return h.tokenHandler(params);
       if (params.get('grant_type') === 'refresh_token') {
         h.refreshCount++;
+        h.onRefresh?.(); h.onRefresh = undefined;
+        if (h.refreshGate) await h.refreshGate;
         return json({ access_token: 'synthetic-rotated-access', refresh_token: 'synthetic-rotated-refresh', token_type: 'Bearer', expires_in: 3600, scope: h.scope, ...h.refreshPatch });
       }
       return json({ access_token: 'synthetic-private-access', refresh_token: 'synthetic-private-refresh', id_token: await idToken(h), token_type: 'Bearer', expires_in: h.expiresIn, scope: h.scope, ...h.tokenPatch });
     }
     if (url === `${issuer}/api/accounts/oauth/revoke`) return new Response('', { status: h.revokeStatus });
-    if (url === 'https://api.openai.com/v1/models') return json(h.catalog);
+    if (url === 'https://api.openai.com/v1/models') {
+      if (h.modelsGate) { h.onModels?.(); h.onModels = undefined; await h.modelsGate; }
+      return json(h.catalog);
+    }
     if (url === 'https://api.openai.com/v1/responses') {
       if (h.inferenceHandler) return h.inferenceHandler(init);
       return events([{ type: 'response.completed', response: { id: 'resp_test', status: 'completed', output: [] } }]);
@@ -89,6 +98,7 @@ function harness(t: TestContext, configPatch: Partial<SubscriptionConfig> = {}):
       { slug: 'test-model-b', display_name: 'Test Model B', visibility: 'list' },
     ] },
   };
+  await h.provider.initialize();
   return h;
 }
 
@@ -134,6 +144,155 @@ function events(payloads: unknown[], chunkSize = 17): Response {
   return streamText(payloads.map(payload => `data: ${JSON.stringify(payload)}\n\n`).join(''), chunkSize);
 }
 
+// The tests own the encryption key, so persisted state can be opened locally
+// to assert on exactly what reached PostgreSQL instead of wiring details.
+type SealedRegistration = {
+  generation: number; clientId: string; issuer: string | null; subject: string | null;
+  email: string | null; name: string | null;
+  tokens: { accessToken: string; refreshToken: string | null; idToken: string; expiresAt: number; scopes: string[] } | null;
+  model: string | null; models: Array<{ slug: string; displayName: string }>;
+  modelsUpdatedAt: number; needsReauth: boolean;
+};
+
+function openSealed(config: SubscriptionConfig, user: string, kind: string, envelope: string): SealedRegistration {
+  const [version, iv, tag, ciphertext, extra] = envelope.split('.');
+  assert.equal(version, 'v1');
+  assert.equal(extra, undefined);
+  const decipher = createDecipheriv('aes-256-gcm', config.tokenEncryptionKey, Buffer.from(iv!, 'base64url'));
+  decipher.setAAD(Buffer.from(`corner:${kind}:${user}`));
+  decipher.setAuthTag(Buffer.from(tag!, 'base64url'));
+  return JSON.parse(Buffer.concat([decipher.update(Buffer.from(ciphertext!, 'base64url')), decipher.final()]).toString('utf8')) as SealedRegistration;
+}
+
+function reseal(config: SubscriptionConfig, user: string, value: SealedRegistration): string {
+  const iv = randomBytes(12);
+  const cipher = createCipheriv('aes-256-gcm', config.tokenEncryptionKey, iv);
+  cipher.setAAD(Buffer.from(`corner:account:${user}`));
+  const encrypted = Buffer.concat([cipher.update(JSON.stringify(value), 'utf8'), cipher.final()]);
+  return ['v1', iv.toString('base64url'), cipher.getAuthTag().toString('base64url'), encrypted.toString('base64url')].join('.');
+}
+
+async function savedRegistration(h: Harness, user: string): Promise<SealedRegistration> {
+  const row = (await h.db.query('SELECT encrypted FROM corner_subscription_accounts WHERE user_id = $1', [user])).rows[0] as { encrypted: string } | undefined;
+  assert.ok(row, 'the account row disappeared');
+  return openSealed(h.config, user, 'account', row.encrypted);
+}
+
+interface SavedCommit { token: string | null; catalog: string; model: string | null }
+interface StagedPool {
+  pool: unknown;
+  holdNextBegin(): void;
+  heldBegin(): Promise<number>;
+  releasePin(pin: number): void;
+  commit(filter?: (commit: SavedCommit) => boolean): Promise<SavedCommit>;
+  abort(): void;
+}
+
+// Orders the two racing writers at observed database events rather than
+// wall-clock scheduling. Each pinned transaction BEGIN gets a stable slot:
+// the first Begin pins the catalog writer, the exchange releases the rotator
+// whose rotation transaction pins the next slot, and the rotator's own
+// catalog write pins the last one. Slots release in an exact order so the
+// loss-update interleaving is staged; abort() cancels everything so a failed
+// staging can never strand an open transaction during teardown.
+function stagedPool(database: Pool, config: SubscriptionConfig, user: string): StagedPool {
+  type Pin = { release: () => void; released: boolean };
+  const pins: Pin[] = [];
+  const pinWaiters: Array<{ resolve: (pin: number) => void; reject: (error: Error) => void }> = [];
+  const announcedPins: number[] = [];
+  const preReleased = new Array<number>();
+  let beginBudget = 0;
+  const commits: SavedCommit[] = [];
+  const commitWaiters: Array<{ filter: (commit: SavedCommit) => boolean; resolve: (commit: SavedCommit) => void; reject: (error: Error) => void }> = [];
+  const deliver = (commit: SavedCommit) => {
+    const standing = commitWaiters.findIndex(waiter => waiter.filter(commit));
+    if (standing === -1) { commits.push(commit); return; }
+    commitWaiters.splice(standing, 1)[0]!.resolve(commit);
+  };
+  const cancel = (error: Error) => {
+    beginBudget = 0;
+    preReleased.length = 0;
+    announcedPins.length = 0;
+    pinWaiters.splice(0).forEach(waiter => waiter.reject(error));
+    commitWaiters.splice(0).forEach(waiter => waiter.reject(error));
+    pins.forEach(pin => pin.release());
+  };
+
+  const wrapClient = (client: PoolClient): PoolClient => {
+    let pending: SavedCommit | null = null;
+    const note = (sql: string, envelope: string) => {
+      try {
+        const registration = openSealed(config, user, 'account', envelope);
+        pending = { token: registration.tokens?.refreshToken ?? null, catalog: registration.models.map(model => model.slug).join(','), model: registration.model };
+      } catch { /* another table's blob; only account commits are announced */ }
+    };
+    return {
+      ...client,
+      query: (text: string, values?: unknown[]) => {
+        const sql = text.trim();
+        let heldResponse: Promise<void> | null = null;
+        if (sql === 'BEGIN' && beginBudget > 0) {
+          beginBudget--;
+          let release!: () => void;
+          const released = new Promise<void>(resolve => { release = resolve; });
+          const pin: Pin = { release: () => { if (!pin.released) { pin.released = true; release(); } }, released: false };
+          const slot = pins.push(pin) - 1;
+          if (preReleased.includes(slot)) pin.release();
+          const standing = pinWaiters.shift();
+          if (standing) standing.resolve(slot); else announcedPins.push(slot);
+          heldResponse = released;
+        }
+        if (sql.includes('corner_subscription_accounts')) {
+          const envelope = values?.find(value => typeof value === 'string' && String(value).startsWith('v1.')) as string | undefined;
+          if (envelope) note(sql, envelope);
+        }
+        const underlying = client.query(text as string, values as unknown[]);
+        // Announce a save exactly when its COMMIT resolves: only then is the
+        // writer's durable state visible to the next resuming transaction.
+        if (sql === 'COMMIT' && pending) { const commit = pending; pending = null; void underlying.then(() => deliver(commit), () => {}); }
+        return heldResponse ? heldResponse.then(() => underlying) : underlying;
+      },
+    } as unknown as PoolClient;
+  };
+
+  return {
+    pool: {
+      query: (text: unknown, values?: unknown[]) => database.query(text as never, values as never),
+      connect: async () => wrapClient(await database.connect()),
+    } as unknown as Pool,
+    holdNextBegin: () => { beginBudget++; },
+    heldBegin: () => {
+      const announced = announcedPins.shift();
+      if (announced !== undefined) return Promise.resolve(announced);
+      return new Promise((resolve, reject) => pinWaiters.push({ resolve, reject }));
+    },
+    releasePin: (slot: number) => {
+      const pin = pins[slot];
+      if (pin) pin.release(); else preReleased.push(slot);
+    },
+    commit: (filter: (commit: SavedCommit) => boolean = () => true) => {
+      const queued = commits.find(filter);
+      if (queued) return Promise.resolve(queued);
+      return new Promise((resolve, reject) => commitWaiters.push({ filter, resolve, reject }));
+    },
+    abort: () => cancel(new Error('staged writers cancelled')),
+  };
+}
+
+// Keeps a stalled staging plan from faking its own waiting: the watchdog runs
+// on real timers (only Date is mocked), so a hang surfaces as an assertion
+// instead of an eternal test, and it never blocks process exit when a failure
+// path has already reported.
+function guard<T>(promise: Promise<T>, note: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) => {
+      const watchdog = setTimeout(() => reject(new Error(`racing writers stalled: ${note}`)), 20_000);
+      watchdog.unref();
+    }),
+  ]);
+}
+
 test('hosted, noncanonical browser origins, and invalid listeners cannot use dynamic registration', async t => {
   for (const patch of [
     { deployment: 'hosted' as const, origin: 'https://corner.example.test' },
@@ -146,7 +305,7 @@ test('hosted, noncanonical browser origins, and invalid listeners cannot use dyn
     { port: 0 },
     { port: 65536 },
   ]) {
-    const h = harness(t, patch);
+    const h = (await harness(t, patch));
     const status = await h.provider.status('corner-user-a');
     assert.equal(status.supported, false);
     assert.equal(status.state, 'unavailable');
@@ -157,7 +316,7 @@ test('hosted, noncanonical browser origins, and invalid listeners cannot use dyn
 });
 
 test('a separate development API port retains the exact canonical browser callback and PKCE', async t => {
-  const h = harness(t, { port: 3001 });
+  const h = (await harness(t, { port: 3001 }));
   assert.equal((await h.provider.status('corner-user-a')).supported, true);
   const authorization = await start(h);
   assert.equal(authorization.searchParams.get('redirect_uri'), 'http://127.0.0.1:3000/auth/callback');
@@ -174,15 +333,15 @@ test('a separate development API port retains the exact canonical browser callba
 });
 
 test('a local Docker bind still requires the exact loopback browser origin', async t => {
-  const h = harness(t, { host: '0.0.0.0' });
+  const h = (await harness(t, { host: '0.0.0.0' }));
   assert.equal((await h.provider.status('corner-user-a')).supported, true);
   assert.equal(new URL((await h.provider.begin('corner-user-a', 'session-a')).url).searchParams.get('redirect_uri'), 'http://127.0.0.1:3000/auth/callback');
-  const publicOrigin = harness(t, { host: '0.0.0.0', origin: 'http://corner.example.test:3000' });
+  const publicOrigin = (await harness(t, { host: '0.0.0.0', origin: 'http://corner.example.test:3000' }));
   assert.equal((await publicOrigin.provider.status('corner-user-a')).supported, false);
 });
 
 test('authorization uses fresh PKCE, stable opaque host ID, official endpoints, and encrypted pending secrets', async t => {
-  const h = harness(t);
+  const h = (await harness(t));
   const first = await start(h);
   assert.equal(first.origin + first.pathname, `${issuer}/api/accounts/authorize`);
   assert.equal(first.searchParams.get('client_id'), 'dynamic_agent_client');
@@ -192,11 +351,12 @@ test('authorization uses fresh PKCE, stable opaque host ID, official endpoints, 
   assert.equal(first.searchParams.get('resource'), 'https://api.openai.com/v1');
   assert.equal(first.searchParams.get('scope'), directScopes);
   assert.match(first.searchParams.get('ext_agent_host_id')!, /^urn:uuid:[0-9a-f-]{36}$/);
-  const stored = JSON.stringify(h.db.prepare('SELECT * FROM corner_subscription_attempts').all());
+  const stored = JSON.stringify((await h.db.query("SELECT * FROM corner_subscription_attempts", [])).rows);
   assert.ok(!stored.includes(first.searchParams.get('state')!));
   assert.ok(!stored.includes(first.searchParams.get('nonce')!));
   assert.ok(!stored.includes('session-a'));
   h.provider = new SubscriptionProvider({ db: h.db, config: h.config, fetch: h.fetcher });
+  await h.provider.initialize();
   const second = await start(h);
   assert.equal(first.searchParams.get('ext_agent_host_id'), second.searchParams.get('ext_agent_host_id'));
   assert.notEqual(first.searchParams.get('state'), second.searchParams.get('state'));
@@ -212,7 +372,7 @@ test('authorization uses fresh PKCE, stable opaque host ID, official endpoints, 
 });
 
 test('OAuth callback is bound to the initiating Corner owner and session and is single use', async t => {
-  const h = harness(t);
+  const h = (await harness(t));
   await assert.rejects(h.provider.begin('corner-user-a'), hasCode('session_required'));
   const callback = callbackUrl(await start(h));
   await assert.rejects(h.provider.callback('corner-user-b', callback, 'session-a'), hasCode('invalid_oauth_state'));
@@ -225,9 +385,9 @@ test('OAuth callback is bound to the initiating Corner owner and session and is 
 });
 
 test('expired, wrong-origin, duplicate-parameter and incomplete callbacks do not exchange a code', async t => {
-  const h = harness(t);
+  const h = (await harness(t));
   const expired = callbackUrl(await start(h));
-  h.db.prepare('UPDATE corner_subscription_attempts SET expires_at = 0').run();
+  (await h.db.query("UPDATE corner_subscription_attempts SET expires_at = 0", [])).rowCount;
   await assert.rejects(h.provider.callback('corner-user-a', expired, 'session-a'), hasCode('invalid_oauth_state'));
   const wrongOrigin = callbackUrl(await start(h));
   wrongOrigin.hostname = 'localhost';
@@ -244,7 +404,7 @@ test('expired, wrong-origin, duplicate-parameter and incomplete callbacks do not
 });
 
 test('declining consent consumes the attempt without token exchange', async t => {
-  const h = harness(t);
+  const h = (await harness(t));
   const callback = callbackUrl(await start(h), { error: 'access_denied', code: null });
   await assert.rejects(h.provider.callback('corner-user-a', callback, 'session-a'), hasCode('oauth_access_denied'));
   assert.equal(h.calls.length, 0);
@@ -259,17 +419,17 @@ test('ID-token signature, issuer, audience, expiry, nonce and authorized party a
     { claims: { aud: [clientId, 'another-app'], azp: 'another-app' } },
   ];
   for (const invalid of invalidCases) {
-    const h = harness(t);
+    const h = (await harness(t));
     h.claims = invalid.claims ?? {};
     h.useWrongKey = invalid.wrongKey ?? false;
     await assert.rejects(connect(h), hasCode('invalid_identity_token'));
     assert.equal((await h.provider.status('corner-user-a')).connected, false);
-    assert.equal(h.db.prepare('SELECT COUNT(*) AS count FROM corner_subscription_accounts').get()!.count, 0);
+    assert.equal((await h.db.query("SELECT COUNT(*) AS count FROM corner_subscription_accounts", [])).rows[0]!.count, 0);
   }
 });
 
 test('identity-only consent remains linked but cannot perform plan inference', async t => {
-  const h = harness(t);
+  const h = (await harness(t));
   h.scope = 'openid profile email';
   const result = await connect(h);
   assert.equal(result.connected, true);
@@ -285,7 +445,7 @@ test('identity-only consent remains linked but cannot perform plan inference', a
 });
 
 test('reauthorization must retain the issued client and verified account identity', async t => {
-  const h = harness(t);
+  const h = (await harness(t));
   await connect(h);
   const mismatch = callbackUrl(await start(h), { client_id: 'oaiapp_other' });
   await assert.rejects(h.provider.callback('corner-user-a', mismatch, 'session-a'), hasCode('client_mismatch'));
@@ -296,7 +456,7 @@ test('reauthorization must retain the issued client and verified account identit
 });
 
 test('new issued client ID survives invalid_grant without claiming a connected identity', async t => {
-  const h = harness(t);
+  const h = (await harness(t));
   h.tokenHandler = async () => json({ error: 'invalid_grant' }, 400);
   await assert.rejects(connect(h), hasCode('invalid_grant'));
   assert.equal((await h.provider.status('corner-user-a')).connected, false);
@@ -304,22 +464,22 @@ test('new issued client ID survives invalid_grant without claiming a connected i
 });
 
 test('credentials are encrypted per user and never appear in safe status DTOs', async t => {
-  const h = harness(t);
+  const h = (await harness(t));
   await connect(h);
   const status = JSON.stringify(await h.provider.status('corner-user-a'));
-  const rows = JSON.stringify(h.db.prepare('SELECT * FROM corner_subscription_accounts').all());
+  const rows = JSON.stringify((await h.db.query("SELECT * FROM corner_subscription_accounts", [])).rows);
   for (const privateValue of ['synthetic-private-access', 'synthetic-private-refresh', 'openai-user-a', clientId]) {
     assert.equal(status.includes(privateValue), false);
     assert.equal(rows.includes(privateValue), false);
   }
   assert.equal(status.includes('person@example.test'), true);
-  const row = h.db.prepare('SELECT encrypted FROM corner_subscription_accounts WHERE user_id = ?').get('corner-user-a') as { encrypted: string };
-  h.db.prepare('INSERT INTO corner_subscription_accounts(user_id, encrypted) VALUES (?, ?)').run('corner-user-b', row.encrypted);
+  const row = (await h.db.query("SELECT encrypted FROM corner_subscription_accounts WHERE user_id = $1", ['corner-user-a'])).rows[0] as { encrypted: string };
+  await h.db.query("INSERT INTO corner_subscription_accounts(user_id, encrypted) VALUES ($1, $2)", ['corner-user-b', row.encrypted]);
   assert.equal((await h.provider.status('corner-user-b')).state, 'reauth_required');
 });
 
 test('model selection uses only the current account visible models and rejects unavailable choices', async t => {
-  const h = harness(t);
+  const h = (await harness(t));
   await connect(h);
   assert.deepEqual(await h.provider.models('corner-user-a'), [
     { slug: 'test-model-a', displayName: 'Test Model A' },
@@ -332,7 +492,7 @@ test('model selection uses only the current account visible models and rejects u
 });
 
 test('concurrent renewal serializes rotating refresh tokens and persists the replacement', async t => {
-  const h = harness(t);
+  const h = (await harness(t));
   h.expiresIn = 1;
   await connect(h);
   await Promise.all(Array.from({ length: 8 }, () => h.provider.models('corner-user-a')));
@@ -345,23 +505,25 @@ test('concurrent renewal serializes rotating refresh tokens and persists the rep
   const modelCalls = h.calls.filter(call => call.url.endsWith('/models'));
   assert.equal(modelCalls.length, 8);
   for (const call of modelCalls) assert.equal(new Headers(call.init.headers).get('Authorization'), 'Bearer synthetic-rotated-access');
-  assert.equal(JSON.stringify(h.db.prepare('SELECT * FROM corner_subscription_accounts').all()).includes('synthetic-rotated'), false);
+  assert.equal(JSON.stringify((await h.db.query("SELECT * FROM corner_subscription_accounts", [])).rows).includes('synthetic-rotated'), false);
   h.provider = new SubscriptionProvider({ db: h.db, config: h.config, fetch: h.fetcher });
+  await h.provider.initialize();
   await h.provider.models('corner-user-a');
   assert.equal(h.refreshCount, 1);
 });
 
-test('independent provider instances share a SQLite refresh lease', async t => {
-  const h = harness(t);
+test('independent provider instances share a PostgreSQL refresh lease', async t => {
+  const h = (await harness(t));
   h.expiresIn = 1;
   await connect(h);
   const other = new SubscriptionProvider({ db: h.db, config: h.config, fetch: h.fetcher });
+  await other.initialize();
   await Promise.all([h.provider.models('corner-user-a'), other.models('corner-user-a')]);
   assert.equal(h.refreshCount, 1);
 });
 
 test('terminal refresh failures clear unusable tokens while temporary failures preserve the connection', async t => {
-  const h = harness(t);
+  const h = (await harness(t));
   h.expiresIn = 1;
   await connect(h);
   h.tokenHandler = async () => json({ error: { code: 'subscription_sharing_usage_unavailable' } }, 503);
@@ -373,13 +535,99 @@ test('terminal refresh failures clear unusable tokens while temporary failures p
   assert.equal((await start(h)).searchParams.get('client_id'), clientId);
 });
 
+test('a model catalog write racing token rotation preserves rotated refresh credentials and both changes', async t => {
+  const h = (await harness(t));
+  h.expiresIn = 65;
+  const user = 'corner-user-a';
+  await connect(h, user);
+  // A first catalog write stores the original credentials, then the racing
+  // write observes a different catalog so both writes and their persistence
+  // order stay observable in what PostgreSQL actually retains.
+  await h.provider.models(user);
+  h.catalog = { models: [
+    { slug: 'test-model-a', display_name: 'Test Model A', visibility: 'list' },
+    { slug: 'test-model-c', display_name: 'Test Model C', visibility: 'list' },
+  ] };
+  let releaseCatalog!: () => void;
+  let releaseExchange!: () => void;
+  h.modelsGate = new Promise(resolve => { releaseCatalog = resolve; });
+  h.refreshGate = new Promise(resolve => { releaseExchange = resolve; });
+
+  const staged = stagedPool(h.db, h.config, user);
+  const writer = new SubscriptionProvider({ db: staged.pool as Pool, config: h.config, fetch: h.fetcher });
+  const rotator = new SubscriptionProvider({ db: staged.pool as Pool, config: h.config, fetch: h.fetcher });
+
+  // 65 s expiry against the 60 s early-refresh margin leaves every caller a
+  // shared freshness window. The parked catalog fetch holds the writer while
+  // mocked Date freezes the window; the advance stays applied until the
+  // rotator has actually entered its exchange (authorized() samples the
+  // clock after an awaitable registration read, so restoring early would
+  // make it read fresh credentials instead of renewing), and then real time
+  // resumes for the rotation itself. Pin slots: 0 catalog writer, 1 token
+  // rotation, 2 the rotator's own catalog write, always released in that
+  // order. abort() in the finally cannot leave a failed staging with an open
+  // transaction stranded during teardown.
+  let writerModels: unknown;
+  let rotatorModels: unknown;
+  try {
+    // Node's MockTimers defaults a mocked Date to the zero epoch when `now`
+    // is omitted, which would keep a 2026-issued token forever fresh, so the
+    // real wall clock is captured and seeded explicitly.
+    const wallClock = Date.now();
+    t.mock.timers.enable({ apis: ['Date'], now: wallClock });
+    writerModels = writer.models(user);
+    await guard(new Promise<void>(resolve => { h.onModels = resolve; }), 'catalog writer parked on its fetch');
+    t.mock.timers.tick(6_000);
+    rotatorModels = rotator.models(user);
+    h.onRefresh = () => { t.mock.timers.reset(); };
+
+    staged.holdNextBegin();
+    releaseCatalog();
+    assert.equal(await guard(staged.heldBegin(), 'catalog writer pinned inside its save transaction'), 0);
+    staged.holdNextBegin();
+    staged.holdNextBegin();
+    releaseExchange();
+    staged.releasePin(1);   // the rotation transaction itself must run and commit
+    const rotation = await guard(staged.commit(commit => commit.catalog === 'test-model-a,test-model-b'), 'token rotation commit observed');
+    assert.equal(rotation.token, 'synthetic-rotated-refresh');
+    staged.releasePin(0);
+    const writerCommit = await guard(staged.commit(commit => commit.catalog === 'test-model-a,test-model-c'), 'catalog writer commit observed');
+    assert.equal(writerCommit.token, 'synthetic-rotated-refresh');
+    staged.releasePin(2);
+    const persisted = await guard(Promise.all([writerModels, rotatorModels]), 'both catalog writes settled');
+    assert.deepEqual(persisted[0], [{ slug: 'test-model-a', displayName: 'Test Model A' }, { slug: 'test-model-c', displayName: 'Test Model C' }]);
+    assert.deepEqual(persisted[1], persisted[0]);
+
+    const retained = await savedRegistration(h, user);
+    assert.equal(retained.tokens!.refreshToken, 'synthetic-rotated-refresh');
+    assert.equal(retained.tokens!.accessToken, 'synthetic-rotated-access');
+    assert.deepEqual(retained.models, persisted[0]);
+    assert.equal(retained.model, 'test-model-a');
+
+    // The preserved rotation must also be the credential the next renewal uses.
+    retained.tokens!.expiresAt = Date.now() - 1000;
+    await h.db.query('UPDATE corner_subscription_accounts SET encrypted = $1 WHERE user_id = $2', [reseal(h.config, user, retained), user]);
+    await h.provider.models(user);
+    const renewal = new URLSearchParams(String(h.calls.filter(call => call.url.endsWith('/oauth/token')).at(-1)!.init.body));
+    assert.equal(renewal.get('grant_type'), 'refresh_token');
+    assert.equal(renewal.get('refresh_token'), 'synthetic-rotated-refresh');
+    assert.equal(h.refreshCount, 2);
+  } finally {
+    staged.abort();
+    // Any call still in flight has to settle (settled or rejected) before
+    // this test closes its database; abort() unbinds every stage so the
+    // failed path cannot leave an open transaction behind.
+    await guard(Promise.allSettled([writerModels ?? Promise.resolve(), rotatorModels ?? Promise.resolve()]), 'settling racing calls before teardown');
+  }
+});
+
 test('refresh checks changed identity and withdrawn plan permissions', async t => {
-  const wrongIdentity = harness(t);
+  const wrongIdentity = (await harness(t));
   wrongIdentity.expiresIn = 1;
   await connect(wrongIdentity);
   wrongIdentity.refreshPatch.id_token = await idToken(wrongIdentity, { sub: 'another-openai-user' });
   await assert.rejects(wrongIdentity.provider.models('corner-user-a'), hasCode('account_mismatch'));
-  const withdrawn = harness(t);
+  const withdrawn = (await harness(t));
   withdrawn.expiresIn = 1;
   await connect(withdrawn);
   withdrawn.refreshPatch.scope = 'openid profile email';
@@ -388,7 +636,7 @@ test('refresh checks changed identity and withdrawn plan permissions', async t =
 });
 
 test('disconnect during token renewal cannot resurrect the saved connection', async t => {
-  const h = harness(t);
+  const h = (await harness(t));
   h.expiresIn = 1;
   await connect(h);
   let release!: () => void;
@@ -410,7 +658,7 @@ test('disconnect during token renewal cannot resurrect the saved connection', as
 });
 
 test('disconnect during an initial OAuth exchange cannot create a connection after the user disconnects', async t => {
-  const h = harness(t);
+  const h = (await harness(t));
   let release!: () => void;
   let started!: () => void;
   const gate = new Promise<void>(resolve => { release = resolve; });
@@ -432,7 +680,7 @@ test('disconnect during an initial OAuth exchange cannot create a connection aft
 });
 
 test('disconnect revokes the renewable session and honestly reports an unconfirmed remote revoke', async t => {
-  const h = harness(t);
+  const h = (await harness(t));
   await connect(h);
   const result = await h.provider.disconnect('corner-user-a');
   assert.equal(result.revocationConfirmed, true);
@@ -451,7 +699,7 @@ test('disconnect revokes the renewable session and honestly reports an unconfirm
 });
 
 test('inference preserves namespaced tools and sends only the supported request fields', async t => {
-  const h = harness(t);
+  const h = (await harness(t));
   await connect(h);
   const tools = [{ type: 'namespace', name: 'corner', description: 'Corner plan tools', tools: [{ type: 'function', name: 'save_plan', description: 'Propose a plan', parameters: { type: 'object', properties: {}, additionalProperties: false } }] }];
   const result = await h.provider.respond('corner-user-a', { instructions: 'Use only Corner data.', input: [{ role: 'user', content: 'Plan my training.' }], tools, tool_choice: 'auto' });
@@ -468,7 +716,7 @@ test('inference preserves namespaced tools and sends only the supported request 
 });
 
 test('SSE parser handles split UTF-8, CRLF, comments, and multiline JSON without releasing partial results', async t => {
-  const h = harness(t);
+  const h = (await harness(t));
   await connect(h);
   const completed = { id: 'resp_unicode', status: 'completed', output: [{ type: 'message', content: [{ type: 'output_text', text: 'Training 🥊' }] }] };
   const finalJSON = JSON.stringify({ type: 'response.completed', response: completed }, null, 2).split('\n').map(line => `data: ${line}`).join('\r\n');
@@ -487,7 +735,7 @@ test('partial streams, failed events, incomplete events and DONE without complet
     { text: 'data: {"type":"response.completed","response":{"status":"incomplete","output":[]}}\n\n', code: 'invalid_provider_stream' },
   ];
   for (const item of cases) {
-    const h = harness(t);
+    const h = (await harness(t));
     await connect(h);
     h.inferenceHandler = async () => streamText(item.text);
     await assert.rejects(h.provider.respond('corner-user-a', { instructions: 'Help', input: [] }), error => {
@@ -500,7 +748,7 @@ test('partial streams, failed events, incomplete events and DONE without complet
 });
 
 test('HTTP admission errors preserve safe status/code and never expose upstream diagnostic text', async t => {
-  const h = harness(t);
+  const h = (await harness(t));
   await connect(h);
   h.inferenceHandler = async () => json({ detail: 'synthetic-private-access; user prompt; confidential account metadata' }, 403);
   await assert.rejects(h.provider.respond('corner-user-a', { instructions: 'Help', input: [] }), error => {
@@ -514,7 +762,7 @@ test('HTTP admission errors preserve safe status/code and never expose upstream 
 });
 
 test('request cancellation stops a hanging stream and returns no partial completion', async t => {
-  const h = harness(t);
+  const h = (await harness(t));
   await connect(h);
   let started!: () => void;
   const ready = new Promise<void>(resolve => { started = resolve; });
@@ -531,7 +779,7 @@ test('request cancellation stops a hanging stream and returns no partial complet
 });
 
 test('caller cancellation also stops waiting for a shared token refresh', async t => {
-  const h = harness(t);
+  const h = (await harness(t));
   h.expiresIn = 1;
   await connect(h);
   let release!: () => void;
@@ -556,7 +804,7 @@ test('caller cancellation also stops waiting for a shared token refresh', async 
 });
 
 test('request and SSE frame limits reject oversized data before it can be applied', async t => {
-  const h = harness(t);
+  const h = (await harness(t));
   await connect(h);
   await assert.rejects(h.provider.respond('corner-user-a', { instructions: 'Help', input: [{ role: 'user', content: 'a'.repeat(600_000) }] }), hasCode('agent_request_too_large'));
   assert.equal(h.calls.some(call => call.url.endsWith('/responses')), false);

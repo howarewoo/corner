@@ -3,7 +3,7 @@ import { ArrowRight, Check, ChevronLeft, Loader2, Mail } from 'lucide-react';
 import { api, post, RequestError } from './api';
 
 export type AccountPolicy = { emailVerificationRequired: boolean; passwordResetAvailable: boolean };
-export type AccountRoute = { kind: 'default' } | { kind: 'verification'; verified: boolean } | { kind: 'reset'; token: string | null };
+export type AccountRoute = { kind: 'default' } | { kind: 'reset'; token: string | null };
 type Mode = 'signin' | 'signup' | 'verify' | 'resend' | 'forgot' | 'reset-sent' | 'reset' | 'reset-invalid' | 'reset-complete';
 const emptyRoute: AccountRoute = { kind: 'default' };
 const invalidResetCodes = new Set(['INVALID_TOKEN', 'TOKEN_EXPIRED', 'RESET_PASSWORD_TOKEN_EXPIRED', 'USER_NOT_FOUND']);
@@ -17,9 +17,6 @@ export function readAccountRoute(location: Pick<Location, 'pathname' | 'search'>
     const token = tokens.length === 1 && /^[A-Za-z0-9_-]{16,512}$/.test(tokens[0]) && !params.has('error') ? tokens[0] : null;
     return { kind: 'reset', token };
   }
-  if (location.pathname === '/' && params.getAll('account').length === 1 && params.get('account') === 'verified') {
-    return { kind: 'verification', verified: !params.has('error') };
-  }
   return emptyRoute;
 }
 
@@ -32,24 +29,24 @@ function removeAccountQuery() {
 function readableError(failure: unknown): string {
   if (failure instanceof RequestError) {
     if (failure.status === 429) return 'Please wait a little before trying again.';
-    if (failure.code === 'ACCOUNT_EMAIL_UNAVAILABLE') return 'Account emails aren’t available in this Corner right now. Ask the person who manages it for help.';
     return failure.message;
   }
   return 'We couldn’t reach Corner. Check your connection and try again.';
 }
 
 export default function AccountAccess({ onSignedIn, initialRoute = emptyRoute }: { onSignedIn: () => Promise<void>; initialRoute?: AccountRoute }) {
-  const [mode, setMode] = useState<Mode>(() => initialRoute.kind === 'reset' ? initialRoute.token ? 'reset' : 'reset-invalid' : initialRoute.kind === 'verification' && !initialRoute.verified ? 'resend' : 'signin');
+  const [mode, setMode] = useState<Mode>(() => initialRoute.kind === 'reset' ? initialRoute.token ? 'reset' : 'reset-invalid' : 'signin');
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmation, setConfirmation] = useState('');
+  const [verificationCode, setVerificationCode] = useState('');
   const [policy, setPolicy] = useState<AccountPolicy | null>(null);
   const [policyLoading, setPolicyLoading] = useState(true);
   const [policyError, setPolicyError] = useState('');
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState(() => initialRoute.kind === 'verification' && !initialRoute.verified ? 'This verification link is invalid or has expired. Request a new link below.' : '');
-  const [notice, setNotice] = useState(() => initialRoute.kind === 'verification' && initialRoute.verified ? 'Email verification complete. Sign in to continue.' : '');
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
   const active = useRef(true);
   const sequence = useRef(0);
   const policySequence = useRef(0);
@@ -88,7 +85,7 @@ export default function AccountAccess({ onSignedIn, initialRoute = emptyRoute }:
 
   function show(next: Mode, message = '') {
     sequence.current += 1; action.current?.controller.abort(); action.current = null;
-    setBusy(false); setError(''); setNotice(message); setPassword(''); setConfirmation(''); setMode(next);
+    setBusy(false); setError(''); setNotice(message); setPassword(''); setConfirmation(''); setVerificationCode(''); setMode(next);
     if (next !== 'reset') resetToken.current = null;
     if (next === 'signin' || next === 'reset-complete') window.history.replaceState({}, '', '/');
   }
@@ -104,7 +101,6 @@ export default function AccountAccess({ onSignedIn, initialRoute = emptyRoute }:
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim()) || email.trim().length > 254) { setError('Enter a valid email address.'); return false; }
     return true;
   }
-  const callbackURL = () => new URL('/?account=verified', window.location.origin).href;
   const unavailableRecovery = <p className="account-recovery-note">Password recovery isn’t available in this Corner. If you lose access, ask the person who manages it for help.</p>;
 
   async function submitCredentials(event: FormEvent) {
@@ -118,7 +114,7 @@ export default function AccountAccess({ onSignedIn, initialRoute = emptyRoute }:
     try {
       const result = await post<{ token?: string | null }>(`/api/auth/${signup ? 'sign-up' : 'sign-in'}/email`, {
         email: submittedEmail, password,
-        ...(signup ? { name: name.trim(), callbackURL: callbackURL() } : {}),
+        ...(signup ? { name: name.trim() } : {}),
       }, pending.controller.signal);
       if (!current(pending.id)) return;
       setEmail(submittedEmail); setPassword('');
@@ -137,10 +133,22 @@ export default function AccountAccess({ onSignedIn, initialRoute = emptyRoute }:
     const pending = begin(); if (!pending) return;
     const submittedEmail = email.trim();
     try {
-      await post('/api/auth/send-verification-email', { email: submittedEmail, callbackURL: callbackURL() }, pending.controller.signal);
+      await post('/api/auth/email-otp/send-verification-otp', { email: submittedEmail, type: 'email-verification' }, pending.controller.signal);
       if (!current(pending.id)) return;
       setEmail(submittedEmail);
-      show('verify', 'If this address needs verification, a new link will be sent. Check your inbox and spam folder.');
+      show('verify', 'If this address needs verification, a new code will be sent. Check your inbox and spam folder.');
+    } catch (failure) { if (current(pending.id)) setError(readableError(failure)); }
+    finally { finish(pending.id); }
+  }
+
+  async function verifyEmail(event: FormEvent) {
+    event.preventDefault();
+    if (action.current || !policy?.emailVerificationRequired) return;
+    const pending = begin(); if (!pending) return;
+    try {
+      await post('/api/auth/email-otp/verify-email', { email: email.trim(), otp: verificationCode.trim() }, pending.controller.signal);
+      if (!current(pending.id)) return;
+      show('signin', 'Email verification complete. Sign in to continue.');
     } catch (failure) { if (current(pending.id)) setError(readableError(failure)); }
     finally { finish(pending.id); }
   }
@@ -177,7 +185,7 @@ export default function AccountAccess({ onSignedIn, initialRoute = emptyRoute }:
   }
 
   const titles: Record<Mode, string> = {
-    signin: 'Welcome back.', signup: 'A space of your own.', verify: 'Check your email.', resend: 'A fresh verification link.',
+    signin: 'Welcome back.', signup: 'A space of your own.', verify: 'Check your email.', resend: 'A fresh verification code.',
     forgot: 'Let’s get you back in.', 'reset-sent': 'Check your email.', reset: 'Choose a new password.',
     'reset-invalid': 'This reset link can’t be used.', 'reset-complete': 'Your password is updated.',
   };
@@ -207,16 +215,17 @@ export default function AccountAccess({ onSignedIn, initialRoute = emptyRoute }:
         {mode === 'signup' && policy?.emailVerificationRequired && <p className="account-recovery-note">You’ll verify your email before signing in.</p>}
       </>}
       {mode === 'verify' && <div className="account-flow-content">
-        <p>Use a verification link for <strong className="account-email">{email}</strong> to finish setting up access. Then return here to sign in.</p>
-        <p>If you don’t see a message, check your spam folder or request another link.</p>
+        <p>Enter the verification code sent to <strong className="account-email">{email}</strong>. Then sign in to continue.</p>
+        <p>If you don’t see a message, check your spam folder or request another code.</p>
         {feedback}
-        {policy?.emailVerificationRequired && <button type="button" className="button primary full-width" disabled={disabled} onClick={() => void sendVerification()}>{busy ? loadingLabel : <><Mail size={17} aria-hidden="true" />Resend verification email</>}</button>}
+        {policy?.emailVerificationRequired && <form onSubmit={verifyEmail} aria-busy={busy}><label className="field"><span>Verification code</span><input name="verificationCode" required inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} value={verificationCode} disabled={busy} onChange={event => setVerificationCode(event.target.value)} /></label><button type="submit" className="button primary full-width" disabled={disabled}>{busy ? loadingLabel : 'Verify email'}</button></form>}
+        {policy?.emailVerificationRequired && <button type="button" className="button outline full-width" disabled={disabled} onClick={() => void sendVerification()}>{busy ? loadingLabel : <><Mail size={17} aria-hidden="true" />Resend verification code</>}</button>}
         {policy && !policy.emailVerificationRequired && <p>Verification emails aren’t available in this Corner. Ask the person who manages it for help.</p>}
         <button type="button" className="button outline full-width" onClick={() => show('signin')}>Return to sign in</button>
         {policy?.emailVerificationRequired && <button type="button" className="text-link" onClick={() => show('resend')}>Use a different email</button>}
       </div>}
       {mode === 'resend' && <>
-        <p>Enter the email you used for Corner. If it needs verification, we’ll send a new link.</p>
+        <p>Enter the email you used for Corner. If it needs verification, we’ll send a new code.</p>
         {policy?.emailVerificationRequired ? <form onSubmit={event => void sendVerification(event)} aria-busy={busy}><label className="field"><span>Email</span><input name="email" required type="email" autoComplete="email" maxLength={254} value={email} disabled={busy} onChange={event => setEmail(event.target.value)} /></label>{feedback}<button className="button primary full-width" disabled={disabled} type="submit">{busy ? loadingLabel : <><Mail size={17} aria-hidden="true" />Send verification email</>}</button></form> : <div className="account-flow-content">{feedback}{policy && <p>Verification emails aren’t available in this Corner. Ask the person who manages it for help.</p>}</div>}
       </>}
       {mode === 'forgot' && <>

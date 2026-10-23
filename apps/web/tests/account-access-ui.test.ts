@@ -116,7 +116,6 @@ test('rendered standalone account verification and password recovery', async t =
     const request = view.calls.find(call => call.path === '/api/auth/sign-up/email')!;
     assert.equal(request.init.credentials, 'same-origin');
     assert.equal(request.body?.name, 'Test User');
-    assert.equal(request.body?.callbackURL, `${origin}/?account=verified`);
     assert.equal(view.calls.some(call => call.path.includes('password-reset')), false);
   });
 
@@ -133,42 +132,31 @@ test('rendered standalone account verification and password recovery', async t =
     assert.equal(input(view.renderer, 'email').props.value, 'new@example.test');
   });
 
-  await t.test('EMAIL_NOT_VERIFIED leads to a real neutral resend action', async child => {
+  await t.test('unverified sign-in and rejected codes cannot authenticate; a confirmed code returns to sign-in', async child => {
+    let verified = false;
     const view = await render(child, AccountAccess, hosted, { handler: call => {
-      if (call.path === '/api/auth/sign-in/email') return json({ code: 'EMAIL_NOT_VERIFIED', message: 'Email not verified' }, 403);
-      if (call.path === '/api/auth/send-verification-email') return json({ status: true });
+      if (call.path === '/api/auth/sign-in/email') return verified ? json({ user: { id: 'verified-user' } }) : json({ code: 'EMAIL_NOT_VERIFIED', message: 'Email not verified' }, 403);
+      if (call.path === '/api/auth/email-otp/send-verification-otp') return json({ status: true });
+      if (call.path === '/api/auth/email-otp/verify-email') {
+        if (call.body?.otp !== '123456') return json({ code: 'INVALID_OTP', message: 'The code is invalid.' }, 400);
+        verified = true;
+        return json({ status: true });
+      }
     } });
     await change(view.renderer, 'email', 'person@example.test'); await change(view.renderer, 'password', password); await submit(view.renderer);
     assert.equal(view.state.signedIn, 0);
-    await click(button(view.renderer, 'Resend verification email'));
-    assert.deepEqual(view.calls.find(call => call.path === '/api/auth/send-verification-email')?.body, { email: 'person@example.test', callbackURL: `${origin}/?account=verified` });
-    assert.match(text(view.renderer.root), /If this address needs verification, a new link will be sent/);
+    await click(button(view.renderer, 'Resend verification code'));
     assert.equal(view.state.signedIn, 0);
+    await change(view.renderer, 'verificationCode', '654321'); await submit(view.renderer);
+    assert.ok(input(view.renderer, 'verificationCode'));
+    assert.equal(view.state.signedIn, 0);
+    await change(view.renderer, 'verificationCode', '123456'); await submit(view.renderer);
+    assert.equal(input(view.renderer, 'verificationCode'), undefined);
+    assert.equal(view.state.signedIn, 0);
+    await change(view.renderer, 'password', password); await submit(view.renderer);
+    assert.equal(view.state.signedIn, 1);
   });
 
-  await t.test('verification callback errors override a success marker and raw query text is not shown', async child => {
-    const url = `${origin}/?account=verified&error=TOKEN_EXPIRED&message=%3Cscript%3Eunsafe%3C%2Fscript%3E`;
-    const route = readAccountRoute(new URL(url));
-    assert.deepEqual(route, { kind: 'verification', verified: false });
-    const view = await render(child, AccountAccess, hosted, { url, route, handler: call => call.path === '/api/auth/send-verification-email' ? json({ status: true }) : undefined });
-    assert.match(text(view.renderer.root), /This verification link is invalid or has expired/);
-    assert.doesNotMatch(text(view.renderer.root), /Email verification complete|unsafe|<script>/);
-    assert.equal(new URLSearchParams(view.location.search).has('account'), false);
-    assert.equal(new URLSearchParams(view.location.search).has('error'), false);
-    await change(view.renderer, 'email', 'unknown@example.test'); await submit(view.renderer);
-    assert.match(text(view.renderer.root), /If this address needs verification/);
-    assert.equal(view.state.signedIn, 0);
-  });
-
-  await t.test('a verified callback only offers sign-in and cleans consumed account parameters', async child => {
-    const url = `${origin}/?account=verified`;
-    const view = await render(child, AccountAccess, hosted, { url, route: readAccountRoute(new URL(url)) });
-    assert.match(text(view.renderer.root), /Email verification complete. Sign in to continue/);
-    assert.equal(view.location.search, '');
-    assert.equal(view.state.signedIn, 0);
-    assert.ok(input(view.renderer, 'password'));
-    assert.equal(view.calls.length, 1);
-  });
 
   await t.test('forgot password requests a same-origin reset and shows only a conditional confirmation', async child => {
     const view = await render(child, AccountAccess, hosted, { handler: call => call.path === '/api/auth/request-password-reset' ? json({ status: true, message: 'Synthetic response must not be displayed as account proof.' }) : undefined });

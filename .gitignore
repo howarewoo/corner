@@ -11,3 +11,4 @@ dist/
 *.tar.gz
 coverage/
 *.log
+.neon

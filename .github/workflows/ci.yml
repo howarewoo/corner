@@ -13,6 +13,19 @@ jobs:
     name: Test, build, and smoke check workspaces
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: corner-test-only
+          POSTGRES_DB: corner_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d corner_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      CORNER_TEST_DATABASE_URL: postgresql://postgres:corner-test-only@127.0.0.1:5432/corner_test
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

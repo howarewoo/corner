@@ -2,12 +2,10 @@ import { randomBytes } from 'node:crypto';
 import { chmodSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { z } from 'zod';
 
 // Both src/config.ts and the compiled dist/config.js live three levels below
 // the repository root. Workspace scripts must share one stable data location.
 export const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
-export type MailConfig = { apiKey: string; from: string };
 
 export type Config = {
   origin: string;
@@ -15,32 +13,16 @@ export type Config = {
   port: number;
   dataDir: string;
   deployment: 'local' | 'hosted';
+  databaseUrl: string;
+  neonAuthBaseUrl: string;
+  neonAuthRequireEmailVerification: boolean;
   authSecret: string;
   tokenEncryptionKey: Buffer;
-  mail?: MailConfig;
   proxySecret?: string;
 };
 
 type LocalSecrets = { authSecret: string; tokenEncryptionKey: string };
 
-function mailConfiguration(environment: NodeJS.ProcessEnv, deployment: Config['deployment']): MailConfig | undefined {
-  const apiKey = environment.RESEND_API_KEY;
-  const from = environment.CORNER_EMAIL_FROM?.trim();
-  if (apiKey === undefined && from === undefined) {
-    if (deployment === 'hosted') throw new Error('Hosted deployments require RESEND_API_KEY and CORNER_EMAIL_FROM with a verified sender domain.');
-    return undefined;
-  }
-  if (!apiKey || !from) throw new Error('Set both RESEND_API_KEY and CORNER_EMAIL_FROM to enable account email.');
-  if (!/^re_[A-Za-z0-9_-]{8,500}$/.test(apiKey)) throw new Error('RESEND_API_KEY must be a valid Resend API key.');
-  // Accept either an address or a conventional display-name/address pair.
-  // No newlines or extra recipients can enter the provider's From field.
-  const match = from.match(/^(?:[^<>]{1,80}\s<([^<>]+)>|([^<>]+))$/);
-  const address = match?.[1] ?? match?.[2];
-  if (from.length > 320 || /[\r\n\u0000]/.test(from) || !address || !z.string().email().safeParse(address).success) {
-    throw new Error('CORNER_EMAIL_FROM must be one valid sender address, optionally with a display name.');
-  }
-  return { apiKey, from };
-}
 
 function encryptionKey(value: string): Buffer {
   if (!/^[A-Za-z0-9+/]{43}=$/.test(value)) throw new Error('CORNER_TOKEN_ENCRYPTION_KEY must be a base64-encoded 32-byte key.');
@@ -77,6 +59,21 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env, options
   const development = options.development === true;
   const deployment = environment.CORNER_DEPLOYMENT ?? 'local';
   if (deployment !== 'local' && deployment !== 'hosted') throw new Error('CORNER_DEPLOYMENT must be local or hosted.');
+  const databaseUrl = environment.DATABASE_URL;
+  if (!databaseUrl) throw new Error('DATABASE_URL is required. Run neon deploy to pull Neon configuration.');
+  try {
+    if (!['postgres:', 'postgresql:'].includes(new URL(databaseUrl).protocol)) throw new Error();
+  } catch { throw new Error('DATABASE_URL must be a PostgreSQL connection URL.'); }
+  const authUrl = environment.NEON_AUTH_BASE_URL;
+  if (!authUrl) throw new Error('NEON_AUTH_BASE_URL is required. Run neon deploy to pull Neon configuration.');
+  let neonAuthBaseUrl: string;
+  try {
+    const parsed = new URL(authUrl);
+    if (parsed.protocol !== 'https:' || parsed.username || parsed.password || parsed.search || parsed.hash) throw new Error();
+    neonAuthBaseUrl = parsed.href.replace(/\/$/, '');
+  } catch { throw new Error('NEON_AUTH_BASE_URL must be an HTTPS service URL.'); }
+  if (environment.NEON_AUTH_REQUIRE_EMAIL_VERIFICATION !== undefined && !['true', 'false'].includes(environment.NEON_AUTH_REQUIRE_EMAIL_VERIFICATION)) throw new Error('NEON_AUTH_REQUIRE_EMAIL_VERIFICATION must be true or false.');
+  const neonAuthRequireEmailVerification = environment.NEON_AUTH_REQUIRE_EMAIL_VERIFICATION === 'true';
   const port = Number(development ? (environment.CORNER_DEV_API_PORT ?? 3001) : (environment.CORNER_PORT ?? environment.PORT ?? 3000));
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error(`${development ? 'CORNER_DEV_API_PORT' : 'CORNER_PORT'} must be a valid TCP port.`);
   const rawOrigin = environment.CORNER_ORIGIN ?? (deployment === 'local' ? `http://127.0.0.1:${development ? 3000 : port}` : '');
@@ -99,7 +96,6 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env, options
   // Validate supplied values before creating anything on disk.
   if (authSecret !== undefined && authSecret.length < 32) throw new Error('BETTER_AUTH_SECRET must contain at least 32 characters.');
   if (encodedKey !== undefined) encryptionKey(encodedKey);
-  const mail = mailConfiguration(environment, deployment);
   const proxySecret = environment.CORNER_PROXY_SECRET;
   if (proxySecret !== undefined && (proxySecret.trim().length < 32 || /[\r\n\u0000]/.test(proxySecret))) throw new Error('CORNER_PROXY_SECRET must contain at least 32 characters and no line breaks.');
   mkdirSync(dataDir, { recursive: true, mode: 0o700 });
@@ -110,5 +106,5 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env, options
     authSecret ??= saved.authSecret;
     encodedKey ??= saved.tokenEncryptionKey;
   }
-  return { origin: url.origin, host, port, dataDir, deployment, authSecret, tokenEncryptionKey: encryptionKey(encodedKey), ...(mail ? { mail } : {}), ...(proxySecret ? { proxySecret } : {}) };
+  return { origin: url.origin, host, port, dataDir, deployment, databaseUrl, neonAuthBaseUrl, neonAuthRequireEmailVerification, authSecret, tokenEncryptionKey: encryptionKey(encodedKey), ...(proxySecret ? { proxySecret } : {}) };
 }

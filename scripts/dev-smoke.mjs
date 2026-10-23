@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
+import { startSmokeServices } from './smoke-services.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const origin = 'http://127.0.0.1:43139';
@@ -38,9 +39,11 @@ await Promise.all([43139, apiPort].map(port => new Promise((resolve, reject) => 
 })));
 
 const temporary = await mkdtemp(join(tmpdir(), 'corner-development-smoke-'));
+const testDatabaseUrl = process.env.CORNER_TEST_DATABASE_URL;
+const backend = await startSmokeServices(temporary, origin);
 const environment = { ...process.env };
 for (const name of Object.keys(environment)) {
-  if (/^(CORNER_|BETTER_AUTH_|RESEND_|OPENAI_|VITE_|TURBO_)/.test(name) || name === 'NODE_OPTIONS') delete environment[name];
+  if (/^(CORNER_|BETTER_AUTH_|RESEND_|OPENAI_|VITE_|TURBO_|NEON_|DATABASE_)/.test(name) || name === 'NODE_OPTIONS') delete environment[name];
 }
 Object.assign(environment, {
   NODE_ENV: 'development', CI: '1', NO_COLOR: '1', TURBO_TELEMETRY_DISABLED: '1', DO_NOT_TRACK: '1',
@@ -48,6 +51,9 @@ Object.assign(environment, {
   CORNER_DATA_DIR: join(temporary, 'data'),
   BETTER_AUTH_SECRET: 'synthetic-development-account-secret-with-more-than-32-characters',
   CORNER_TOKEN_ENCRYPTION_KEY: Buffer.alloc(32, 47).toString('base64'),
+  DATABASE_URL: backend.databaseUrl, NEON_AUTH_BASE_URL: backend.authUrl,
+  NEON_AUTH_REQUIRE_EMAIL_VERIFICATION: 'false', NODE_EXTRA_CA_CERTS: backend.certificate,
+  CORNER_TEST_DATABASE_URL: testDatabaseUrl,
 });
 
 function capture(chunk) {
@@ -183,7 +189,7 @@ try {
   const policy = await call('/api/account-policy');
   assert.equal(policy.status, 200, 'The browser origin must proxy account policy to the separate API.');
   const accountPolicy = json(policy, 'Account policy');
-  assert.ok(accountPolicy.emailVerificationRequired === false && accountPolicy.passwordResetAvailable === false, 'Disposable local accounts must not enable account email.');
+  assert.ok(accountPolicy.emailVerificationRequired === false && accountPolicy.passwordResetAvailable === true, 'Account policy must match managed auth configuration.');
   assert.equal((await call('/api/state')).status, 401, 'Workspace data must require a session through the proxy.');
   const callback = await call('/auth/callback');
   assert.equal(callback.status, 401, 'The callback must reach API authentication instead of the web HTML fallback.');
@@ -205,6 +211,7 @@ try {
   finally {
     process.removeListener('SIGINT', onSignal);
     process.removeListener('SIGTERM', onSignal);
+    await backend.close();
     await rm(temporary, { recursive: true, force: true });
   }
 }

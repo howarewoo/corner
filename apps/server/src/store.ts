@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import type { DatabaseSync } from 'node:sqlite';
+import type { Pool, PoolClient } from 'pg';
 import { z } from 'zod';
 import { applyMutation, FoodEntrySchema, MutationSchema, PlanEntrySchema, RecipeRequestSchema, RecipeSchema, SettingsSchema } from '@corner/shared/domain';
 import { createInitialState } from '@corner/shared/seed';
@@ -89,44 +89,25 @@ export function isEmptyWorkspace(state: AppState): boolean {
 }
 
 export class WorkspaceStore {
-  constructor(public readonly db: DatabaseSync) {
-    db.exec('PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL;');
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS workspace_state (
-        user_id TEXT PRIMARY KEY NOT NULL,
-        data TEXT NOT NULL,
-        version INTEGER NOT NULL DEFAULT 0,
-        updated_at TEXT NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS mutation_receipts (
-        user_id TEXT NOT NULL,
-        request_id TEXT NOT NULL,
-        payload_hash TEXT NOT NULL,
-        revision INTEGER NOT NULL,
-        created_at TEXT NOT NULL,
-        PRIMARY KEY (user_id, request_id)
-      );
-      CREATE INDEX IF NOT EXISTS mutation_receipts_user_revision ON mutation_receipts (user_id, revision);
-    `);
-  }
+  constructor(public readonly db: Pool) {}
 
-  read(userId: string, name?: string): WorkspaceSnapshot {
+  async read(userId: string, name?: string, connection: Pool | PoolClient = this.db): Promise<WorkspaceSnapshot> {
     userSchema.parse(userId);
-    const row = this.db.prepare('SELECT data, version FROM workspace_state WHERE user_id = ?').get(userId) as { data: string; version: number } | undefined;
+    const row = (await connection.query('SELECT data, version FROM workspace_state WHERE user_id = $1', [userId])).rows[0] as { data: string; version: number } | undefined;
     if (!row) return { state: createInitialState(name), revision: 0 };
     try { return { state: inspectImport(JSON.parse(row.data)).state, revision: revisionSchema.parse(row.version) }; }
     catch { throw new ApiError(503, 'STATE_UNAVAILABLE', 'Your saved workspace could not be loaded. Restore a backup or try again.'); }
   }
 
-  mutate(userId: string, requestId: string, mutation: unknown, expectedRevision?: number): WorkspaceSnapshot {
+  async mutate(userId: string, requestId: string, mutation: unknown, expectedRevision?: number): Promise<WorkspaceSnapshot> {
     return this.commit(userId, requestId, { kind: 'mutation', mutation, expectedRevision }, expectedRevision, current => {
       const parsed = MutationSchema.parse(mutation) as Mutation;
       return this.apply(current.state, parsed);
     });
   }
 
-  /** onApplied is trusted synchronous SQL and must be safe to repeat on replay. */
-  applyBatch(userId: string, requestId: string, mutations: Mutation[], expectedRevision: number, onApplied?: () => void): WorkspaceSnapshot {
+  /** onApplied uses the same transaction as the state and receipt. */
+  async applyBatch(userId: string, requestId: string, mutations: Mutation[], expectedRevision: number, onApplied?: (connection: PoolClient) => Promise<void>): Promise<WorkspaceSnapshot> {
     revisionSchema.parse(expectedRevision);
     const parsed = z.array(MutationSchema).min(1).max(200).parse(mutations) as Mutation[];
     return this.commit(userId, requestId, { kind: 'batch', mutations: parsed, expectedRevision }, expectedRevision, current => {
@@ -138,7 +119,7 @@ export class WorkspaceStore {
 
   inspectImport(rawState: unknown) { return inspectImport(rawState); }
 
-  replaceImport(userId: string, requestId: string, rawState: unknown, expectedRevision: number): WorkspaceSnapshot {
+  async replaceImport(userId: string, requestId: string, rawState: unknown, expectedRevision: number): Promise<WorkspaceSnapshot> {
     revisionSchema.parse(expectedRevision);
     const imported = inspectImport(rawState).state;
     return this.commit(userId, requestId, { kind: 'import', state: imported, expectedRevision }, expectedRevision, current => {
@@ -157,36 +138,41 @@ export class WorkspaceStore {
     }
   }
 
-  private commit(userId: string, requestId: string, payload: unknown, expectedRevision: number | undefined, update: (current: WorkspaceSnapshot) => AppState, onApplied?: () => void): WorkspaceSnapshot {
+  private async commit(userId: string, requestId: string, payload: unknown, expectedRevision: number | undefined, update: (current: WorkspaceSnapshot) => AppState, onApplied?: (connection: PoolClient) => Promise<void>): Promise<WorkspaceSnapshot> {
     userSchema.parse(userId);
     requestIdSchema.parse(requestId);
     if (expectedRevision !== undefined) revisionSchema.parse(expectedRevision);
     const hash = fingerprint(payload);
-    this.db.exec('BEGIN IMMEDIATE');
+    const connection = await this.db.connect();
     try {
-      const receipt = this.db.prepare('SELECT payload_hash FROM mutation_receipts WHERE user_id = ? AND request_id = ?').get(userId, requestId) as { payload_hash: string } | undefined;
+      await connection.query('BEGIN');
+      // Also serializes the first mutation, when no workspace row exists yet.
+      await connection.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [userId]);
+      const receipt = (await connection.query('SELECT payload_hash FROM mutation_receipts WHERE user_id = $1 AND request_id = $2', [userId, requestId])).rows[0] as { payload_hash: string } | undefined;
       if (receipt) {
         if (receipt.payload_hash !== hash) throw new ApiError(409, 'REQUEST_ID_REUSED', 'This request identifier was already used for a different change.');
-        const replay = this.read(userId);
-        onApplied?.();
-        this.db.exec('COMMIT');
+        const replay = await this.read(userId, undefined, connection);
+        await onApplied?.(connection);
+        await connection.query('COMMIT');
         return replay;
       }
-      const current = this.read(userId);
+      const current = await this.read(userId, undefined, connection);
       if (expectedRevision !== undefined && current.revision !== expectedRevision) throw new ApiError(409, 'REVISION_CONFLICT', 'Your workspace changed. Refresh and review this change again.');
       if (current.revision >= Number.MAX_SAFE_INTEGER) throw new ApiError(409, 'WORKSPACE_LIMIT', 'This workspace cannot accept further revisions.');
       const next = inspectImport(update(current)).state;
       const revision = current.revision + 1;
       const now = new Date().toISOString();
-      this.db.prepare('INSERT INTO workspace_state (user_id, data, version, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET data = excluded.data, version = excluded.version, updated_at = excluded.updated_at').run(userId, JSON.stringify(next), revision, now);
-      this.db.prepare('INSERT INTO mutation_receipts (user_id, request_id, payload_hash, revision, created_at) VALUES (?, ?, ?, ?, ?)').run(userId, requestId, hash, revision, now);
-      this.db.prepare('DELETE FROM mutation_receipts WHERE user_id = ? AND request_id IN (SELECT request_id FROM mutation_receipts WHERE user_id = ? ORDER BY revision DESC LIMIT -1 OFFSET 1000)').run(userId, userId);
-      onApplied?.();
-      this.db.exec('COMMIT');
+      await connection.query('INSERT INTO workspace_state (user_id, data, version, updated_at) VALUES ($1, $2, $3, $4) ON CONFLICT(user_id) DO UPDATE SET data = excluded.data, version = excluded.version, updated_at = excluded.updated_at', [userId, JSON.stringify(next), revision, now]);
+      await connection.query('INSERT INTO mutation_receipts (user_id, request_id, payload_hash, revision, created_at) VALUES ($1, $2, $3, $4, $5)', [userId, requestId, hash, revision, now]);
+      await connection.query('DELETE FROM mutation_receipts WHERE user_id = $1 AND request_id IN (SELECT request_id FROM mutation_receipts WHERE user_id = $1 ORDER BY revision DESC OFFSET 1000)', [userId]);
+      await onApplied?.(connection);
+      await connection.query('COMMIT');
       return { state: next, revision };
     } catch (error) {
-      this.db.exec('ROLLBACK');
+      await connection.query('ROLLBACK');
       throw error;
+    } finally {
+      connection.release();
     }
   }
 }

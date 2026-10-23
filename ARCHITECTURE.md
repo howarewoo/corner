@@ -24,11 +24,13 @@ Production runs compiled JavaScript from `apps/server/dist`; the same Node proce
 
 ## Accounts and workspace persistence
 
-[auth.ts](apps/server/src/auth.ts) uses Better Auth with the same `data/corner.sqlite` database as application storage. An authenticated principal supplies the owner ID to storage and AI operations; request bodies and legacy Sites headers do not establish ownership. Workspaces are isolated per account, without sharing roles.
+[auth.ts](apps/server/src/auth.ts) proxies the supported email/password, verification-code, reset, and sign-out endpoints to managed Neon Auth. Accounts and sessions live in Neon's `neon_auth` schema. Each protected request resolves its opaque cookie through the uncached managed session endpoint; a browser header, request body, or JWT decoded without verification never establishes ownership. The proxy preserves refresh/deletion cookies, makes them host-only, and maps secure cookie names for loopback HTTP. Production cookies remain Secure/HttpOnly/SameSite=Lax. Workspaces remain isolated per managed account, without sharing roles.
 
-[store.ts](apps/server/src/store.ts) stores one serialized state document per user in `workspace_state`, with an integer revision. Account tables, mutation receipts, agent runs, and encrypted provider records are separate database records. Current state validation includes collection limits and a `1_800_000`-byte serialized bound. Persistence/import limits are enforced by the store even where shared domain limits are broader; consult the schemas rather than assuming they are interchangeable.
+[database.ts](apps/server/src/database.ts) owns one bounded `pg` pool using the pooled `DATABASE_URL`, with certificate/hostname verification for Neon connections. [store.ts](apps/server/src/store.ts) stores one serialized document per owner in `workspace_state`, with an integer revision. Mutation receipts, agent runs, and encrypted provider records are separate PostgreSQL tables. State validation retains collection limits and a `1_800_000`-byte serialized bound.
 
-Each mutation has a request ID. Inside `BEGIN IMMEDIATE`, the store checks its payload fingerprint against retained receipts, validates the resulting state, advances the revision, and commits state and receipt together. Reusing a retained ID with another payload is rejected; matching retries do not apply the change again. Receipt history is bounded, not a permanent deduplication ledger.
+Each mutation has a request ID. On one checked-out connection, `BEGIN` plus an owner-scoped transaction advisory lock serializes first writes and existing workspaces. The store checks payload fingerprints, validates the resulting state, advances its revision, and commits state and receipt together. Matching retained retries do not reapply changes; reusing an ID for a different payload is rejected. Receipt retention remains bounded.
+
+[migrate.ts](apps/server/src/migrate.ts) applies ordered, checksummed SQL from `apps/server/migrations` through `DATABASE_URL_UNPOOLED`. Migrations are explicitly invoked after a build, transactional, and serialized; application startup only checks the schema. Auth schema lifecycle is Neon's responsibility. No SQLite runtime or app-owned mail adapter remains.
 
 `expectedRevision` is optional on ordinary `/api/mutate` requests and is not sent by the current main workspace mutation path. Do not assume all manual edits have workspace-wide optimistic concurrency checks. Imports require an expected revision and an empty workspace; agent application requires its original base revision. Training mutations also use record-level `expectedUpdatedAt` checks where defined in [training.ts](packages/shared/src/training.ts).
 
@@ -44,7 +46,7 @@ sequenceDiagram
     participant H as Authenticated HTTP routes
     participant A as PlanningAgent
     participant P as SubscriptionProvider
-    participant D as SQLite / WorkspaceStore
+    participant D as Postgres / WorkspaceStore
     U->>H: Request a plan
     H->>A: Start for authenticated owner
     A->>D: Read workspace and persist run with base revision
@@ -64,13 +66,17 @@ sequenceDiagram
 
 [proposalMutations](packages/shared/src/agent.ts) translates only permitted planning changes into ordinary validated mutations. The agent can propose recipes, meals, future workouts, routines, and targets; it cannot generate intake logs, measurements, or actual workout results. Started, partially recorded, completed, and skipped workouts are protected. These checks belong in server/shared validation, not only in UI copy or model instructions.
 
+Overlapping Apply requests replay a completed application rather than treating its own committed revision as a stale proposal. Administrative timestamps for proposal mutations use the run's completion time, making their receipt fingerprint deterministic across concurrent requests; activity dates and actual recorded training/food remain user-controlled.
+
 Recipe generation returns a draft; food estimation returns clarification or an editable estimate. Neither saves a recipe or food log automatically. Planning results may also be questions or advice with no mutations.
 
-Run records persist, but background tasks execute in memory in one process. Startup marks interrupted runs failed rather than resuming them. Shutdown stops new agent work, drains accepted handlers and mail, and closes SQLite. This lifecycle must be reconsidered before adding workers or multiple instances; the current deployment supports one Corner process.
+Run records persist, but background tasks still execute in memory in one process. Startup marks interrupted runs failed rather than resuming them. Agent admission is transactionally serialized so asynchronous SQL does not weaken idempotency or concurrency limits. Shutdown stops new agent work, drains accepted handlers/tasks, and closes the PostgreSQL pool. Keep one Corner process; Postgres alone does not establish multi-instance readiness.
 
 ## Credentials and provider availability
 
-Corner sessions and ChatGPT authorization are independent. [subscription.ts](apps/server/src/subscription.ts) owns OAuth state/PKCE/session binding, signed identity checks, encrypted credentials, refresh coordination, model discovery, and disconnect/revocation handling. Raw access and refresh credentials never belong in browser state, shared models, or workspace exports. [mail.ts](apps/server/src/mail.ts) owns account mail delivery; hosted mode requires its server-only configuration.
+Corner sessions and ChatGPT authorization are independent. [subscription.ts](apps/server/src/subscription.ts) owns OAuth state/PKCE/session binding, signed identity checks, encrypted credentials, refresh coordination, model discovery, and disconnect/revocation handling. Short PostgreSQL transactions and generation checks preserve connection/disconnect ordering across awaited I/O. Raw provider credentials never belong in browser state, shared models, or workspace exports. Neon owns account email delivery and managed Auth rate limits; verification uses OTP, and the application verification-policy setting must match the branch.
+
+Credential rotation and catalog/model updates re-read and merge the encrypted registration inside an owner-locked transaction. Identity/generation pins prevent writes across reconnects; token writes additionally pin the refresh token they renewed. OAuth callbacks use one registration/version snapshot and an atomic version check. Provider network I/O stays outside these short transactions.
 
 Local ChatGPT authorization currently requires the supported `http://127.0.0.1` browser origin and local deployment gate. Hosted mode disables this connection and has no alternative inference provider. Do not make hosted AI appear available by changing the deployment label, copying a local grant, hardcoding model access, or silently switching billing paths.
 
@@ -78,4 +84,4 @@ Local ChatGPT authorization currently requires the supported `http://127.0.0.1` 
 
 The intended product is a hosted service for performance-focused trainees. Daily tracking usability, AI planning quality, and hosted readiness are priorities. The intended hosted AI path is an approved ChatGPT integration; approval, its actual integration contract, and live verification remain prerequisites. Provider references and current limitations are linked from [README.md](README.md#chatgpt-plan-access-current-scope).
 
-Account isolation, private credentials, truthful activity history, and explicit user approval remain binding as architecture evolves. SQLite, document-shaped storage, the current workspace split, and single-process deployment describe today's implementation; no specific replacement has been chosen. Hosted infrastructure, capacity targets, worker/storage design, and launch criteria remain open. Do not present a proposed migration or approved integration as already implemented.
+Account isolation, private credentials, truthful activity history, and explicit approval remain binding. Persistence now uses Neon Postgres and managed Neon Auth; document-shaped storage and the single-process agent lifecycle remain. Existing SQLite accounts are not claimed by matching email: owners establish managed accounts and explicitly import workspace exports. Hosted capacity targets, worker topology, and launch criteria remain open.

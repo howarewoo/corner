@@ -24,14 +24,16 @@ if (domain.length > 253 || labels.length < 2 || domain !== canonicalHostname || 
     `CORNER_TOKEN_ENCRYPTION_KEY=${randomBytes(32).toString('base64')}`,
     `CORNER_PROXY_SECRET=${randomBytes(48).toString('base64url')}`,
     '',
-    '# Configure a Resend key and verify the sender domain before deploying.',
-    'RESEND_API_KEY=',
-    `CORNER_EMAIL_FROM="Corner <hello@${domain}>"`,
+    '# Pull these server-only values with neon deploy, then copy them here.',
+    'DATABASE_URL=',
+    'DATABASE_URL_UNPOOLED=',
+    'NEON_AUTH_BASE_URL=',
+    '# Configure verification codes and custom SMTP in Neon before deploying.',
     '',
   ].join('\n');
   try {
     writeFileSync(destination, contents, { mode: 0o600, flag: 'wx' });
-    process.stdout.write('Created .env.hosted with three independent private keys.\nAdd your email delivery key and verified sender, then follow HOSTING.md.\n');
+    process.stdout.write('Created .env.hosted with three independent private keys.\nAdd Neon connection URLs and configure managed Auth, then follow HOSTING.md.\n');
   } catch (error) {
     process.stderr.write(error?.code === 'EEXIST'
       ? '.env.hosted already exists. Keep its keys; edit it deliberately instead of regenerating them.\n'

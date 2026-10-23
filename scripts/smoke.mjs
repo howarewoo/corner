@@ -7,6 +7,7 @@ import { request as httpRequest } from 'node:http';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { startSmokeServices } from './smoke-services.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const serverEntry = join(root, 'apps/server/dist/index.js');
@@ -19,6 +20,7 @@ const temporary = await mkdtemp(join(tmpdir(), 'corner-runtime-smoke-'));
 const proof = 'synthetic-http-proxy-proof-with-more-than-32-characters';
 const password = 'synthetic-smoke-test-password-not-used-elsewhere';
 const children = new Set();
+const services = new Set();
 
 async function exitOf(child) {
   if (child.exitCode !== null || child.signalCode !== null) return { code: child.exitCode, signal: child.signalCode };
@@ -28,19 +30,17 @@ async function exitOf(child) {
 async function run(mode, port) {
   const origin = mode === 'hosted' ? 'https://corner.example.test' : `http://127.0.0.1:${port}`;
   const listener = `http://127.0.0.1:${port}`;
+  const backend = await startSmokeServices(temporary, origin);
+  services.add(backend);
   const environment = {
     ...process.env, NODE_ENV: 'production', CORNER_DEPLOYMENT: mode,
     CORNER_ORIGIN: origin, CORNER_HOST: '127.0.0.1', CORNER_PORT: String(port),
     CORNER_DATA_DIR: join(temporary, mode), CORNER_PROXY_SECRET: proof,
     BETTER_AUTH_SECRET: 'synthetic-http-account-secret-with-more-than-32-characters',
     CORNER_TOKEN_ENCRYPTION_KEY: Buffer.alloc(32, 42).toString('base64'),
+    DATABASE_URL: backend.databaseUrl, NEON_AUTH_BASE_URL: backend.authUrl,
+    NEON_AUTH_REQUIRE_EMAIL_VERIFICATION: 'false', NODE_EXTRA_CA_CERTS: backend.certificate,
   };
-  delete environment.RESEND_API_KEY;
-  delete environment.CORNER_EMAIL_FROM;
-  if (mode === 'hosted') {
-    environment.RESEND_API_KEY = 're_fixture_not_a_real_delivery_key';
-    environment.CORNER_EMAIL_FROM = 'Corner <accounts@example.test>';
-  }
   const child = spawn(process.execPath, [serverEntry], { cwd: root, env: environment, stdio: ['ignore', 'pipe', 'pipe'] });
   children.add(child);
   let output = '';
@@ -83,7 +83,7 @@ async function run(mode, port) {
   assert.equal((await call('/api/account-policy', { headers: { 'X-Corner-Proxy-IP': '192.0.2.12, 192.0.2.13' } })).status, 403);
   assert.equal((await call('/api/account-policy', { headers: { Host: 'other.example.test' } })).status, 400);
   assert.deepEqual(await (await call('/api/account-policy')).json(), {
-    emailVerificationRequired: mode === 'hosted', passwordResetAvailable: mode === 'hosted',
+    emailVerificationRequired: false, passwordResetAvailable: true,
   });
   const page = await call('/account/reset-password');
   assert.equal(page.status, 200);
@@ -93,7 +93,7 @@ async function run(mode, port) {
   const check = spawn(process.execPath, ['scripts/healthcheck.mjs'], { cwd: root, env: environment, stdio: 'ignore' });
   assert.deepEqual(await exitOf(check), { code: 0, signal: null }, 'The real health script must use the configured Host and listener port.');
 
-  // Hosted checks are GET-only: the real mail adapter is never invoked.
+  // Hosted runtime checks stay GET-only; account/provider behavior is isolated elsewhere.
   if (mode === 'local') {
     const signup = await json('/api/auth/sign-up/email', { name: 'HTTP test', email: 'http-test@example.test', password });
     assert.equal(signup.status, 200);
@@ -107,8 +107,8 @@ async function run(mode, port) {
     assert.equal((await call('/api/state', { headers: { Cookie: cookie } })).status, 401);
 
     // The 100-continue handshake confirms that Node accepted this handler.
-    // SIGTERM arrives while its body is pending. Shutdown must let the handler
-    // finish hashing/writing before closing SQLite or draining account emails.
+    // SIGTERM arrives while its body is pending. Shutdown must finish the
+    // accepted managed-auth request before closing the PostgreSQL pool.
     const body = JSON.stringify({ name: 'During shutdown', email: 'shutdown@example.test', password });
     const status = await new Promise((resolve, reject) => {
       const pending = httpRequest(listener + '/api/auth/sign-up/email', {
@@ -124,6 +124,8 @@ async function run(mode, port) {
   } else child.kill('SIGTERM');
   assert.deepEqual(await exitOf(child), { code: 0, signal: null }, 'The Node process must finish its orderly shutdown.');
   children.delete(child);
+  await backend.close();
+  services.delete(backend);
   process.stdout.write(`Passed ${mode} production HTTP, proxy, health, and shutdown checks.\n`);
 }
 
@@ -133,5 +135,6 @@ try {
   process.stdout.write('No live account email or model requests were made.\n');
 } finally {
   for (const child of children) { child.kill('SIGKILL'); await exitOf(child); }
+  for (const backend of services) await backend.close();
   await rm(temporary, { recursive: true, force: true });
 }

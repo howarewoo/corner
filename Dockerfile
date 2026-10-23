@@ -28,6 +28,7 @@ COPY --from=production-dependencies --chown=node:node /app/node_modules ./node_m
 COPY --from=production-dependencies --chown=node:node /app/apps ./apps
 COPY --from=production-dependencies --chown=node:node /app/packages ./packages
 COPY --from=build --chown=node:node /app/apps/server/dist ./apps/server/dist
+COPY --from=build --chown=node:node /app/apps/server/migrations ./apps/server/migrations
 COPY --from=build --chown=node:node /app/apps/web/dist ./apps/web/dist
 COPY --from=build --chown=node:node /app/packages/shared/dist ./packages/shared/dist
 COPY --from=build --chown=node:node /app/scripts/healthcheck.mjs ./scripts/healthcheck.mjs

@@ -1,5 +1,5 @@
 import { randomUUID, createHash } from 'node:crypto';
-import type { DatabaseSync } from 'node:sqlite';
+import type { Pool } from 'pg';
 import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import { AgentRequestSchema, AgentResultSchema, proposalMutations, validateRecipeEstimate, type AgentRequest, type AgentResult, type AgentRun } from '@corner/shared/agent';
@@ -56,39 +56,32 @@ Use exercise search for catalog IDs; never invent catalog IDs. Prefer familiar e
 Keep a first plan to one week unless the user asks otherwise; favor a useful, coherent result over unnecessary volume. If there is not enough context to complete both training and nutrition, clarify the missing details. Timestamp fields may use the supplied currentTimestamp; the server replaces administrative timestamps. Proposed recipe color can be #d9e8de, source ai, favorite false. Do not embed PDF links. You have at most six tool rounds. The required output schema is supplied on submit_result.`;
 
 export class PlanningAgent {
-  private db: DatabaseSync;
+  private db: Pool;
   private tasks = new Map<string, { controller: AbortController; promise: Promise<void> }>();
   private closing = false;
   constructor(private store: WorkspaceStore, private provider: InferenceProvider) {
     this.db = store.db;
-    this.db.exec(`CREATE TABLE IF NOT EXISTS corner_ai_runs (
-      id TEXT PRIMARY KEY, user_id TEXT NOT NULL, request_id TEXT NOT NULL, payload_hash TEXT NOT NULL,
-      kind TEXT NOT NULL, status TEXT NOT NULL, prompt TEXT NOT NULL, reference_date TEXT NOT NULL,
-      base_revision INTEGER NOT NULL, result TEXT, error TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
-      UNIQUE(user_id,kind,request_id));
-      CREATE INDEX IF NOT EXISTS corner_ai_runs_owner ON corner_ai_runs(user_id,created_at);`);
-    const columns = new Set((this.db.prepare('PRAGMA table_info(corner_ai_runs)').all() as Array<{ name: string }>).map(column => column.name));
-    if (!columns.has('error_code')) this.db.exec('ALTER TABLE corner_ai_runs ADD COLUMN error_code TEXT');
-    if (!columns.has('error_status')) this.db.exec('ALTER TABLE corner_ai_runs ADD COLUMN error_status INTEGER');
-    this.db.prepare("UPDATE corner_ai_runs SET status='failed', error=?, updated_at=? WHERE status='running'")
-      .run('The server restarted before this request finished. No changes were applied. Start a new request to continue.', new Date().toISOString());
   }
 
-  list(userId: string): AgentRun[] {
-    return (this.db.prepare("SELECT * FROM corner_ai_runs WHERE user_id=? AND kind='plan' ORDER BY created_at DESC LIMIT 30").all(userId) as Row[]).map(toRun);
+  async initialize(): Promise<void> {
+    await this.db.query("UPDATE corner_ai_runs SET status='failed', error=$1, updated_at=$2 WHERE status='running'", ['The server restarted before this request finished. No changes were applied. Start a new request to continue.', new Date().toISOString()]);
   }
-  get(userId: string, id: string): AgentRun {
-    const row = this.row(userId, id);
+
+  async list(userId: string): Promise<AgentRun[]> {
+    return ((await this.db.query("SELECT * FROM corner_ai_runs WHERE user_id=$1 AND kind='plan' ORDER BY created_at DESC LIMIT 30", [userId])).rows as Row[]).map(toRun);
+  }
+  async get(userId: string, id: string): Promise<AgentRun> {
+    const row = (await this.row(userId, id));
     if (row.kind !== 'plan') throw new AgentError(404, 'RUN_NOT_FOUND', 'That coaching request was not found.');
     return toRun(row);
   }
-  private row(userId: string, id: string): Row {
-    const row = this.db.prepare('SELECT * FROM corner_ai_runs WHERE user_id=? AND id=?').get(userId, id) as Row | undefined;
+  private async row(userId: string, id: string): Promise<Row> {
+    const row = (await this.db.query("SELECT * FROM corner_ai_runs WHERE user_id=$1 AND id=$2", [userId, id])).rows[0] as Row | undefined;
     if (!row) throw new AgentError(404, 'RUN_NOT_FOUND', 'That AI request was not found.');
     return row;
   }
   /** Completed or pending retries need no new provider authorization or usage. */
-  hasRequest(userId: string, kind: Kind, raw: unknown): boolean {
+  async hasRequest(userId: string, kind: Kind, raw: unknown): Promise<boolean> {
     let id: string;
     let payload: unknown;
     if (kind === 'plan') {
@@ -99,89 +92,110 @@ export class PlanningAgent {
     } else {
       const { requestId: key, ...preferences } = RecipeInputSchema.parse(raw); id = key; payload = preferences;
     }
-    const row = this.db.prepare('SELECT payload_hash FROM corner_ai_runs WHERE user_id=? AND kind=? AND request_id=?').get(userId, kind, id) as { payload_hash: string } | undefined;
+    const row = (await this.db.query("SELECT payload_hash FROM corner_ai_runs WHERE user_id=$1 AND kind=$2 AND request_id=$3", [userId, kind, id])).rows[0] as { payload_hash: string } | undefined;
     if (!row) return false;
     if (row.payload_hash !== jsonHash(payload)) throw new AgentError(409, 'REQUEST_ID_REUSED', 'This request ID was already used for a different request.');
     return true;
   }
-  private claim(userId: string, kind: Kind, id: string, payload: unknown, prompt: string, referenceDate: string, revision: number): { row: Row; fresh: boolean } {
-    // An accepted HTTP handler can reach this point after close() snapshots
-    // current tasks. Never start new background work during database shutdown.
+  private async claim(userId: string, kind: Kind, id: string, payload: unknown, prompt: string, referenceDate: string, revision: number): Promise<{ row: Row; fresh: boolean }> {
     if (this.closing) throw new AgentError(503, 'AGENT_SHUTTING_DOWN', 'Corner is restarting. Please try again shortly.');
-    const hash = jsonHash(payload);
-    const existing = this.db.prepare('SELECT * FROM corner_ai_runs WHERE user_id=? AND kind=? AND request_id=?').get(userId, kind, id) as Row | undefined;
-    if (existing) {
-      if (existing.payload_hash !== hash) throw new AgentError(409, 'REQUEST_ID_REUSED', 'This request ID was already used for a different request.');
-      return { row: existing, fresh: false };
+    const connection = await this.db.connect();
+    try {
+      await connection.query('BEGIN');
+      // Admission counts and idempotent claims must remain atomic across awaited SQL.
+      await connection.query("SELECT pg_advisory_xact_lock(hashtextextended('corner:agent-admission', 0))");
+      const hash = jsonHash(payload);
+      const existing = (await connection.query('SELECT * FROM corner_ai_runs WHERE user_id=$1 AND kind=$2 AND request_id=$3', [userId, kind, id])).rows[0] as Row | undefined;
+      if (existing) {
+        if (existing.payload_hash !== hash) throw new AgentError(409, 'REQUEST_ID_REUSED', 'This request ID was already used for a different request.');
+        await connection.query('COMMIT');
+        return { row: existing, fresh: false };
+      }
+      const now = new Date().toISOString();
+      const active = (await connection.query("SELECT COUNT(*) AS count FROM corner_ai_runs WHERE status='running'")).rows[0];
+      const ownActive = (await connection.query("SELECT id FROM corner_ai_runs WHERE user_id=$1 AND status='running' LIMIT 1", [userId])).rows[0];
+      const daily = (await connection.query('SELECT COUNT(*) AS count FROM corner_ai_runs WHERE user_id=$1 AND created_at >= $2', [userId, now.slice(0, 10)])).rows[0];
+      if (ownActive || active.count >= 4) throw new AgentError(429, 'AI_BUSY', 'An AI request is already running. Wait for it to finish or cancel it first.');
+      if (daily.count >= 60) throw new AgentError(429, 'DAILY_LIMIT', 'This workspace has reached its daily limit of 60 AI requests. Try again tomorrow.');
+      if (this.closing) throw new AgentError(503, 'AGENT_SHUTTING_DOWN', 'Corner is restarting. Please try again shortly.');
+      const row: Row = { id: randomUUID(), user_id: userId, request_id: id, payload_hash: hash, kind, status: 'running', prompt, reference_date: referenceDate, base_revision: revision, result: null, error: null, created_at: now, updated_at: now };
+      await connection.query('INSERT INTO corner_ai_runs (id,user_id,request_id,payload_hash,kind,status,prompt,reference_date,base_revision,result,error,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)', Object.values(row));
+      await connection.query('COMMIT');
+      return { row, fresh: true };
+    } catch (error) {
+      await connection.query('ROLLBACK');
+      throw error;
+    } finally {
+      connection.release();
     }
-    const now = new Date().toISOString();
-    const active = this.db.prepare("SELECT COUNT(*) AS count FROM corner_ai_runs WHERE status='running'").get() as { count: number };
-    const ownActive = this.db.prepare("SELECT id FROM corner_ai_runs WHERE user_id=? AND status='running' LIMIT 1").get(userId);
-    const daily = this.db.prepare('SELECT COUNT(*) AS count FROM corner_ai_runs WHERE user_id=? AND created_at>=?').get(userId, now.slice(0, 10)) as { count: number };
-    if (ownActive || active.count >= 4) throw new AgentError(429, 'AI_BUSY', 'An AI request is already running. Wait for it to finish or cancel it first.');
-    if (daily.count >= 60) throw new AgentError(429, 'DAILY_LIMIT', 'This workspace has reached its daily limit of 60 AI requests. Try again tomorrow.');
-    const row: Row = { id: randomUUID(), user_id: userId, request_id: id, payload_hash: hash, kind, status: 'running', prompt, reference_date: referenceDate, base_revision: revision, result: null, error: null, created_at: now, updated_at: now };
-    this.db.prepare('INSERT INTO corner_ai_runs (id,user_id,request_id,payload_hash,kind,status,prompt,reference_date,base_revision,result,error,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)').run(...Object.values(row));
-    return { row, fresh: true };
   }
-  start(userId: string, raw: unknown): AgentRun {
+  async start(userId: string, raw: unknown): Promise<AgentRun> {
     const request = AgentRequestSchema.parse(raw);
-    const snapshot = this.store.read(userId);
-    const { row, fresh } = this.claim(userId, 'plan', request.requestId, { prompt: request.prompt, referenceDate: request.referenceDate }, request.prompt, request.referenceDate, snapshot.revision);
+    const snapshot = (await this.store.read(userId));
+    const { row, fresh } = (await this.claim(userId, 'plan', request.requestId, { prompt: request.prompt, referenceDate: request.referenceDate }, request.prompt, request.referenceDate, snapshot.revision));
     if (fresh) this.launch(row, async signal => this.plan(userId, snapshot.state, request, signal));
     return toRun(row);
   }
   private launch(row: Row, execute: (signal: AbortSignal) => Promise<unknown>) {
     const controller = new AbortController();
     const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(180_000)]);
-    const promise = Promise.resolve().then(() => execute(signal)).then(result => {
+    if (this.closing) controller.abort();
+    const promise = Promise.resolve().then(() => { signal.throwIfAborted(); return execute(signal); }).then(async result => {
       signal.throwIfAborted();
-      this.db.prepare("UPDATE corner_ai_runs SET status='completed', result=?, updated_at=? WHERE id=? AND user_id=? AND status='running'").run(JSON.stringify(result), new Date().toISOString(), row.id, row.user_id);
-    }).catch(error => {
+      await this.db.query("UPDATE corner_ai_runs SET status='completed', result=$1, updated_at=$2 WHERE id=$3 AND user_id=$4 AND status='running'", [JSON.stringify(result), new Date().toISOString(), row.id, row.user_id]);
+    }).catch(async error => {
       const safe = error instanceof Error && ['SubscriptionError', 'AgentError'].includes(error.name) ? error as Error & { code?: string; status?: number } : null;
       const code = safe?.code && /^[a-zA-Z0-9_.-]{1,120}$/.test(safe.code) ? safe.code : 'GENERATION_FAILED';
       const status = safe?.status && safe.status >= 400 && safe.status <= 599 ? safe.status : 502;
-      this.db.prepare("UPDATE corner_ai_runs SET status='failed',error=?,error_code=?,error_status=?,updated_at=? WHERE id=? AND user_id=? AND status='running'").run(safeError(error), code, status, new Date().toISOString(), row.id, row.user_id);
+      await this.db.query("UPDATE corner_ai_runs SET status='failed',error=$1,error_code=$2,error_status=$3,updated_at=$4 WHERE id=$5 AND user_id=$6 AND status='running'", [safeError(error), code, status, new Date().toISOString(), row.id, row.user_id]);
     }).finally(() => { this.tasks.delete(row.id); });
     this.tasks.set(row.id, { controller, promise });
   }
   async settled(id: string) { await this.tasks.get(id)?.promise; }
-  cancel(userId: string, id: string): AgentRun {
-    const row = this.row(userId, id);
+  async cancel(userId: string, id: string): Promise<AgentRun> {
+    const row = (await this.row(userId, id));
     if (row.kind !== 'plan') throw new AgentError(404, 'RUN_NOT_FOUND', 'That coaching request was not found.');
     if (row.status === 'running') {
-      this.db.prepare("UPDATE corner_ai_runs SET status='cancelled',updated_at=? WHERE user_id=? AND id=? AND status='running'").run(new Date().toISOString(), userId, id);
+      await this.db.query("UPDATE corner_ai_runs SET status='cancelled',updated_at=$1 WHERE user_id=$2 AND id=$3 AND status='running'", [new Date().toISOString(), userId, id]);
       this.tasks.get(id)?.controller.abort();
     }
     return this.get(userId, id);
   }
-  apply(userId: string, id: string, rawRequestId: unknown) {
+  async apply(userId: string, id: string, rawRequestId: unknown) {
     requestId.parse(rawRequestId);
-    const row = this.row(userId, id);
+    const row = (await this.row(userId, id));
     if (row.kind !== 'plan' || !['completed', 'applied'].includes(row.status) || !row.result) throw new AgentError(409, 'NO_PROPOSAL', 'This request does not have a completed proposal to apply.');
-    if (row.status === 'applied') return { ...this.store.read(userId), run: toRun(row) };
-    const current = this.store.read(userId);
-    if (current.revision !== row.base_revision) throw new AgentError(409, 'STALE_PROPOSAL', 'Your workspace changed after this proposal was requested. Ask for a fresh proposal so those changes are preserved.');
-    const { result, mutations } = proposalMutations(current.state, JSON.parse(row.result));
+    if (row.status === 'applied') return { ...(await this.store.read(userId)), run: toRun(row) };
+    const current = (await this.store.read(userId));
+    if (current.revision !== row.base_revision) {
+      // A concurrent Apply of this run commits workspace, receipt and run status
+      // in one transaction, so a revision mismatch can mean it already succeeded.
+      const applied = (await this.row(userId, id));
+      if (applied.status === 'applied' && applied.result) return { ...current, run: toRun(applied) };
+      throw new AgentError(409, 'STALE_PROPOSAL', 'Your workspace changed after this proposal was requested. Ask for a fresh proposal so those changes are preserved.');
+    }
+    // Administrative stamps come from the run, not the apply moment: concurrent
+    // applies of one run must derive the identical receipt payload to replay.
+    const { result, mutations } = proposalMutations(current.state, JSON.parse(row.result), row.updated_at);
     if (result.status !== 'proposal' || !mutations.length) throw new AgentError(409, 'NO_CHANGES', 'This response is advice or a question and has no changes to apply.');
     // A stable per-run receipt makes duplicate Apply clicks safe across request IDs.
-    const saved = this.store.applyBatch(userId, `agent-apply:${id}`, mutations, row.base_revision, () => {
-      this.db.prepare("UPDATE corner_ai_runs SET status='applied',updated_at=? WHERE user_id=? AND id=? AND status='completed'").run(new Date().toISOString(), userId, id);
+    const saved = await this.store.applyBatch(userId, `agent-apply:${id}`, mutations, row.base_revision, async connection => {
+      await connection.query("UPDATE corner_ai_runs SET status='applied',updated_at=$1 WHERE user_id=$2 AND id=$3 AND status='completed'", [new Date().toISOString(), userId, id]);
     });
-    return { ...saved, run: this.get(userId, id) };
+    return { ...saved, run: await this.get(userId, id) };
   }
 
   async estimateFood(userId: string, raw: unknown) {
     const input = FoodInputSchema.parse(raw);
-    const { row, fresh } = this.claim(userId, 'food', input.requestId, { description: input.description }, input.description, new Date().toISOString().slice(0, 10), this.store.read(userId).revision);
+    const { row, fresh } = (await this.claim(userId, 'food', input.requestId, { description: input.description }, input.description, new Date().toISOString().slice(0, 10), (await this.store.read(userId)).revision));
     if (fresh) this.launch(row, signal => this.structured(userId, FOOD_ESTIMATE_INSTRUCTIONS + '\nCall corner.submit_result with {result:...}.', { description: input.description }, z.object({ result: FoodEstimateResultSchema }).strict(), signal).then(value => value.result));
     return { estimate: await this.draftResult(userId, row.id) };
   }
   async generateRecipe(userId: string, raw: unknown) {
     const input = RecipeInputSchema.parse(raw);
-    const snapshot = this.store.read(userId);
+    const snapshot = (await this.store.read(userId));
     const { requestId: ignored, ...preferences } = input;
-    const { row, fresh } = this.claim(userId, 'recipe', input.requestId, preferences, input.prompt, new Date().toISOString().slice(0, 10), snapshot.revision);
+    const { row, fresh } = (await this.claim(userId, 'recipe', input.requestId, preferences, input.prompt, new Date().toISOString().slice(0, 10), snapshot.revision));
     if (fresh) this.launch(row, async signal => {
       const draft = await this.structured(userId, RECIPE_INSTRUCTIONS, { ...preferences, profile: snapshot.state.settings.profile ?? {}, existingRecipes: snapshot.state.recipes.slice(0, 30).map(item => item.name) }, DraftRecipeSchema, signal);
       const recipe = RecipeSchema.parse({ ...draft, id: randomUUID(), color: '#d9e8de', source: 'ai', favorite: false, createdAt: new Date().toISOString() });
@@ -194,7 +208,7 @@ export class PlanningAgent {
   }
   private async draftResult(userId: string, id: string): Promise<unknown> {
     await this.settled(id);
-    const row = this.row(userId, id);
+    const row = (await this.row(userId, id));
     if (row.status === 'completed' && row.result) return JSON.parse(row.result);
     if (row.status === 'running') throw new AgentError(409, 'GENERATION_PENDING', 'That request is still running. Try again in a moment.');
     throw new AgentError(row.error_status ?? 502, row.error_code ?? 'GENERATION_FAILED', row.error ?? 'This request ended without a result. Start a new request to try again.');
@@ -222,7 +236,7 @@ export class PlanningAgent {
 
   private async plan(userId: string, state: AppState, request: AgentRequest, signal: AbortSignal): Promise<AgentResult> {
     const context = buildContext(state, request.referenceDate);
-    const previousConversation = this.list(userId).filter(run => run.status !== 'running' && run.result).slice(0, 8).reverse()
+    const previousConversation = (await this.list(userId)).filter(run => run.status !== 'running' && run.result).slice(0, 8).reverse()
       .map(run => ({ request: run.prompt, reply: run.result!.message, questions: run.result!.questions, applied: run.status === 'applied' }));
     const input: any[] = [{ role: 'user', content: JSON.stringify({ currentTimestamp: new Date().toISOString(), request: request.prompt, referenceDate: request.referenceDate, context, previousConversation }) }];
     const searchSchema = z.object({ query: z.string().max(200), equipment: z.string().max(80).optional() }).strict();

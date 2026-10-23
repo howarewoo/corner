@@ -1,11 +1,11 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { DatabaseSync } from 'node:sqlite';
-import { chmodSync, existsSync, statSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { extname, join, resolve, sep } from 'node:path';
 import { Readable } from 'node:stream';
 import { loadConfig, REPOSITORY_ROOT } from './config.js';
-import { createAuth, drainAuthMail } from './auth.js';
+import { createAuth } from './auth.js';
+import { createDatabase } from './database.js';
 import { WorkspaceStore } from './store.js';
 import { createApp } from './app.js';
 import { SubscriptionProvider } from './subscription.js';
@@ -15,13 +15,14 @@ import { requestClientIP, verifiedProxyIP } from './request-identity.js';
 
 const development = process.argv.includes('--dev');
 const config = loadConfig(process.env, { development });
-const dbPath = join(config.dataDir, 'corner.sqlite');
-const db = new DatabaseSync(dbPath);
-chmodSync(dbPath, 0o600);
-const auth = await createAuth(config, db);
+const db = createDatabase(config.databaseUrl);
+await db.query('SELECT 1 FROM workspace_state LIMIT 1');
+const auth = createAuth(config);
 const store = new WorkspaceStore(db);
 const provider = new SubscriptionProvider({ db, config });
+await provider.initialize();
 const agent = new PlanningAgent(store, provider);
+await agent.initialize();
 const app = createApp({
   config, auth, store,
   aiAvailable: async principal => connectionDTO(await provider.status(principal.userId)).available,
@@ -80,7 +81,7 @@ server.maxRequestsPerSocket = 1000;
 server.listen(config.port, config.host, () => {
   process.stdout.write(`Corner is ready at ${config.origin}\n`);
   if (development) process.stdout.write(`Development API listens at http://${config.host}:${config.port}; browser requests arrive through the web workspace proxy.\n`);
-  process.stdout.write(`Mode: ${config.deployment}${development ? ' (development)' : ''}. Your records are stored in the configured data directory.\n`);
+  process.stdout.write(`Mode: ${config.deployment}${development ? ' (development)' : ''}. Records: Neon Postgres. Accounts: Neon Auth.\n`);
 });
 
 function toWebRequest(req: IncomingMessage): Request {
@@ -139,8 +140,7 @@ let closing = false;
 async function shutdown() {
   if (closing) return; closing = true;
   const stopped = new Promise<void>(resolve => server.close(() => resolve()));
-  // Compose grants 30s. An unfinished handler must never resume against a
-  // closed database; on deadline, exit and let SQLite recover its WAL normally.
+  // The app still owns in-memory agent tasks and must run as one process.
   const deadline = setTimeout(() => {
     process.stderr.write('CORNER_SHUTDOWN_TIMEOUT\n');
     server.closeAllConnections();
@@ -149,9 +149,9 @@ async function shutdown() {
   try {
     await agent.close();
     await Promise.allSettled([...activeRequests]);
-    await drainAuthMail(auth);
     await stopped;
-    db.close();
+    await agent.close();
+    await db.end();
     process.exitCode = 0;
   } finally {
     clearTimeout(deadline);

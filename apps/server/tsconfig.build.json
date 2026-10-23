@@ -12,6 +12,7 @@
   ],
   "exclude": [
     "tests",
+    "src/**/__tests__/**",
     "dist"
   ]
 }

@@ -22,11 +22,16 @@
     "check": "turbo run check",
     "test": "turbo run test",
     "start": "npm run start --workspace=@corner/server",
+    "db:migrate": "node --env-file-if-exists=.env.local --env-file-if-exists=.env apps/server/dist/migrate.js --apply",
     "smoke": "node scripts/smoke.mjs",
     "package": "python3 scripts/package.py",
     "smoke:dev": "node scripts/dev-smoke.mjs"
   },
   "devDependencies": {
     "turbo": "2.11.10"
+  },
+  "dependencies": {
+    "@neon/config": "^1.9.3",
+    "@neon/env": "^1.6.4"
   }
 }

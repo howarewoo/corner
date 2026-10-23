@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { DatabaseSync } from 'node:sqlite';
+import type { Pool } from 'pg'; import { testDatabase, closeTestDatabase, createTestAuth, neonTestConfig } from './helpers.ts'
 import { createApp } from '../src/app.ts';
 import { createAuth } from '../src/auth.ts';
 import { createAIRouter } from '../src/ai-routes.ts';
@@ -15,13 +15,11 @@ function gate() {
   return { promise, resolve };
 }
 
-test('an accepted planning request cannot launch background work after shutdown begins', { timeout: 5000 }, async () => {
-  const db = new DatabaseSync(':memory:');
-  const config: Config = {
-    origin: 'http://127.0.0.1:3000', host: '127.0.0.1', port: 3000, dataDir: '/tmp', deployment: 'local',
-    authSecret: 'synthetic-shutdown-auth-secret-more-than-32-characters', tokenEncryptionKey: Buffer.alloc(32, 7),
-  };
-  const auth = await createAuth(config, db);
+test('an accepted planning request cannot launch background work after shutdown begins', { timeout: 15000 }, async () => {
+  const db = await testDatabase();
+  const config: Config = { ...neonTestConfig, origin: 'http://127.0.0.1:3000', host: '127.0.0.1', port: 3000, dataDir: '/tmp', deployment: 'local',
+  authSecret: 'synthetic-shutdown-auth-secret-more-than-32-characters', tokenEncryptionKey: Buffer.alloc(32, 7), }
+  const auth = await createTestAuth(config, db);
   const store = new WorkspaceStore(db);
   const statusEntered = gate();
   const releaseStatus = gate();
@@ -42,6 +40,7 @@ test('an accepted planning request cannot launch background work after shutdown 
     },
   };
   const agent = new PlanningAgent(store, provider);
+  await agent.initialize();
   const app = createApp({ config, auth, store, extraRoute: createAIRouter(provider as unknown as SubscriptionProvider, agent) });
   let pendingResponse: Promise<Response> | undefined;
   try {
@@ -68,11 +67,11 @@ test('an accepted planning request cannot launch background work after shutdown 
     assert.equal((await response.json()).code, 'AGENT_SHUTTING_DOWN');
     await closing;
     assert.equal(inferenceCalls, 0);
-    assert.equal(db.prepare('SELECT COUNT(*) AS count FROM corner_ai_runs').get()?.count, 0);
+    assert.equal((await db.query("SELECT COUNT(*) AS count FROM corner_ai_runs", [])).rows[0]?.count, 0);
   } finally {
     releaseStatus.resolve();
     await pendingResponse?.catch(() => {});
     await agent.close();
-    db.close();
+    await closeTestDatabase(db);
   }
 });

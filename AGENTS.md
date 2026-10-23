@@ -26,6 +26,7 @@ All commands below run from the repository root with dependencies installed:
 | `npm test -- --filter=@corner/server` | Server suite, retaining Turbo's shared-build prerequisite |
 | `npm test -- --filter=@corner/web` | Rendered-web and Vite configuration suite, retaining the shared-build prerequisite |
 | `npm run build` | Compile shared/server outputs and type-check/build the web app |
+| `npm run db:migrate` | After a build: apply checked-in PostgreSQL migrations via the direct `DATABASE_URL_UNPOOLED`; no schema writes occur at app startup |
 | `npm run smoke` | After a full build: disposable production servers on loopback ports `43137` and `43138` |
 | `npm run smoke:dev` | Actual development-stack integration on ports `43139` and `43140`; Linux/macOS, clean checkout without local environment files |
 | `npm start` | After a full build: compiled production server serving the web app and API on port `3000` by default |
@@ -36,7 +37,7 @@ These are configured commands, not assertions of passing execution. No lint scri
 
 Colocate tests in a folder named `__tests__` beside the module or feature they exercise. Use the nearest owning source directory rather than a centralized workspace-level `tests/` folder; configuration tests belong beside the configuration they cover.
 
-The existing suites have not yet been migrated: they remain in `apps/server/tests/` and `apps/web/tests/`, and [scripts/test.mjs](scripts/test.mjs) discovers only immediate `.test.ts` files in those folders. That is the current implementation, not the intended placement convention.
+Most existing suites remain in `apps/server/tests/` and `apps/web/tests/`. [scripts/test.mjs](scripts/test.mjs) discovers their immediate `.test.ts` files and recursively discovers colocated `src/**/__tests__/*.test.ts` files. Production server output excludes colocated tests.
 
 A layout migration must update discovery, relative imports, and TypeScript include/exclude rules together, preserving per-file process isolation and keeping colocated tests out of production server output. Do not add tests that the configured runner silently skips.
 
@@ -49,11 +50,11 @@ A layout migration must update discovery, relative imports, and TypeScript inclu
 - **Deployment:** use the checks and manual account/recovery scenario in `HOSTING.md`. Node smoke success does not prove Docker execution, certificates, inbox delivery, or live model access.
 - **Documentation only:** check local paths, anchors, commands, and source claims. Do not install dependencies or launch application/provider workflows just to validate prose.
 
-CI currently runs `npm ci`, `npm test`, `npm run build`, `npm run smoke`, and `npm run smoke:dev`. It does not run the separate root `check` command. Preserve the distinction between commands inspected and commands actually executed, and report failed or unrun required checks explicitly.
+CI provisions PostgreSQL and runs `npm ci`, `npm test`, `npm run build`, `npm run smoke`, and `npm run smoke:dev`. It does not run the separate root `check` command. Server suites and smoke checks require `CORNER_TEST_DATABASE_URL` pointing to a disposable PostgreSQL database; they never use the real `DATABASE_URL`. Each fixture creates and drops only its own random schema. Preserve the distinction between inspected commands and executed checks.
 
 [scripts/test.mjs](scripts/test.mjs) runs each workspace's test files in separate processes, sequentially, keeping database hooks and browser mocks private. Preserve that isolation when selecting or changing test execution. Use the existing runner and native selection before introducing replacement tooling; no measured test-performance bottleneck is established in the repository guidance.
 
-Both smoke scripts use temporary data and avoid real mail/model requests. The development smoke deliberately rejects root `.env`, `.env.local`, `.env.development`, and `.env.development.local` files. Use a clean checkout for it; do not remove or rename a user's configuration to make it run. Keep the smoke scripts' owned-process cleanup rather than killing unrelated listeners.
+Both smoke scripts use actual disposable PostgreSQL schemas and a local HTTPS Better Auth fixture; no real email/model request is made. Better Auth is a test-only dependency. The development smoke rejects root `.env`, `.env.local`, `.env.development`, and `.env.development.local` files. Use a clean checkout/snapshot; never remove or rename a user's configuration to make it run. Keep owned-process/schema cleanup rather than killing unrelated listeners.
 
 ## Boundaries and pitfalls
 
@@ -61,6 +62,7 @@ Both smoke scripts use temporary data and avoid real mail/model requests. The de
 - Preserve owner-scoped reads/writes, request fingerprinting, atomic proposal application, and stale-proposal rejection. Ordinary manual mutations do not all carry `expectedRevision`; inspect the actual route and record-level concurrency rules before claiming otherwise.
 - AI proposes plans and targets; users approve changes and record actual food, measurements, and training. Preserve server/shared validation that protects started and recorded workouts. Draft recipes and food estimates must remain editable before saving.
 - Hosted mode currently has no enabled AI provider. The agreed direction is an approved hosted ChatGPT integration, not permission to bypass the local gate, reuse local tokens publicly, or introduce an implicit separately billed fallback.
-- Data paths resolve from the repository root. `data/`, SQLite sidecars, local private keys, `.env` files, and provider credentials are private user data. Do not regenerate existing keys, expose them as static assets, put secrets in `VITE_` variables, or include runtime data in source packages.
-- Keep one Corner process against the current SQLite storage. Future topology changes are allowed by product direction, but require preserving the documented safety boundaries rather than assuming multi-instance readiness.
+- Data paths resolve from the repository root. `data/`, local private keys, `.env` files, database URLs, and provider credentials are private user data. Preserve old SQLite backups during cutover. Never regenerate existing keys or expose credentials through static assets, source packages, or `VITE_` variables.
+- Keep one Corner process: Postgres persistence does not make in-memory agent tasks multi-instance-safe. Preserve transaction-scoped owner locks, single-connection atomic state/receipt/proposal commits, and provider generation/refresh protections.
+- Neon Auth owns managed accounts, sessions, and SMTP. Register the exact application origin; configure OTP verification and keep `NEON_AUTH_REQUIRE_EMAIL_VERIFICATION` aligned with the branch policy. `DATABASE_URL` is pooled; use `DATABASE_URL_UNPOOLED` for explicit migrations and backups.
 - [scripts/package.py](scripts/package.py) uses an explicit root-file allowlist. It currently omits `AGENTS.md`, `PRODUCT.md`, `DESIGN.md`, and `ARCHITECTURE.md`; these guides are repository-checkout guidance, not contents of the generated source ZIP. Packaging changes are separate implementation work.

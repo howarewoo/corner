@@ -54,7 +54,7 @@ export function createAIRouter(provider: SubscriptionProvider, agent: PlanningAg
       }
       if (path === '/api/ai/disconnect' && request.method === 'POST') {
         z.object({}).strict().parse(await readJson(request, 1024));
-        for (const run of agent.list(principal.userId).filter(run => run.status === 'running')) agent.cancel(principal.userId, run.id);
+        for (const run of (await agent.list(principal.userId)).filter(run => run.status === 'running')) (await agent.cancel(principal.userId, run.id));
         const status = await provider.disconnect(principal.userId);
         return json({ ...connectionDTO(status), revocationConfirmed: status.revocationConfirmed });
       }
@@ -63,33 +63,33 @@ export function createAIRouter(provider: SubscriptionProvider, agent: PlanningAg
         return json(connectionDTO(await provider.setModel(principal.userId, input.model)));
       }
       if (path === '/api/agent/runs') {
-        if (request.method === 'GET') return json({ runs: agent.list(principal.userId) });
+        if (request.method === 'GET') return json({ runs: (await agent.list(principal.userId)) });
         if (request.method === 'POST') {
           const input = await readJson(request, 12 * 1024);
-          if (!agent.hasRequest(principal.userId, 'plan', input)) await available(principal);
-          return json({ run: agent.start(principal.userId, input) }, 202);
+          if (!(await agent.hasRequest(principal.userId, 'plan', input))) await available(principal);
+          return json({ run: (await agent.start(principal.userId, input)) }, 202);
         }
       }
       const match = path.match(/^\/api\/agent\/runs\/([a-zA-Z0-9-]{1,120})(?:\/(apply|cancel))?$/);
       if (match) {
-        if (request.method === 'GET' && !match[2]) return json({ run: agent.get(principal.userId, match[1]) });
+        if (request.method === 'GET' && !match[2]) return json({ run: (await agent.get(principal.userId, match[1])) });
         if (request.method === 'POST' && match[2] === 'cancel') {
           z.object({}).strict().parse(await readJson(request, 1024));
-          return json({ run: agent.cancel(principal.userId, match[1]) });
+          return json({ run: (await agent.cancel(principal.userId, match[1])) });
         }
         if (request.method === 'POST' && match[2] === 'apply') {
           const input = z.object({ requestId: z.string().min(1).max(120) }).strict().parse(await readJson(request, 1024));
-          return json({ ...agent.apply(principal.userId, match[1], input.requestId), aiAvailable: connectionDTO(await provider.status(principal.userId)).available });
+          return json({ ...(await agent.apply(principal.userId, match[1], input.requestId)), aiAvailable: connectionDTO(await provider.status(principal.userId)).available });
         }
       }
       if (path === '/api/estimate-food' && request.method === 'POST') {
         const input = await readJson(request, 12 * 1024);
-        if (!agent.hasRequest(principal.userId, 'food', input)) await available(principal);
+        if (!(await agent.hasRequest(principal.userId, 'food', input))) await available(principal);
         return json(await agent.estimateFood(principal.userId, input));
       }
       if (path === '/api/generate' && request.method === 'POST') {
         const input = await readJson(request, 12 * 1024);
-        if (!agent.hasRequest(principal.userId, 'recipe', input)) await available(principal);
+        if (!(await agent.hasRequest(principal.userId, 'recipe', input))) await available(principal);
         return json(await agent.generateRecipe(principal.userId, input));
       }
       return null;

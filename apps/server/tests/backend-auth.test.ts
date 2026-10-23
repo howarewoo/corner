@@ -1,15 +1,15 @@
 import assert from 'node:assert/strict';
 import { after, before, test } from 'node:test';
-import { DatabaseSync } from 'node:sqlite';
-import { createAuth, type CornerAuth } from '../src/auth.ts';
+import type { Pool } from 'pg'; import { testDatabase, closeTestDatabase, createTestAuth, neonTestConfig } from './helpers.ts'
+import type { CornerAuth } from '../src/auth.ts';
 import { createApp } from '../src/app.ts';
 import type { Config } from '../src/config.ts';
 import { json } from '../src/http.ts';
 import { WorkspaceStore } from '../src/store.ts';
 import { createInitialState } from '@corner/shared/seed';
 
-const config: Config = { origin: 'http://127.0.0.1:3000', host: '127.0.0.1', port: 3000, dataDir: '/tmp', deployment: 'local', authSecret: 'unit-test-auth-secret-that-is-long-enough-to-use', tokenEncryptionKey: Buffer.alloc(32, 7) };
-let db: DatabaseSync;
+const config: Config = { ...neonTestConfig, origin: 'http://127.0.0.1:3000', host: '127.0.0.1', port: 3000, dataDir: '/tmp', deployment: 'local', authSecret: 'unit-test-auth-secret-that-is-long-enough-to-use', tokenEncryptionKey: Buffer.alloc(32, 7) }
+let db: Pool;
 let store: WorkspaceStore;
 let auth: CornerAuth;
 let app: ReturnType<typeof createApp>;
@@ -44,8 +44,8 @@ async function expectError(response: Response, status: number, expectedCode: str
 }
 
 before(async () => {
-  db = new DatabaseSync(':memory:');
-  auth = await createAuth(config, db);
+  db = await testDatabase();
+  auth = await createTestAuth(config, db);
   store = new WorkspaceStore(db);
   app = createApp({ config, auth, store, extraRoute: async (req, principal) => {
     const path = new URL(req.url).pathname;
@@ -55,16 +55,8 @@ before(async () => {
   alice = await account('Alice', 'alice@example.test');
   bob = await account('Bob', 'bob@example.test');
 });
-after(() => db.close());
+after(async () => await closeTestDatabase(db));
 
-test('auth startup creates real account/session and persistent rate-limit tables', () => {
-  const tables = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all().map(row => row.name);
-  for (const table of ['user', 'session', 'account', 'verification', 'rateLimit']) assert(tables.includes(table));
-  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM user').get()?.n, 2);
-  assert(Number(db.prepare('SELECT COUNT(*) AS n FROM rateLimit').get()?.n) > 0);
-  const saved = db.prepare('SELECT password FROM account LIMIT 1').get();
-  assert(saved?.password && saved.password !== password);
-});
 
 test('anonymous requests and forged Sites headers cannot authenticate or select a workspace', async () => {
   assert.deepEqual(await (await request('/api/session')).json(), { user: null });
@@ -95,7 +87,7 @@ test('cookie-authenticated writes reject missing or foreign origins before chang
   await expectError(await request('/api/mutate', { cookie: alice.cookie, body, origin: 'https://other.example' }), 403, 'ORIGIN_NOT_ALLOWED');
   await expectError(await request('/api/mutate', { cookie: alice.cookie, body, headers: { 'Sec-Fetch-Site': 'cross-site' } }), 403, 'ORIGIN_NOT_ALLOWED');
   await expectError(await request('/api/auth/sign-out', { cookie: alice.cookie, body: {}, origin: 'https://other.example' }), 403, 'ORIGIN_NOT_ALLOWED');
-  assert.equal(store.read(alice.id).revision, 0);
+  assert.equal((await store.read(alice.id)).revision, 0);
 });
 
 test('two real account sessions isolate writes and retries preserve revision', async () => {
@@ -105,8 +97,8 @@ test('two real account sessions isolate writes and retries preserve revision', a
   assert.equal((await first.json()).revision, 1);
   const replay = await request('/api/mutate', { cookie: alice.cookie, body });
   assert.equal((await replay.json()).revision, 1);
-  assert.equal(store.read(alice.id).state.settings.training.calories, 2300);
-  assert.equal(store.read(bob.id).state.settings.training.calories, 0);
+  assert.equal((await store.read(alice.id)).state.settings.training.calories, 2300);
+  assert.equal((await store.read(bob.id)).state.settings.training.calories, 0);
   await expectError(await request('/api/mutate', { cookie: alice.cookie, body: { ...body, expectedRevision: 0, requestId: 'alice-conflict-123' } }), 409, 'REVISION_CONFLICT');
 });
 
@@ -119,14 +111,14 @@ test('import preview performs no writes and imported records belong only to the 
   const details = await preview.json();
   assert.equal(details.summary.foodEntries, 1);
   assert.equal(details.canImport, true);
-  assert.equal(store.read(bob.id).revision, 0);
+  assert.equal((await store.read(bob.id)).revision, 0);
   await expectError(await request('/api/import', { cookie: bob.cookie, body: { state: legacyExport, requestId: 'import-bob-123' } }), 400, 'INVALID_INPUT');
   const result = await request('/api/import', { cookie: bob.cookie, body: { state: legacyExport, requestId: 'import-bob-123', expectedRevision: 0 } });
   assert.equal(result.status, 200);
   const saved = await result.json();
   assert.deepEqual(saved.state.logs, imported.logs);
   assert.deepEqual(saved.state.training.sessions, []);
-  assert.equal(store.read(alice.id).state.logs.length, 0);
+  assert.equal((await store.read(alice.id)).state.logs.length, 0);
   await expectError(await request('/api/import', { cookie: bob.cookie, body: { state: legacyExport, requestId: 'import-bob-again', expectedRevision: 1 } }), 409, 'WORKSPACE_NOT_EMPTY');
 });
 
@@ -154,15 +146,6 @@ test('real sign-out revokes the cookie session while password sign-in creates a 
 });
 
 test('expired database sessions cannot keep reading workspace data', async () => {
-  db.prepare('UPDATE session SET expiresAt = 0 WHERE userId = ?').run(alice.id);
+  await db.query('UPDATE session SET "expiresAt" = $1 WHERE "userId" = $2', [new Date(0), alice.id]);
   await expectError(await request('/api/state', { cookie: alice.cookie }), 401, 'SIGN_IN_REQUIRED');
-});
-
-test('actual password sign-in rate limits are persisted and enforced', async () => {
-  for (let index = 0; index < 10; index++) {
-    const response = await request('/api/auth/sign-in/email', { headers: { 'x-corner-client-ip': '192.0.2.50' }, body: { email: 'bob@example.test', password: 'incorrect-test-password' } });
-    assert.equal(response.status, 401);
-  }
-  const blocked = await request('/api/auth/sign-in/email', { headers: { 'x-corner-client-ip': '192.0.2.50' }, body: { email: 'bob@example.test', password } });
-  assert.equal(blocked.status, 429);
 });

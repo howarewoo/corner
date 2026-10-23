@@ -18,7 +18,7 @@ The agreed direction is a future hosted service. Near-term priorities are daily 
 
 ## Operating Context
 
-Today, Corner is a self-hostable web application with independent email/password accounts and per-account workspaces. Local development and production setup are documented in [README.md](README.md); the optional single-server HTTPS deployment is documented in [HOSTING.md](HOSTING.md).
+Today, Corner is a self-hostable web application using managed Neon Auth email/password accounts and owner-scoped Neon Postgres workspaces. Local development and production setup are documented in [README.md](README.md); the optional single-server HTTPS deployment is documented in [HOSTING.md](HOSTING.md).
 
 A person sets up their profile or imports a Corner JSON export, plans meals and training, records what actually happened, and reviews progress. Manual tools work without an AI connection. Corner sign-in and ChatGPT authorization are separate; losing model access must not prevent manual tracking.
 
@@ -30,12 +30,12 @@ Corner does not read ChatGPT conversations, memories, an original Corner Site, o
 
 - Recipes, meal planning, grocery lists, food logs, and optional training/rest-day nutrition targets.
 - Workout plans, reusable routines, editable set targets and actual results, check-ins, progress views, and an attributed exercise catalog.
-- Independent accounts; email verification and password recovery when account mail is configured. Hosted mode requires account mail.
+- Managed accounts, verification-code entry, and password recovery. Neon owns delivery; production requires custom SMTP and matching verification policy.
 - Previewed imports into empty workspaces, workspace JSON export, and individual recipe text downloads. Workspace exports exclude credentials and separate agent request history; they are not complete installation backups.
 - Optional local ChatGPT authorization for planning, recipe drafts, and food estimates. Model access depends on the connected account. Drafts and estimates require user review before saving.
 - AI proposals can change plans and targets only after explicit approval. They cannot invent food eaten, measurements, or completed training, or overwrite started or recorded workouts. Applying a stale proposal is rejected.
 
-The current runtime is one Corner process using SQLite, not a multi-instance service. Hosted mode has no enabled AI connection or alternate inference provider. These are current implementation limits, not claims about the final hosted architecture.
+The runtime remains one Corner process, now backed by Neon Postgres rather than SQLite. Agent tasks still run in memory; this is not a multi-instance service. Hosted mode has no enabled AI connection or alternate inference provider.
 
 ### Agreed direction
 
@@ -45,7 +45,7 @@ Account isolation, user-authored activity records, and explicit approval of AI c
 
 ### Open decisions
 
-Hosted infrastructure and capacity targets, pricing, launch criteria, and quantitative usability or planning-quality targets remain undecided. No specific storage migration or multi-instance design has been selected. The approved hosted AI implementation remains dependent on access to its real provider contract.
+Hosted capacity targets, pricing, launch criteria, worker topology, and quantitative usability or planning-quality targets remain undecided. Storage and account services now use Neon; an approved hosted AI implementation remains dependent on access to its real provider contract.
 
 ## Evidence on Hand
 

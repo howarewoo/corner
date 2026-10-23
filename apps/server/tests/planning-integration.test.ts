@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { afterEach, beforeEach, describe, test } from 'node:test';
-import { DatabaseSync } from 'node:sqlite';
-import { createAuth } from '../src/auth.ts';
+import type { Pool } from 'pg';
+import { testDatabase, closeTestDatabase, createTestAuth, neonTestConfig } from './helpers.ts';
 import { createApp } from '../src/app.ts';
 import { createAIRouter, connectionDTO } from '../src/ai-routes.ts';
 import { PlanningAgent, type InferenceProvider } from '../src/planning-agent.ts';
@@ -15,7 +15,7 @@ import type { WorkoutSession } from '@corner/shared/training-types';
 
 const date = '2026-10-22';
 const timestamp = `${date}T12:00:00.000Z`;
-const config: Config = { origin: 'http://127.0.0.1:3000', host: '127.0.0.1', port: 3000, dataDir: '/tmp', deployment: 'local', authSecret: 'unit-test-integration-auth-secret-more-than-32', tokenEncryptionKey: Buffer.alloc(32, 7) };
+const config: Config = { ...neonTestConfig, origin: 'http://127.0.0.1:3000', host: '127.0.0.1', port: 3000, dataDir: '/tmp', deployment: 'local', authSecret: 'unit-test-integration-auth-secret-more-than-32', tokenEncryptionKey: Buffer.alloc(32, 7) }
 const completed = (result: unknown) => ({ status: 'completed', output: [{ type: 'function_call', namespace: 'corner', name: 'submit_result', call_id: 'test-call', arguments: JSON.stringify(result) }] });
 const clarification: AgentResult = { status: 'needs_details', title: 'Your training schedule', message: 'A few details will help fit your plan.', questions: ['Which days are available for training?'], changes: [] };
 
@@ -33,7 +33,7 @@ function plannedWorkout(): WorkoutSession {
 }
 
 describe('authenticated planning routes with fake inference only', { concurrency: false }, () => {
-  let db: DatabaseSync;
+  let db: Pool;
   let store: WorkspaceStore;
   let agent: PlanningAgent;
   let app: ReturnType<typeof createApp>;
@@ -60,8 +60,8 @@ describe('authenticated planning routes with fake inference only', { concurrency
     return (await response.json()).run as { id: string };
   }
   beforeEach(async () => {
-    db = new DatabaseSync(':memory:');
-    const auth = await createAuth(config, db);
+    db = await testDatabase();
+    const auth = await createTestAuth(config, db);
     store = new WorkspaceStore(db);
     connected = true;
     calls = [];
@@ -75,6 +75,7 @@ describe('authenticated planning routes with fake inference only', { concurrency
       },
     };
     agent = new PlanningAgent(store, provider);
+    await agent.initialize();
     app = createApp({ config, auth, store, aiAvailable: async () => connectionDTO(await status()).available, extraRoute: createAIRouter(provider as unknown as SubscriptionProvider, agent) });
     async function register(name: string) {
       const response = await send('/api/auth/sign-up/email', { body: { name, email: `${name.toLowerCase()}@example.test`, password: 'unit-test-only-long-password' } });
@@ -85,12 +86,12 @@ describe('authenticated planning routes with fake inference only', { concurrency
     alice = await register('Alice');
     bob = await register('Bob');
   });
-  afterEach(async () => { await agent.close(); db.close(); });
+  afterEach(async () => { await agent.close(); await closeTestDatabase(db); });
 
   test('actual account sessions control all agent reads, writes, and provided context', async () => {
     const settings = createInitialState('Bob').settings;
     settings.profile!.goals = 'BOB_ONLY_PRIVATE_GOALS';
-    store.mutate(bob.id, 'bob-profile-123', { type: 'settings.save', data: settings });
+    (await store.mutate(bob.id, 'bob-profile-123', { type: 'settings.save', data: settings }));
     await error(await send('/api/agent/runs', { body: { requestId: 'anonymous-run', prompt: 'Plan a week.', referenceDate: date }, headers: { 'oai-authenticated-user-id': alice.id } }), 401, 'SIGN_IN_REQUIRED');
     await error(await send('/api/agent/runs', { cookie: alice.cookie, origin: 'https://other.example', body: { requestId: 'cross-origin-run', prompt: 'Plan a week.', referenceDate: date } }), 403, 'ORIGIN_NOT_ALLOWED');
     const response = await send('/api/agent/runs', { cookie: alice.cookie, headers: { 'oai-authenticated-user-id': bob.id }, body: { requestId: 'private-run-123', prompt: 'Plan a week.', referenceDate: date } });
@@ -103,20 +104,20 @@ describe('authenticated planning routes with fake inference only', { concurrency
     await error(await send(`/api/agent/runs/${run.id}/apply`, { cookie: bob.cookie, body: { requestId: 'wrong-owner-123' } }), 404, 'RUN_NOT_FOUND');
     await error(await send(`/api/agent/runs/${run.id}/cancel`, { cookie: bob.cookie, body: {} }), 404, 'RUN_NOT_FOUND');
     assert.deepEqual((await (await send('/api/agent/runs', { cookie: bob.cookie })).json()).runs, []);
-    assert.equal(store.read(alice.id).revision, 0);
+    assert.equal((await store.read(alice.id)).revision, 0);
   });
 
   test('HTTP proposal application is atomic, explicit, and replayable across duplicate Apply IDs', async () => {
     answer = async () => completed(mealProposal());
     const run = await start('atomic-http-run');
     await agent.settled(run.id);
-    assert.equal(store.read(alice.id).state.recipes.length, 0);
+    assert.equal((await store.read(alice.id)).state.recipes.length, 0);
     const originalApply = store.applyBatch.bind(store);
-    store.applyBatch = (owner, requestId, mutations, revision, onApplied) => originalApply(owner, requestId, mutations, revision, () => { onApplied?.(); throw new Error('simulated completion failure'); });
+    store.applyBatch = (owner, requestId, mutations, revision, onApplied) => originalApply(owner, requestId, mutations, revision, async connection => { await onApplied?.(connection); throw new Error('simulated completion failure'); });
     await error(await send(`/api/agent/runs/${run.id}/apply`, { cookie: alice.cookie, body: { requestId: 'apply-failure-123' } }), 503, 'SERVICE_UNAVAILABLE');
-    assert.equal(store.read(alice.id).revision, 0);
-    assert.equal(agent.get(alice.id, run.id).status, 'completed');
-    assert.equal(db.prepare('SELECT COUNT(*) AS n FROM mutation_receipts WHERE user_id = ?').get(alice.id)?.n, 0);
+    assert.equal((await store.read(alice.id)).revision, 0);
+    assert.equal((await agent.get(alice.id, run.id)).status, 'completed');
+    assert.equal((await db.query("SELECT COUNT(*) AS n FROM mutation_receipts WHERE user_id = $1", [alice.id])).rows[0]?.n, 0);
     store.applyBatch = originalApply;
     const applied = await send(`/api/agent/runs/${run.id}/apply`, { cookie: alice.cookie, body: { requestId: 'apply-success-123' } });
     assert.equal(applied.status, 200);
@@ -129,7 +130,7 @@ describe('authenticated planning routes with fake inference only', { concurrency
     const retry = await send(`/api/agent/runs/${run.id}/apply`, { cookie: alice.cookie, body: { requestId: 'another-apply-123' } });
     assert.equal((await retry.json()).revision, 1);
     assert.equal(calls.length, 1);
-    assert.equal(store.read(bob.id).state.recipes.length, 0);
+    assert.equal((await store.read(bob.id)).state.recipes.length, 0);
   });
 
   test('stale proposals preserve food and workout history added after the request', async () => {
@@ -137,24 +138,27 @@ describe('authenticated planning routes with fake inference only', { concurrency
     const run = await start('stale-http-run');
     await agent.settled(run.id);
     const log = { id: 'actual-lunch', date, slot: 'lunch', name: 'Actual lunch', nutrition: { calories: 600, protein: 30, carbs: 70, fat: 20 }, servings: 1, createdAt: timestamp };
-    store.mutate(alice.id, 'actual-lunch-123', { type: 'log.save', data: log });
+    (await store.mutate(alice.id, 'actual-lunch-123', { type: 'log.save', data: log }));
     await error(await send(`/api/agent/runs/${run.id}/apply`, { cookie: alice.cookie, body: { requestId: 'stale-apply-123' } }), 409, 'STALE_PROPOSAL');
-    assert.deepEqual(store.read(alice.id).state.logs, [log]);
-    assert.equal(store.read(alice.id).state.recipes.length, 0);
-    assert.equal(agent.get(alice.id, run.id).status, 'completed');
+    assert.deepEqual((await store.read(alice.id)).state.logs, [log]);
+    assert.equal((await store.read(alice.id)).state.recipes.length, 0);
+    assert.equal((await agent.get(alice.id, run.id)).status, 'completed');
   });
 
-  test('cancelled requests cannot be resurrected by a late provider result', async () => {
-    let finish: ((value: unknown) => void) | undefined;
-    answer = async () => new Promise(resolve => { finish = resolve; });
+  test('cancelled requests cannot be resurrected by a late provider result', { timeout: 15_000 }, async () => {
+    let finish!: (value: unknown) => void;
+    let entered!: () => void;
+    const response = new Promise<unknown>(resolve => { finish = resolve; });
+    const started = new Promise<void>(resolve => { entered = resolve; });
+    answer = async () => { entered(); return response; };
     const run = await start('cancel-http-run');
-    assert(finish);
+    await started;
     const cancelled = await send(`/api/agent/runs/${run.id}/cancel`, { cookie: alice.cookie, body: {} });
     assert.equal((await cancelled.json()).run.status, 'cancelled');
     finish(completed(mealProposal()));
     await agent.settled(run.id);
-    assert.equal(agent.get(alice.id, run.id).status, 'cancelled');
-    assert.equal(store.read(alice.id).revision, 0);
+    assert.equal((await agent.get(alice.id, run.id)).status, 'cancelled');
+    assert.equal((await store.read(alice.id)).revision, 0);
   });
 
   test('completed food, recipe, and planning requests replay after disconnect while new calls remain blocked', async () => {
@@ -190,7 +194,7 @@ describe('authenticated planning routes with fake inference only', { concurrency
     await error(await send('/api/agent/runs', { cookie: alice.cookie, body: { ...planInput, requestId: 'fresh-plan-123' } }), 503, 'AI_CONNECTION_REQUIRED');
     await error(await send('/api/estimate-food', { cookie: alice.cookie, body: { ...foodInput, requestId: 'fresh-food-123' } }), 503, 'AI_CONNECTION_REQUIRED');
     assert.equal(calls.length, 3);
-    assert.equal(db.prepare('SELECT COUNT(*) AS n FROM corner_ai_runs WHERE user_id = ?').get(alice.id)?.n, 3);
+    assert.equal((await db.query("SELECT COUNT(*) AS n FROM corner_ai_runs WHERE user_id = $1", [alice.id])).rows[0]?.n, 3);
   });
 
   test('proposed set results are rejected while exercise targets remain adaptable planned work', async () => {
@@ -200,14 +204,14 @@ describe('authenticated planning routes with fake inference only', { concurrency
     answer = async () => completed(workoutProposal(invalid));
     const rejected = await start('actual-fields-rejected');
     await agent.settled(rejected.id);
-    assert.equal(agent.get(alice.id, rejected.id).status, 'failed');
-    assert.equal(store.read(alice.id).state.training.sessions.length, 0);
+    assert.equal((await agent.get(alice.id, rejected.id)).status, 'failed');
+    assert.equal((await store.read(alice.id)).state.training.sessions.length, 0);
     answer = async () => completed(workoutProposal(plannedWorkout()));
     const planned = await start('targets-only-planned');
     await agent.settled(planned.id);
     const applied = await send(`/api/agent/runs/${planned.id}/apply`, { cookie: alice.cookie, body: { requestId: 'apply-planned-targets' } });
     assert.equal(applied.status, 200);
-    const session = store.read(alice.id).state.training.sessions[0];
+    const session = (await store.read(alice.id)).state.training.sessions[0];
     assert.deepEqual(session.exercises[0].targetLoad, { weight: 20, unit: 'lb' });
     assert.equal(session.exercises[0].sets[0].reps, null);
     answer = async () => completed({ status: 'proposal', title: 'Remove the planned session', message: 'This planned session has no logged work.', questions: [], changes: [{ type: 'remove_workout', label: 'Remove session', reason: 'The user requested another day.', data: { id: session.id } }] });
@@ -215,7 +219,7 @@ describe('authenticated planning routes with fake inference only', { concurrency
     await agent.settled(removal.id);
     const removed = await send(`/api/agent/runs/${removal.id}/apply`, { cookie: alice.cookie, body: { requestId: 'apply-removal-123' } });
     assert.equal(removed.status, 200);
-    assert.equal(store.read(alice.id).state.training.sessions.length, 0);
+    assert.equal((await store.read(alice.id)).state.training.sessions.length, 0);
   });
 
   test('AI cannot overwrite actual values in an otherwise planned workout', async () => {
@@ -224,17 +228,17 @@ describe('authenticated planning routes with fake inference only', { concurrency
     partial.exercises[0].sets[0].reps = 8;
     partial.durationMinutes = 12;
     partial.readiness = 3;
-    store.mutate(alice.id, 'partially-recorded-workout', { type: 'training.session.save', data: { session: partial, expectedUpdatedAt: null } });
-    const recorded = store.read(alice.id);
+    (await store.mutate(alice.id, 'partially-recorded-workout', { type: 'training.session.save', data: { session: partial, expectedUpdatedAt: null } }));
+    const recorded = (await store.read(alice.id));
     answer = async () => completed({ status: 'proposal', title: 'Replace the session', message: 'Review this revised workout.', questions: [], changes: [{ type: 'workout', label: 'Updated session', reason: 'A shorter workout was requested.', data: plannedWorkout() }] });
     const replacement = await start('replace-partial-workout');
     await agent.settled(replacement.id);
-    assert.equal(agent.get(alice.id, replacement.id).status, 'failed');
-    assert.deepEqual(store.read(alice.id), recorded);
+    assert.equal((await agent.get(alice.id, replacement.id)).status, 'failed');
+    assert.deepEqual((await store.read(alice.id)), recorded);
     answer = async () => completed({ status: 'proposal', title: 'Remove the session', message: 'Review this change.', questions: [], changes: [{ type: 'remove_workout', label: 'Remove session', reason: 'A different day was requested.', data: { id: partial.id } }] });
     const removal = await start('remove-partial-workout');
     await agent.settled(removal.id);
-    assert.equal(agent.get(alice.id, removal.id).status, 'failed');
-    assert.deepEqual(store.read(alice.id), recorded);
+    assert.equal((await agent.get(alice.id, removal.id)).status, 'failed');
+    assert.deepEqual((await store.read(alice.id)), recorded);
   });
 });

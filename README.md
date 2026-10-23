@@ -1,6 +1,6 @@
 # Corner — independent training and nutrition
 
-Corner is a self-hostable app for meal planning, nutrition logging, workouts, progress, and an optional planning agent. It has its own accounts and database. It does not read ChatGPT conversations, memories, or the original Corner Site.
+Corner is a self-hostable app for meal planning, nutrition logging, workouts, progress, and an optional planning agent. Neon Postgres stores application data; managed Neon Auth owns email/password accounts and sessions. It does not read ChatGPT conversations, memories, or the original Corner Site.
 
 This is a separate application. Existing personal Corner data enters only when its owner chooses to import a Corner JSON export. The repository uses Turborepo with npm workspaces: `apps/server`, `apps/web`, and `packages/shared`.
 
@@ -14,21 +14,30 @@ Install **Node.js 24.15 or newer in the Node 24 series**. The repository records
 git clone https://github.com/howarewoo/corner.git
 cd corner
 npm ci
+npm i -g neon@latest
+neon init -y --project-id YOUR_PROJECT_ID --branch production --services postgres,auth
+neon deploy
+neon neon-auth domain add http://127.0.0.1:3000
+npm run build
+npm run db:migrate
 npm run dev
 ```
 
 Turborepo builds the shared package first, then starts the web app, API server, and shared-code watcher. The browser uses port **3000**; the API listens separately on **3001**. Vite proxies `/api` and `/auth/callback` to the API while preserving the browser origin for account sessions and consent callbacks. The server no longer starts Vite itself.
 
-Open **http://127.0.0.1:3000**. Use that exact address for the subscription callback. Create a Corner account with an email, a name, and a password of at least 12 characters. The default local installation signs you in immediately. If account email is configured, verify the email first and then sign in. Choose **Start fresh** or **Bring an export**.
+Open **http://127.0.0.1:3000**. Use that exact address for the subscription callback. Create an account with an email, a name, and a password of at least 12 characters. With verification disabled in Neon, signup signs you in immediately. If verification is enabled, enter the email code and then sign in. Choose **Start fresh** or **Bring an export**.
 
-The server creates its database and private configuration in the repository-root `data/` directory, regardless of which workspace starts it. Keep that directory across upgrades. Stopping the processes does not erase saved records.
+Install the CLI with `npm i -g neon@latest` or use `npx neon@latest` in place of `neon`. `neon deploy` applies `neon.ts` and pulls server-only Postgres/Auth URLs into `.env.local` (or an existing `.env`). Both files are loaded by the server; `.env` overrides `.env.local`, and existing process environment values win. Never put database credentials in `VITE_` variables.
 
-Optional configuration belongs in the root `.env`; `.env.example` documents the settings. `CORNER_ORIGIN` selects the browser origin and `CORNER_DEV_API_PORT` selects the internal development API port. Development binds to loopback. Do not put server secrets in `VITE_` variables. The default setup needs no API key or external database service.
+`DATABASE_URL` is the pooled application connection; `DATABASE_URL_UNPOOLED` is used only by the explicit, versioned migration command. `NEON_AUTH_BASE_URL` is the managed account service. The app verifies cookies against its uncached session endpoint, so it does not need browser JWTs or `NEON_AUTH_JWKS_URL`. `NEON_AUTH_REQUIRE_EMAIL_VERIFICATION` must match the branch's email/password policy, with verification method **OTP**. SMTP and recovery delivery are configured in Neon; no app-owned Resend adapter remains. See `.env.example`.
+
+Private encryption/session-binding keys still live in the repository-root `data/` directory in local mode. Keep those keys across upgrades; records and accounts no longer live in that directory. `CORNER_ORIGIN` selects the browser origin and `CORNER_DEV_API_PORT` selects the development API listener. Register each actual origin with `neon neon-auth domain add <origin>` before signing in.
 
 ### Build and run production locally
 
 ```bash
 npm run build
+npm run db:migrate
 npm start
 ```
 
@@ -45,6 +54,7 @@ The build compiles `@corner/shared`, then builds `@corner/server` and `@corner/w
 | `npm run smoke` | Actual compiled-server account, proxy, health, and shutdown checks |
 | `npm run smoke:dev` | Actual two-app development proxy, session, and shared-catalog checks |
 | `npm start` | The compiled production server and built web app |
+| `npm run db:migrate` | Apply checked-in PostgreSQL migrations through `DATABASE_URL_UNPOOLED`, after a build |
 
 For a focused build, use `npm run build -- --filter=@corner/server` or `npm run build -- --filter=@corner/web`. Turbo also builds their shared dependency. Each app declares its own dependencies; domain models and validation are imported through `@corner/shared/<module>` rather than relative paths into the other app.
 
@@ -53,16 +63,18 @@ For a focused build, use `npm run build -- --filter=@corner/server` or `npm run 
 With Docker and Docker Compose installed:
 
 ```bash
-docker compose up --build -d
+docker compose --env-file .env.local build
+docker compose --env-file .env.local run --rm --no-deps corner node apps/server/dist/migrate.js --apply
+docker compose --env-file .env.local up -d
 ```
 
-Open the same http://127.0.0.1:3000 address. The supplied Compose file publishes the app only on your computer's loopback interface and stores records in the `corner-data` volume. `docker compose down` stops the app while preserving that volume. **Do not add `--volumes` when you want to preserve your records.**
+Open the same http://127.0.0.1:3000 address. Compose publishes the app only on loopback and stores private application keys in `corner-data`; records and accounts live in Neon. Substitute `.env` when that is where `neon deploy` wrote configuration. Preserve the volume and its encryption keys across container replacements.
 
-The Docker recipe is provided for deployment; this release was built and tested on Node directly. A Docker engine was not available in the build workspace.
+Application smoke checks use real PostgreSQL with a disposable local HTTPS auth fixture. They do not prove the Docker/Caddy application deployment, public certificates, or inbox delivery.
 
 ## Your first plan
 
-1. **Create your own account.** Corner sign-in is independent of the AI connection. Installations with account email require verification before sign-in and offer password recovery.
+1. **Create your own account.** Managed Neon sign-in is independent of the AI connection. Verification policy and recovery delivery are configured in Neon.
 2. **Set up your profile.** Enter goals, experience, available days and session length, equipment, constraints, food preferences, and shopping preferences. Workout loads can use lb or kg. Nutrition targets are optional; unset targets remain clearly marked.
 3. **Plan and track manually, or connect the agent.** Recipes, meals, groceries, food logs, workouts, sets, and progress work without an AI connection.
 4. **Open My agent → Continue with ChatGPT.** Review OpenAI's consent screen and authorize plan usage if your account supports it. Corner then loads the models available to that account.
@@ -106,7 +118,7 @@ Official references, checked 22 October 2026:
 
 Corner login and ChatGPT authorization are separate. An expired or limited ChatGPT grant does not sign you out of Corner. You can keep using the manual tools and reconnect when needed.
 
-OAuth uses fresh state, nonce, PKCE, and the initiating Corner session. The app retains the issued registration and verifies signed account identity before enabling inference. Access and refresh credentials are encrypted in SQLite and never sent to the frontend. Refresh rotation is serialized. Available models are fetched for the selected connection rather than hardcoded.
+OAuth uses fresh state, nonce, PKCE, and the initiating Corner session. The app retains the issued registration and verifies signed account identity before enabling inference. Access and refresh credentials are encrypted in Postgres and never sent to the frontend. Refresh rotation is serialized with database leases, and generation checks prevent late work from restoring a disconnected grant. Available models are fetched for the selected connection rather than hardcoded.
 
 Disconnect stops local use and attempts remote revocation. If remote revocation cannot be confirmed, the interface tells you and links to ChatGPT settings. The verified registration is retained so reconnecting uses the same ChatGPT identity; this release does not offer a switch-account operation within a Corner account. A separate Corner account has its own independent connection.
 
@@ -122,31 +134,36 @@ Standalone **Export workspace** includes recipes, plans, food logs, training dat
 
 ## Data, backups, and upgrades
 
-The app uses one SQLite file with transactional writes and per-account ownership checks. Agent requests and proposed changes are persisted separately from applied plans. A proposal is checked against the workspace revision it reviewed; edits made in the meantime require a fresh proposal. Applying a proposal commits all validated changes, its receipt, and its applied status together.
+Application tables live in Neon Postgres, separate from managed accounts in `neon_auth`. Transaction-scoped owner locks serialize first writes as well as existing workspaces. A proposal is checked against the workspace revision it reviewed; edits made in the meantime require a fresh proposal. Applying a proposal commits all validated changes, its receipt, and its applied status together.
 
 For a complete backup:
 
-1. Stop Corner so SQLite and its sidecar files are consistent.
-2. Copy the **entire data directory or Docker volume**, including `private-config.json` when local keys were generated automatically.
-3. Protect the backup as private account and health-related information. Do not put it in the public source package or a web-accessible folder.
+1. Use Neon restore/branch facilities within your plan's retention window, and maintain encrypted off-service PostgreSQL dumps using the **direct** connection. Include managed account data; follow Neon's restore procedures for Auth.
+2. Back up the matching private application configuration (`data/private-config.json` or hosted secrets) separately. Losing the encryption key makes saved ChatGPT credentials unreadable.
+3. Protect all backups as private account and health-related information. Never publish credentials, database dumps, or private keys.
 
-To restore, stop the app, restore the complete data directory and its original keys, then start the same or a compatible newer release. Changing or losing the encryption key makes saved subscription credentials unreadable; do not silently replace a damaged private configuration. You can reconnect after restoring account access.
+Restore the database and its original keys together, then verify sign-in and saved records before reopening access. Retention and restore capabilities depend on your Neon plan; exercise recovery rather than assuming persistence is a backup.
 
-For an upgrade, keep the data directory, replace application source, run `npm ci` and `npm run build`, then restart. The account package and application create their required tables on startup. Back up before upgrading dependencies or database schemas.
+Upgrades run `npm ci`, `npm run build`, and the explicit `npm run db:migrate` before restarting one Corner process. Migrations in `apps/server/migrations` are ordered, checksummed, transactional, and serialized; startup does not perform schema changes. Never edit an applied migration.
+
+This cutover does not silently claim or merge old SQLite accounts by email. Before upgrading an old installation, export each owner's workspace and preserve the complete original SQLite directory and keys. Create a managed account and use the existing previewed import into its empty workspace. Passwords, old sessions, agent history, and ChatGPT grants are not included in workspace exports.
 
 ## Hosted deployment preparation
 
-The app now includes email verification and password recovery. Hosted mode requires a Resend sending key and an address on a verified sender domain, as well as an HTTPS origin and independent authentication/encryption secrets. These values stay on the server. Enabling mail in a local installation also enables recovery and requires email verification.
+Hosted mode requires an HTTPS origin, the Neon Postgres/Auth URLs, and independent application encryption/session-binding secrets. Register the public origin as a Neon Auth trusted domain. Configure your own SMTP provider in Neon for production, enable required email verification with method OTP, and set `NEON_AUTH_REQUIRE_EMAIL_VERIFICATION=true`.
 
-Hosted signup creates no session until the address is verified and the person signs in normally. Verification links expire after one hour. Password-reset links expire after 30 minutes, can be used once, and revoke existing sessions when completed. Reset and resend requests use conditional responses and persisted limits; they do not reveal whether another person has an account. Existing plans and logs survive password changes.
+Neon owns password recovery, verification codes, session expiry, and managed service rate limits. Corner retains its code-entry, reset-password, loading, and error screens, and requires a live managed session before every protected request. No real inbox delivery is implied by an enabled policy.
 
-For a server you control, follow **HOSTING.md** in this package. The supplied `compose.hosted.yaml` runs one Corner container behind Caddy, preserves SQLite and certificate data in named volumes, and publishes only the HTTPS edge. `scripts/init-hosted.mjs` creates independent private keys without printing them or overwriting existing keys. It does not create a cloud server or configure DNS or mail on your behalf.
+For a server you control, follow **HOSTING.md**. The hosted Compose template runs one Corner container behind Caddy. `scripts/init-hosted.mjs` creates independent private keys without printing or overwriting them; it does not create a cloud server or configure DNS or SMTP.
 
-The application is designed for one server process and SQLite. Use durable private storage and backups. Public ChatGPT subscription use still needs OpenAI's applicable approved integration; hosted mode does not expose the local dynamic OAuth flow. No public hosting, domain, live mail verification, commercial client registration, or live user authorization has been performed for this package.
+Keep one Corner process: agent background tasks still execute in memory, and startup fails interrupted runs. Moving persistence to Postgres is not a multi-instance cutover. Hosted ChatGPT access remains disabled pending the applicable approved integration; there is no separately billed fallback.
 
 ## Development and verification
 
 ```bash
+# Start a disposable Postgres instance first (or supply another test database):
+docker run --rm --name corner-test-postgres -e POSTGRES_PASSWORD=corner-test-only -e POSTGRES_DB=corner_test -p 127.0.0.1:45432:5432 -d postgres:17
+export CORNER_TEST_DATABASE_URL=postgresql://postgres:corner-test-only@127.0.0.1:45432/corner_test
 npm run check
 npm test
 npm run build
@@ -154,11 +171,11 @@ npm run smoke
 npm run smoke:dev
 ```
 
-The production smoke command briefly starts disposable compiled servers on loopback ports 43137 and 43138. It verifies proxy handling, configured-host health checks, account access, and shutdown during an accepted account request, then removes its temporary databases. The development smoke check starts the actual Turbo development processes on ports 43139 and 43140, verifies the web/API proxy and shared catalog access, and shuts down its own processes. Both checks use temporary data and send no real email or AI requests. Run `smoke:dev` on Linux or macOS in a clean checkout without local `.env` or Vite environment files; it deliberately refuses those files so real credentials cannot enter its disposable processes.
+Server tests and both smoke checks require `CORNER_TEST_DATABASE_URL`; they never fall back to the real `DATABASE_URL`. Each fixture owns a random PostgreSQL schema and drops only that schema. Test files still run sequentially in separate processes. Better Auth is a **test-only** dependency for a local managed-service fixture; no test sends real account email or model requests.
 
-GitHub Actions runs installation, tests, builds, and both smoke checks on pushes to `main` and pull requests. It uses read-only repository permissions and pinned official action revisions. It does not deploy the application.
+Production smoke starts disposable compiled servers on loopback ports 43137 and 43138. Development smoke starts all Turbo development processes on 43139 and 43140. Both use actual PostgreSQL and a private local HTTPS auth fixture, exercise cookie sessions and proxy boundaries, and clean up only their own resources. Run development smoke in a clean checkout without `.env`, `.env.local`, or Vite environment files; never remove a user's configuration just to pass it.
 
-Tests cover real independent account sessions and account isolation, imports, idempotent writes and retries, atomic proposal application, stale-plan protection, cancellation, protected history, OAuth state/PKCE/identity validation, encrypted credential ownership, refresh races, model selection, and completed-versus-failed inference streams. Provider calls in tests are mocked; tests do not use a real account, subscription grant, or paid inference.
+CI provisions PostgreSQL, then runs tests, build, and both smoke checks. It does not deploy or run the separate `npm run check` command. Tests cover owner isolation, concurrent/idempotent writes, atomic proposal application, stale plans, cancellation, protected history, OAuth identity/PKCE, encrypted credentials, refresh/disconnect races, and inference stream validation.
 
 The provider contract is implemented against the official documentation above. A real account must complete consent before live subscription inference can be verified. Browser visual verification and Docker execution are reported separately in the release notes; automated success should not be mistaken for those checks.
 
@@ -167,7 +184,7 @@ The provider contract is implemented against the official documentation above. A
 | Folder | Responsibility |
 | --- | --- |
 | `apps/web/src/` | React account/setup UI, meal planner, recipes, workouts, and agent review |
-| `apps/server/src/` | Independent account auth, SQLite, HTTP routes, model connection, and planning agent |
+| `apps/server/src/` | Managed Auth boundary, PostgreSQL persistence, HTTP routes, model connection, and planning agent |
 | `packages/shared/src/` | Shared models, validation, nutrition/training calculations, proposal rules, and exercise data |
 | `apps/web/tests/` | Rendered account/connection controls and development configuration checks |
 | `apps/server/tests/` | Accounts, email, data isolation, agent, provider, and proxy regression checks |
