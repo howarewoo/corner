@@ -103,6 +103,8 @@ try {
   if (workerConfig.version_metadata?.binding === 'CF_VERSION_METADATA') {
     const version = health.headers.get('X-Corner-Version');
     assert.match(version ?? '', /^[a-f0-9-]{36}$/i);
+    const { publicChecks } = await import('./release.mjs');
+    await publicChecks(origin, version, (url, options) => worker.fetch(url, options));
   }
   assert.equal((await call('https://wrong.example.test/api/health')).status, 400);
   assert.equal((await call('/api/state')).status, 401);

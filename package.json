@@ -23,13 +23,13 @@
     "release:package": "node scripts/release-artifact.mjs package",
     "release:verify": "node scripts/release-artifact.mjs verify",
     "release:qualify": "node scripts/release-artifact.mjs qualify",
+    "release": "node scripts/release.mjs",
     "start": "pnpm --filter server start",
     "db:migrate": "node --env-file-if-exists=.env.local --env-file-if-exists=.env apps/server/dist/migrate.js --apply",
     "smoke": "node scripts/smoke.mjs",
     "package": "python3 scripts/package.py",
     "smoke:dev": "node scripts/dev-smoke.mjs",
     "build:workers": "pnpm run build && pnpm --filter server exec wrangler deploy --dry-run --outdir dist/worker",
-    "deploy:workers": "pnpm run build && pnpm --filter server exec wrangler deploy",
     "smoke:workers": "node scripts/workers-smoke.mjs"
   },
   "devDependencies": {

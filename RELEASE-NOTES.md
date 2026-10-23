@@ -1,3 +1,29 @@
+# Local targeted verification and approved immutable releases
+
+Added conservative local docs/web/design/shared-UI profiles while keeping PR and main CI unconditionally full. No targeted CI gate, activation switch, or duplicate advisory CI job remains. Required-check configuration uses ordinary GitHub Actions repository-writer trust, preserves unrelated checks/review rules, and requires an actually successful full job on current main. GitHub protection/environment setup remains an explicit post-merge operator action, not a side effect of this change.
+
+Neon reconciliation now executes only default-branch metadata code, revalidates current PR state, and removes obsolete owned previews before creation so quota exhaustion does not prevent cleanup. The Node runtime is selected explicitly; no PR application code, dependency installation, or artifact receives the Neon key.
+
+Main CI packages already-built Worker/assets, checksummed migrations, and a standalone Node migrator/data validator. Promotion consumes exact successful-main artifact identities and verified bytes without rebuilding. Protected approvals bind the candidate, baseline, schema journal, configuration, run and attempt; bootstrap, public success, human operational validation, and explicit compatible code recovery remain distinct. Recovery never reverses SQL, and its read-only document scan is a snapshot—not an automatic writer pause. [HOSTING.md](HOSTING.md#build-migrate-and-release) documents prerequisites, failure states, and recovery limits.
+
+Observed on Node 24.21.0 with disposable PostgreSQL 17 and local HTTPS Auth fixtures: full verification passed once as warmup and three measured times after the final policy correction. Each full run covered 45 native CI/release/artifact regressions, root type checks, 10/10 server and 3/3 web test files, all workspace/Worker builds, and actual production/development/Workers smokes. A persisted-plan/promotion regression first failed for web authentication bootstrap, then passed after operational completion reused the conservative per-path ownership classifier; mixed ordinary web/UI changes remain routine. Development smoke now selects only the three product tasks, preserving an independently running design catalog. All five workflows passed `actionlint`; focused independent CI and release-security reviews reported no remaining material findings at their stated source-review scope.
+
+Three successful warm-cache runs per profile, on unchanged source and the same local machine:
+
+| Verification body | Median |
+| --- | --- |
+| Docs, including actual local link-target checks | 0.006 s |
+| Web build and uncached existing web suite | 5.481 s |
+| Full qualification | 61.012 s |
+
+These are local profile timings, not CI latency or changed-file build forecasts. Dependency installation, CLI startup, queueing, and runner cost were not measured; build/typecheck caches were warm and application tests remained uncached. Existing Vite chunk-size advisories remain.
+
+The selected standalone payload passed actual bootstrap qualification and old-schema/old-Worker → candidate writes → old-Worker read/mutate → candidate reread compatibility against a genuine previous application build. Its packaged `--apply` migrator also ran from outside the checkout; real read-only rollback validation accepted canonical stored data, rejected a lossy future-field case without exposing private details, and left persisted data unchanged. Local test artifacts are not published or production-qualified release candidates.
+
+No GitHub admin settings, live Neon branches, production deployment/migration, application-image Docker execution, real inbox delivery, or model inference was exercised for this change. Browser assertions remain explicit operator evidence, not fabricated automated coverage. Concurrent unrelated UI/lint work was excluded from the verified source selection.
+
+---
+
 # CI development readiness and Neon preview creation
 
 The inherited development-smoke timeout also occurred on `main`: GitHub Actions grouped Turbo output until task exit, so persistent development tasks could serve a healthy API without emitting the readiness markers observed by the smoke check. The smoke subprocess now explicitly streams task-prefixed logs; ordinary interactive development retains its configured TUI.
