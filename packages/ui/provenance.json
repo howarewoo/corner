@@ -6,7 +6,7 @@
   "adaptations": [
     "Reuse the initial 18 Corner/Base UI controls from src/primitives.tsx; new sourced controls call their public APIs.",
     "New current base-nova controls retain Tailwind v4 utility composition; src/utilities.css maps the Corner semantic theme.",
-    "Corner forest/sage light tokens, project-owned dark mapping, flat fills without shadows, and visible focus outlines.",
+    "Existing Corner light and dark color values adjusted from the requester-provided CSS reference, retaining token names, flat fills without shadows, and visible focus outlines. No extra token names or component rules were added; shared surfaces use the existing background token.",
     "Lucide icons replace registry icon placeholders; cn uses clsx and tailwind-merge.",
     "Sidebar uses the 760px product breakpoint, protects editable shortcuts, and forwards explicit phone initial/final focus. Search expands collapsed desktop navigation before focusing; every phone opening resets cancellation focus. The app disables the extra Sheet close button.",
     "Calendar day sizing, selected states, and day-button keyboard-focus refs adapt to the existing Corner Button API. Menubar declares its own inset prop. Chart axis-label selectors match Recharts 3.8's actual tick-value class so light/dark semantic text colors apply.",
@@ -1198,7 +1198,7 @@
   "extensions": [
     {
       "id": "colors",
-      "source": "Incumbent Corner light tokens from apps/web/src/components/globals.css, moved unchanged to packages/ui/src/tokens.css",
+      "source": "Existing Corner light tokens in packages/ui/src/tokens.css and dark values in src/theme.css, adjusted from the requester-provided CSS color reference without adding token names",
       "specimen": "apps/design/src/specimens.tsx#colors"
     },
     {

@@ -1,3 +1,11 @@
+# Existing palette adjustment
+
+Adjusted existing shared light colors from the supplied CSS reference and retuned existing dark colors toward neutral charcoal and muted sage. Token names are retained, catalog surfaces use `--background` again, and the temporary extra theme/component overrides were removed. The product and catalog continue to share the canonical light palette. Layout, component APIs, and interaction behavior are unchanged.
+
+Observed: `pnpm run build --filter=design` and all three web test files passed. Browser checks at 1440px and 390px verified both appearances, the restored background references, unchanged computed token namespace, no phone document overflow, and no JavaScript errors. The existing Vite chunk-size advisory remains.
+
+---
+
 # Shared Base UI design system
 
 Added the backend-free `apps/design` developer catalog at loopback port `3002` and the shared `@packages/ui` React package. It includes all 66 entries in the current shadcn component index plus Form and Sonner, with Corner Colors and Spacing foundations: 68 upstream entries and 70 navigation entries. The app uses the real shared Base UI-backed Sidebar, with search, stable links, browser history, desktop collapse, phone Sheet navigation, and persistent light/dark appearance. Controls adapt current `base-nova` sources to Corner's forest/sage palette and flat tonal surfaces.

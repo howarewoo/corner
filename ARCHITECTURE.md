@@ -10,7 +10,7 @@ This describes the implemented architecture and the boundaries a change must pre
 | `apps/server` | Hono HTTP app for accounts, persistence, and AI integration. [index.ts](apps/server/src/index.ts) composes the single-process Node runtime; [worker.ts](apps/server/src/worker.ts) composes hosted-only Workers requests/static assets. [app.ts](apps/server/src/app.ts) composes account/workspace routes and shared middleware; [ai-routes.ts](apps/server/src/ai-routes.ts) supplies the connection and agent Hono route group. |
 | `packages/shared` | Types, Zod schemas, domain mutations, nutrition/training calculations, proposal rules, and exercise data. Start with [domain.ts](packages/shared/src/domain.ts), [training.ts](packages/shared/src/training.ts), and [agent.ts](packages/shared/src/agent.ts). |
 | `apps/design` | Standalone React/Vite developer catalog on loopback port `3002`, with no API, accounts, private environment configuration, or runtime registry access. |
-| `packages/ui` | Shared source-exported React controls backed by Base UI, canonical Corner light tokens, and opt-in shadcn semantic themes. `apps/design` consumes the controls; `apps/web` consumes only the unchanged light token values. |
+| `packages/ui` | Shared source-exported React controls backed by Base UI, canonical Corner light tokens, and opt-in shadcn semantic themes. `apps/design` consumes the controls; `apps/web` consumes the same shared light token values without migrating its controls. |
 | `scripts` | Workspace test runner, disposable production/development smoke checks, hosted configuration initializer, health check, and source packaging. |
 | `deployment` | [Caddy edge configuration](deployment/caddy/Caddyfile) for the optional hosted Compose deployment. |
 

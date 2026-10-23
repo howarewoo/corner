@@ -19,13 +19,13 @@ From the repository root, with Node `>=24.15.0 <25` and pnpm `10.33.2`:
 - `../../packages/ui/src/primitives.tsx`: the original 18 Corner/Base UI controls, reused by the expanded catalog and chrome.
 - `../../packages/ui/src/catalog/`: the remaining sourced controls and their public compositions.
 - `../../packages/ui/src/components.css`: flat Corner styling and adaptations to the existing public control APIs.
-- `../../packages/ui/src/tokens.css`: canonical incumbent light palette, also consumed unchanged by the product.
+- `../../packages/ui/src/tokens.css`: canonical Corner light palette, shared by the product and catalog.
 - `../../packages/ui/src/theme.css`: opt-in shadcn semantic aliases and Corner's dark extension. Set `data-corner-theme="light"` or `"dark"` on the document element; the catalog also keeps the `.dark` class aligned for chart theme selectors.
 - `../../packages/ui/src/utilities.css`: Tailwind v4 utilities, animation utilities, source discovery, and Corner semantic color/radius mappings. Consumers of the utility-based controls need this stylesheet and their own Tailwind build integration; `vite.config.ts` is the working reference.
 - `src/specimens.tsx`, `src/expanded-specimens.tsx`, `src/conversation-specimens.tsx`, and `src/table-specimen.tsx`: live implementation references, not generated snippets or separate usage examples.
 - `src/main.tsx`: dashboard-style chrome built from the real shared Sidebar family, Button, and Input. Base UI and Sonner each have one root toaster, not one per specimen.
 
-The existing product uses private feature-specific markup and CSS, not an exported React control library. Its components, interactions, and light token values remain intact. Only token ownership moves to the shared package. The initial controls retain their project-owned APIs; new compositions adapt to those APIs rather than replacing them. Newly sourced controls retain current shadcn Base UI/Tailwind composition. No Radix UI primitives or Next.js runtime are introduced.
+The existing product uses private feature-specific markup and CSS, not an exported React control library. Its components and interactions remain intact; product and catalog share the light palette. Existing light and dark color values were adjusted from the requester's CSS reference without adding token names or component rules. Shells and specimen surfaces use the existing `--background` reference. The initial controls retain their project-owned APIs; new compositions adapt to those APIs rather than replacing them. Newly sourced controls retain current shadcn Base UI/Tailwind composition. No Radix UI primitives or Next.js runtime are introduced.
 
 The UI package explicitly declares React and ReactDOM ambient types rather than inheriting unrelated ancestor `@types` directories. Its check/build remains browser-library scoped; the design app separately owns Vite's Node configuration types.
 
