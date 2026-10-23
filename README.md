@@ -61,6 +61,9 @@ The build compiles `@packages/shared`, then builds `server` and `web` as separat
 | `pnpm run db:migrate` | Apply checked-in PostgreSQL migrations through `DATABASE_URL_UNPOOLED`, after a build |
 | `pnpm run build:workers` | Build all workspaces and dry-run the Cloudflare Worker/assets bundle without deploying |
 | `pnpm run deploy:workers` | Build and publish the configured Cloudflare Worker and web assets |
+| `pnpm run verify -- --plan` | Show conservative changed-path selection without running checks |
+| `pnpm run verify` | Run selected local checks; `-- --full` forces the complete qualification |
+| `pnpm run test:ci` | Native Node CI, release, and artifact regression tests |
 | `pnpm run smoke:workers` | Actual local workerd, PostgreSQL, and HTTPS Auth fixture checks, after a build |
 
 For a focused build, use `pnpm run build --filter=server` or `pnpm run build --filter=web`. Turbo also builds their shared dependency. Each app declares its own dependencies; domain models and validation are imported through `@packages/shared/<module>` rather than relative paths into the other app.
@@ -181,20 +184,42 @@ Keep one Corner **Node process** because its agent background tasks execute in m
 # Start a disposable Postgres instance first (or supply another test database):
 docker run --rm --name corner-test-postgres -e POSTGRES_PASSWORD=corner-test-only -e POSTGRES_DB=corner_test -p 127.0.0.1:45432:5432 -d postgres:17
 export CORNER_TEST_DATABASE_URL=postgresql://postgres:corner-test-only@127.0.0.1:45432/corner_test
-pnpm run check
-pnpm test
-pnpm run build
-pnpm run smoke
-pnpm run smoke:dev
-pnpm run build:workers
-pnpm run smoke:workers
+pnpm run verify -- --plan --base origin/main
+pnpm run verify -- --base origin/main
+# Full qualification, including development smoke, requires a credential-free checkout:
+pnpm run verify -- --full --report /tmp/corner-verification.jsonl
 ```
 
-Server tests and both smoke checks require `CORNER_TEST_DATABASE_URL`; they never fall back to the real `DATABASE_URL`. Each fixture owns a random PostgreSQL schema and drops only that schema. Test files still run sequentially in separate processes. Better Auth is a **test-only** dependency for a local managed-service fixture; no test sends real account email or model requests.
+Server tests and all runtime smoke checks require `CORNER_TEST_DATABASE_URL`; they never fall back to the real `DATABASE_URL`. Each fixture owns a random PostgreSQL schema and drops only that schema. Test files still run sequentially in separate processes. Better Auth is a **test-only** dependency for a local managed-service fixture; no test sends real account email or model requests.
 
-Production smoke starts disposable compiled servers on loopback ports 43137 and 43138. Development smoke starts all Turbo development processes on 43139 and 43140, explicitly streaming task-prefixed logs so GitHub Actions does not buffer readiness markers until the persistent tasks exit. Both use actual PostgreSQL and a private local HTTPS auth fixture, exercise cookie sessions and proxy boundaries, and clean up only their own resources. Run development smoke in a clean checkout without `.env`, `.env.local`, or Vite environment files; never remove a user's configuration just to pass it.
+Production smoke starts disposable compiled servers on loopback ports 43137 and 43138. Development smoke starts only the web/API processes and shared-package watcher on 43139 and 43140, excluding the independent design catalog. Task-prefixed streaming logs expose readiness without waiting for persistent tasks to exit. Both use actual PostgreSQL and a private local HTTPS auth fixture, exercise cookie sessions and proxy boundaries, and clean up only their own resources. Run development smoke in a clean checkout without `.env`, `.env.local`, or Vite environment files; never remove a user's configuration just to pass it.
 
-CI provisions PostgreSQL, then runs tests, builds the apps/Worker, and runs production, development, and Workers smoke checks. It does not deploy or run the separate root `check` command. Tests cover owner isolation, concurrent/idempotent writes, atomic proposal application, stale plans, cancellation, protected history, OAuth identity/PKCE, encrypted credentials, refresh/disconnect races, and inference stream validation.
+### Targeted verification and merge protection
+
+Local targeting uses [scripts/verify.mjs](scripts/verify.mjs). Selection compares the working tree and untracked files with `HEAD` by default; use `--base origin/main` for the complete branch. `--scope docs|web|design|ui|server|full` is an advisory local override, never an independent merge qualification. Missing/unknown comparisons, mixed workspaces, shared/server/auth/runtime changes, and verification policy select the full profile. PR and main CI always run `--full`; there is no targeted CI activation or duplicate advisory CI job.
+
+| Change | Selected work |
+| --- | --- |
+| Root product/hosting Markdown or `docs/*.md` | Local Markdown link targets; source claims and anchors remain human checks |
+| Ordinary web components/styles | Web build and existing rendered-web suite, with Turbo shared prerequisites |
+| Design catalog | Catalog build/typecheck |
+| Shared UI source | UI, web, and catalog builds plus existing web suite |
+| Server/shared/auth/runtime, mixed or uncertain changes | CI/release regressions, root check, server/web suites, all builds, and production/development/Workers smokes |
+| Workflows, scripts, dependency/build configuration, unknown root controls | Full profile |
+
+
+The required check is the unconditional `Test, build, and smoke check workspaces` job. This uses normal GitHub Actions repository-writer trust, not a workflow-specific unspoofable GitHub App gate. PR verification never receives Neon or production credentials. Dependency caches follow GitHub's branch/merge-ref isolation; no default-branch workflow dispatch executes PR code. Superseded PR runs cancel; successful command timings are retained as advisory artifacts, not authorization receipts.
+
+After merging the complete workflows and a successful full main run, privately supply an appropriately authorized repository-admin `GH_TOKEN`, then configure the full required check and protected production environments explicitly:
+
+```bash
+pnpm run ci:configure -- --reviewer howarewoo
+pnpm run ci:configure -- --reviewer howarewoo --apply
+```
+
+Without `--apply`, configuration only prints its proposal. Applying configures reviewer-protected, main-only `production` and `production-validation` environments and strict/admin-enforced full-CI protection, preserving unrelated required checks and review rules. It requires an actual successful full job on the exact current main revision; skipped or stale runs do not qualify. Unsupported repository/environment permissions fail rather than silently weaken protection. No settings change occurs merely by opening this PR.
+
+`--report` appends profile/command elapsed times as JSONL, not a qualification receipt. Compare at least three docs/web/full runs with the same runner and cache conditions; report the median, cold-install cost, and runner cost separately. No speed SLA or CI saving is inferred from a plan preview or Turbo cache hit.
 
 The provider contract is implemented against the official documentation above. A real account must complete consent before live subscription inference can be verified. Browser visual verification and Docker execution are reported separately in the release notes; automated success should not be mistaken for those checks.
 
@@ -202,9 +227,9 @@ The provider contract is implemented against the official documentation above. A
 
 [The Neon preview workflow](.github/workflows/neon-preview.yml) requires the GitHub repository variable `NEON_PROJECT_ID` and repository secret `NEON_API_KEY`, authorized to create and delete branches in that project. Corner's project is `weathered-tooth-40264904`. Never put a database connection URL in a repository variable or publish it as a job output.
 
-For same-repository, non-Dependabot PRs, opened/reopened/synchronize/closed events reconcile the PR's **current** GitHub state. An open PR creates or reuses `preview/pr-<number>`; a closed or merged PR deletes it. Per-PR concurrency and a live state read avoid replaying stale event state. Already-expired branches are a successful cleanup no-op; other API failures remain failures.
+A metadata-only PR workflow wakes a serialized default-branch reconciler; a schedule and manual dispatch also reconcile all live PRs. Same-repository, non-Dependabot open PRs create or reuse `preview/pr-<number>`; closed/ineligible PRs remove only that exact owned preview namespace. The reconciler re-reads live PR state before each effect instead of trusting event payloads. Already-expired branches are a successful cleanup no-op; other API failures remain failures.
 
-Previews copy only the `production` schema, not account or health records, and use Neon's plan-default idle suspension (`suspend_timeout: '0'`); Free plans reject an explicit interval. Expiration is 14 days from initial creation; synchronization does not reset data or renew the deadline. [Schema-only branches](https://neon.com/docs/guides/branching-schema-only) consume Neon's root-branch quota. Fork and Dependabot PRs are skipped, and no PR application code is executed with the API key.
+Previews copy only the `production` schema, not account or health records, and use Neon's plan-default idle suspension (`suspend_timeout_seconds: 0`); Free plans reject an explicit interval. Expiration is 14 days from initial creation; synchronization does not reset data or renew the deadline. [Schema-only branches](https://neon.com/docs/guides/branching-schema-only) consume Neon's root-branch quota. Fork and Dependabot PRs are skipped, and no PR application code, dependencies, or artifacts are executed with the API key.
 
 This workflow manages database branches only: it does not deploy a preview app, configure preview Auth, or run Corner migrations. Schema-only copies omit migration-history rows too; future migration automation needs an explicit baseline strategy for the copied schema rather than blindly applying the bootstrap migration.
 

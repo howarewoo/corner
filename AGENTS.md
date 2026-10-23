@@ -25,6 +25,8 @@ All commands below run from the repository root with dependencies installed:
 | `pnpm test` | Server and rendered-web suites through Turbo; no separate shared-package test task exists |
 | `pnpm test --filter=server` | Server suite, retaining Turbo's shared-build prerequisite |
 | `pnpm test --filter=web` | Rendered-web and Vite configuration suite, retaining the shared-build prerequisite |
+| `pnpm run verify -- --plan --base origin/main` | Inspect conservative branch selection; omit `--plan` to run it, or use `--full` in a credential-free checkout |
+| `pnpm run test:ci` | Native Node regressions colocated in `scripts/__tests__` for verification, release controls, and artifacts |
 | `pnpm run build` | Compile shared/server outputs and type-check/build the web app |
 | `pnpm run db:migrate` | After a build: apply checked-in PostgreSQL migrations via the direct `DATABASE_URL_UNPOOLED`; no schema writes occur at app startup |
 | `pnpm run smoke` | After a full build: disposable production servers on loopback ports `43137` and `43138` |
@@ -50,11 +52,11 @@ A layout migration must update discovery, relative imports, and TypeScript inclu
 - **Deployment:** use the checks and manual account/recovery scenario in `HOSTING.md`. Node smoke success does not prove Docker execution, certificates, inbox delivery, or live model access.
 - **Documentation only:** check local paths, anchors, commands, and source claims. Do not install dependencies or launch application/provider workflows just to validate prose.
 
-CI provisions PostgreSQL and runs `pnpm install --frozen-lockfile`, `pnpm test`, `pnpm run build`, `pnpm run smoke`, and `pnpm run smoke:dev`. It does not run the separate root `check` command. Server suites and smoke checks require `CORNER_TEST_DATABASE_URL` pointing to a disposable PostgreSQL database; they never use the real `DATABASE_URL`. Each fixture creates and drops only its own random schema. Preserve the distinction between inspected commands and executed checks.
+PR and main CI always install the frozen lockfile and run `pnpm run verify -- --full`: native CI/release regressions, root `check`, server/web suites, all workspace/Worker builds, and production/development/Workers smokes. Targeted profiles are local only; no activation or advisory CI gate exists. Required checks use ordinary GitHub Actions repository-writer trust. [README.md](README.md#targeted-verification-and-merge-protection) owns explicit protection configuration and timing procedures. Server suites and runtime smokes require disposable `CORNER_TEST_DATABASE_URL`, never the real `DATABASE_URL`; fixtures create/drop only their own random schemas. Configured commands are not evidence of execution.
 
 [scripts/test.mjs](scripts/test.mjs) runs each workspace's test files in separate processes, sequentially, keeping database hooks and browser mocks private. Preserve that isolation when selecting or changing test execution. Use the existing runner and native selection before introducing replacement tooling; no measured test-performance bottleneck is established in the repository guidance.
 
-Both smoke scripts use actual disposable PostgreSQL schemas and a local HTTPS Better Auth fixture; no real email/model request is made. Better Auth is a test-only dependency. The development smoke rejects root `.env`, `.env.local`, `.env.development`, and `.env.development.local` files. Use a clean checkout/snapshot; never remove or rename a user's configuration to make it run. Keep owned-process/schema cleanup rather than killing unrelated listeners.
+All runtime smoke scripts use actual disposable PostgreSQL schemas and a local HTTPS Better Auth fixture; no real email/model request is made. Better Auth is a test-only dependency. Development smoke runs only the web/API/shared development tasks, not the independent design catalog, and rejects root `.env`, `.env.local`, `.env.development`, and `.env.development.local` files. Use a clean checkout/snapshot; never remove or rename a user's configuration to make it run. Keep owned-process/schema cleanup rather than killing unrelated listeners.
 
 ## Boundaries and pitfalls
 

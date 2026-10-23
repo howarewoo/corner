@@ -90,6 +90,12 @@ Credential rotation and catalog/model updates re-read and merge the encrypted re
 
 Local ChatGPT authorization currently requires the supported `http://127.0.0.1` browser origin and local deployment gate. Hosted mode disables this connection and has no alternative inference provider. Do not make hosted AI appear available by changing the deployment label, copying a local grant, hardcoding model access, or silently switching billing paths.
 
+## Verification and release boundaries
+
+[verify.mjs](scripts/verify.mjs) owns conservative local profiles, reusing Turbo and the existing isolated test runner. Incomplete or unknown selection never yields a lighter local profile. PR and main CI always run the full profile; there is no targeted verifier dispatch, custom status controller, or activation switch. The full required job uses normal GitHub Actions repository-writer trust rather than a workflow-specific GitHub App identity. [neon-preview.mjs](scripts/neon-preview.mjs) independently reconciles live PR metadata, deleting obsolete owned branches before creating previews so a full branch quota does not prevent cleanup; it never runs PR code with Neon credentials.
+
+No PR code receives production or Neon credentials. Dependency caches use GitHub's normal branch/merge-ref isolation; no default-branch job executes dispatched PR code. Browser and operational attestations are recorded as human assertions, not fabricated automated coverage. See [HOSTING.md](HOSTING.md#build-migrate-and-release) for release configuration, completion states, and recovery limits.
+
 ## Agreed evolution and open decisions
 
 The intended product is a hosted service for performance-focused trainees. Daily tracking usability, AI planning quality, and hosted readiness are priorities. The intended hosted AI path is an approved ChatGPT integration; approval, its actual integration contract, and live verification remain prerequisites. Provider references and current limitations are linked from [README.md](README.md#chatgpt-plan-access-current-scope).

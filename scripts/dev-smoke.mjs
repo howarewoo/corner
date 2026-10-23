@@ -155,7 +155,8 @@ const deadline = setTimeout(() => interrupted.abort(new Error('The development s
 try {
   // GitHub Actions groups logs until a task exits; persistent tasks never flush
   // their readiness markers unless streaming task-prefixed output is explicit.
-  child = spawn('pnpm', ['run', 'dev', '--ui=stream', '--log-order=stream', '--log-prefix=task'], { cwd: root, env: environment, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+  // The independent design catalog has its own listener and is not this product smoke's target.
+  child = spawn('pnpm', ['run', 'dev', '--filter=web', '--filter=server', '--filter=@packages/shared', '--ui=stream', '--log-order=stream', '--log-prefix=task'], { cwd: root, env: environment, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
   exited = new Promise(resolve => {
     child.once('error', () => { childFinished = true; resolve(); });
     child.once('exit', () => { childFinished = true; resolve(); });
