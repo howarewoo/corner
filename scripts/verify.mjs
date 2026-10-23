@@ -60,12 +60,14 @@ export function commandsFor(profile) {
   if (!profiles.includes(profile)) throw new Error('Unknown verification profile.');
   const turbo = (...args) => ['pnpm', ['exec', 'turbo', 'run', ...args]];
   if (profile === 'docs') return [];
-  if (profile === 'web') return [turbo('build', '--filter=web'), turbo('test', '--filter=web')];
-  if (profile === 'design') return [turbo('build', '--filter=design')];
-  if (profile === 'ui') return [turbo('build', '--filter=@packages/ui', '--filter=web', '--filter=design'), turbo('test', '--filter=web')];
-  if (profile === 'server') return [turbo('check', '--filter=server'), turbo('test', '--filter=server'), turbo('build', '--filter=server')];
+  const lint = ['pnpm', ['run', 'lint']];
+  if (profile === 'web') return [lint, turbo('build', '--filter=web'), turbo('test', '--filter=web')];
+  if (profile === 'design') return [lint, turbo('build', '--filter=design')];
+  if (profile === 'ui') return [lint, turbo('build', '--filter=@packages/ui', '--filter=web', '--filter=design'), turbo('test', '--filter=web')];
+  if (profile === 'server') return [lint, turbo('check', '--filter=server'), turbo('test', '--filter=server'), turbo('build', '--filter=server')];
   return [
     [process.execPath, ['--test']],
+    lint,
     ['pnpm', ['run', 'check']], ['pnpm', ['test']], ['pnpm', ['run', 'build:workers']],
     ['pnpm', ['run', 'smoke']], ['pnpm', ['run', 'smoke:dev']], ['pnpm', ['run', 'smoke:workers']],
   ];

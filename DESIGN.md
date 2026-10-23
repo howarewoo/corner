@@ -41,9 +41,9 @@ Reuse the existing hierarchy rather than introducing a second font or an unrelat
 
 ## Layout
 
-Desktop uses a fixed white sidebar and a separate white main shell. The base sidebar width is `238px`, shell gutter/gap `20px`, and workspace maximum width `1600px`; existing media queries adjust these values.
+Desktop uses a fixed white sidebar and a separate white main shell, with page content starting directly inside the workspace rather than beneath a top bar. The base sidebar width is `238px`, shell gutter/gap `20px`, and workspace maximum width `1600px`; existing media queries adjust these values. Active navigation uses its tonal fill and text treatment without a trailing dot. Workspace status, refresh, and sign-out controls live beneath navigation in the sidebar.
 
-At `760px` and below, navigation becomes an off-canvas drawer with a scrim, and content moves to a single main shell. Keep drawer keyboard handling and focus restoration in [corner-app.tsx](apps/web/src/components/corner-app.tsx). Related controls receive mobile touch-size rules, and ordinary text fields use `16px` text at this breakpoint; inspect feature-specific overrides rather than assuming every control has identical sizing.
+At `760px` and below, navigation becomes an off-canvas drawer with a scrim, opened by a standalone menu button at the start of the workspace. Content moves to a single main shell. Keep drawer keyboard handling and focus restoration in [corner-app.tsx](apps/web/src/components/corner-app.tsx). Related controls receive mobile touch-size rules, and ordinary text fields use `16px` text at this breakpoint; inspect feature-specific overrides rather than assuming every control has identical sizing.
 
 The weekly meal planner intentionally scrolls horizontally with seven legible day columns and scroll snapping. Do not shrink the entire week until meal content becomes unreadable. Other dashboards and forms collapse their grids through the existing breakpoints.
 
@@ -55,6 +55,8 @@ Sections normally use tonal layering and spacing, not borders or card shadows. `
 
 Focus is an interaction cue, not a permanent border treatment. Preserve the existing `:focus-visible`, higher-contrast, forced-color, and reduced-motion rules in the global stylesheet. Their presence is not a claim of audited accessibility conformance.
 
+Workspace load and refresh errors use a persistent error toast with a Retry action, not an inline banner that shifts page content. Successful recovery clears the toast; initial-load failures continue to pause mutations until hydration succeeds.
+
 ## Shapes
 
 `--radius` is the standard `24px` panel radius; `--radius-control` is `14px` for form fields. Desktop outer shells use `30px`, with responsive adjustments. Buttons and date controls use rounded/pill treatments from their own selectors. Retain these role-specific differences rather than imposing one radius everywhere.
@@ -63,14 +65,16 @@ Focus is an interaction cue, not a permanent border treatment. Preserve the exis
 
 | Surface | Existing implementation and usage |
 | --- | --- |
-| Buttons, fields, navigation, empty states, recipe/food dialogs | [corner-app.tsx](apps/web/src/components/corner-app.tsx) and global styles; reuse primary, outline, subtle, and small variants |
+| Buttons, fields, navigation, empty states, recipe/food dialogs | Legacy implementations remain in [corner-app.tsx](apps/web/src/components/corner-app.tsx) and global styles; use the corresponding shared shadcn/Base UI primitives when changing a control |
 | Accounts and onboarding | [account-access.tsx](apps/web/src/account-access.tsx), [main.tsx](apps/web/src/main.tsx), and standalone styles; preserve policy loading, verification/recovery states, and visible errors |
 | Profile and targets | [profile-form.tsx](apps/web/src/profile-form.tsx); keep unset nutrition targets distinct from zero recommendations |
 | Workout logging and progress | [training-panel.tsx](apps/web/src/components/training-panel.tsx) and [training.css](apps/web/src/components/training.css); distinguish targets, editable prefills, and recorded sets |
 | AI connection and proposal review | [agent-panel.tsx](apps/web/src/agent-panel.tsx) and agent styles; retain current/proposed comparisons, explicit Apply, and stale-proposal feedback |
 | Food estimates | [food-estimator.tsx](apps/web/src/components/food-estimator.tsx); show clarification and assumptions, then an editable draft before saving |
 
-The [shared component package](packages/ui/) provides Base UI-backed controls for new consumers. The [design app](apps/design/) presents live specimens in a dashboard-style sidebar layout; its [coverage record](apps/design/README.md) identifies provenance and exclusions. Flat tonal surfaces retain the incumbent colors and control radii, with no ordinary panel shadows. Existing product controls are not migrated: general and training dialogs still have separate implementations; preserve their keyboard and focus behavior when changing either.
+Always start with the [shared shadcn/Base UI primitives](packages/ui/) and their shipped styling, not new app-local component markup or CSS. The [design app](apps/design/) presents live specimens; its [coverage record](apps/design/README.md) identifies APIs, provenance, and exclusions. Extend shared primitives for missing capabilities rather than building a parallel product-only equivalent. Workspace notifications use the shared Base UI `Toaster` and manager; relocated account and menu controls use the shared `Button`. Other legacy product controls remain until their own flow changes; preserve keyboard, focus, and data-safety behavior during each migration.
+
+For utility-based shared controls, import `@packages/ui/utilities-only.css` with Tailwind's Vite integration to avoid resetting unrelated legacy screens. Import the shared theme and styles, and scope semantic aliases with `.corner-ui` around migrated controls or their portal viewport. `Toaster` accepts `viewportProps` for this portal scope. The catalog continues to use `@packages/ui/utilities.css`, which includes Preflight.
 
 ## Do's and Don'ts
 

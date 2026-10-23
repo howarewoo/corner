@@ -6,6 +6,9 @@ import type { AppState, Settings, StateResponse } from '@packages/shared/types';
 import ProfileForm from './profile-form';
 import AccountAccess, { readAccountRoute } from './account-access';
 import { api, post, errorMessage } from './api';
+import '@packages/ui/utilities-only.css';
+import '@packages/ui/theme.css';
+import '@packages/ui/styles.css';
 import '@/components/globals.css';
 import './standalone.css';
 

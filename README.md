@@ -54,6 +54,7 @@ The build compiles `@packages/shared`, then builds `server` and `web` as separat
 | `pnpm run dev` | Web/API processes, a shared-package watcher, and the design catalog |
 | `pnpm run build` | Cached dependency-aware builds for all workspaces |
 | `pnpm run check` | Type checks for all apps and shared packages |
+| `pnpm run lint` | Repository-wide Oxlint checks with the registered shadcn lint plugin |
 | `pnpm test` | Independent server and rendered-web test suites |
 | `pnpm run smoke` | Actual compiled-server account, proxy, health, and shutdown checks |
 | `pnpm run smoke:dev` | Actual two-app development proxy, session, and shared-catalog checks |
@@ -67,11 +68,19 @@ The build compiles `@packages/shared`, then builds `server` and `web` as separat
 
 For a focused build, use `pnpm run build --filter=server` or `pnpm run build --filter=web`. Turbo also builds their shared dependency. Each app declares its own dependencies; domain models and validation are imported through `@packages/shared/<module>` rather than relative paths into the other app.
 
+### Linting
+
+Run `pnpm run lint` from the repository root. [`.oxlintrc.json`](.oxlintrc.json) loads Oxlint's default correctness checks and `@shadcn/lint`, recognizes `@packages/ui` component imports and shared theme imports, and excludes generated test bundles. Oxlint also respects `.gitignore`. Existing warnings remain visible and non-blocking; errors fail the command.
+
+Following the [shadcn setup guidance](https://github.com/shadcn-ui/lint/blob/main/SETUP.md), no shadcn design rules are enabled initially. Add chosen rules under `rules` in `.oxlintrc.json`; see the [available rules](https://github.com/shadcn-ui/lint#rules) and [design-system configuration examples](https://github.com/shadcn-ui/lint/blob/main/docs/design-systems.md). Keep policies aligned with [DESIGN.md](DESIGN.md) and preserve intentional legacy styling.
+
+Every non-documentation verification profile runs repository-wide lint, including full CI. Documentation-only verification remains dependency-free.
+
 ### Shared design system
 
 `apps/design` is the internal, backend-free component catalog. Run `pnpm --filter design dev` and open **http://127.0.0.1:3002**. `pnpm run dev` also starts this app alongside the product stack. Build only the catalog with `pnpm run build --filter=design`; serve its built assets with `pnpm --filter design preview`.
 
-Shared React controls live in `packages/ui`, exposed as `@packages/ui`. They adapt current Base UI-backed shadcn compositions to Corner's forest/sage palette and flat tonal surfaces. The product and catalog import the same canonical light tokens; the catalog opts into shadcn semantic aliases and a dark theme. Existing product controls and account/data behavior are not migrated.
+Shared React controls live in `packages/ui`, exposed as `@packages/ui`. They adapt current Base UI-backed shadcn compositions to Corner's forest/sage palette and flat tonal surfaces. Prioritize these primitives and their shipped styles for product UI changes. The product and catalog share canonical light tokens; the catalog opts into global semantic aliases and a dark theme, while migrated product controls scope aliases locally. Workspace notifications and relocated account/menu controls use shared primitives; unrelated legacy controls remain unchanged.
 
 Use the live specimens and their source as the implementation reference. The [catalog coverage record](apps/design/README.md) identifies the complete current shadcn inventory, provenance, theme contract, composition distinctions, and ownership. The catalog itself uses the shared Base UI-backed Sidebar.
 
@@ -206,6 +215,7 @@ Local targeting uses [scripts/verify.mjs](scripts/verify.mjs). Selection compare
 | Server/shared/auth/runtime, mixed or uncertain changes | CI/release regressions, root check, server/web suites, all builds, and production/development/Workers smokes |
 | Workflows, scripts, dependency/build configuration, unknown root controls | Full profile |
 
+All non-documentation rows also run repository-wide lint.
 
 The required check is the unconditional `Test, build, and smoke check workspaces` job. This uses normal GitHub Actions repository-writer trust, not a workflow-specific unspoofable GitHub App gate. PR verification never receives Neon or production credentials. Dependency caches follow GitHub's branch/merge-ref isolation; no default-branch workflow dispatch executes PR code. Superseded PR runs cancel; successful command timings are retained as advisory artifacts, not authorization receipts.
 

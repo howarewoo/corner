@@ -12,6 +12,10 @@ Use woostack skills when available. At the start of work, `using-woostack`, when
 
 Follow this file first when it conflicts with generic agent defaults. Preserve any scoped instructions introduced below this root.
 
+## Shared UI first
+
+Always prioritize the shared shadcn/Base UI primitives in `packages/ui` and their live examples in `apps/design` when adding or changing product UI. Inspect and reuse the existing `@packages/ui` component and its shipped styling before using an app-local control or building a custom equivalent. This includes feedback: use the shared Base UI `Toaster` and toast manager for notifications. Do not recreate primitive markup, interaction behavior, or component CSS in the app. If a required capability is missing, extend the shared component rather than creating a parallel app-only implementation. Preserve unrelated legacy controls until their own flow is changed.
+
 ## Commands and working directories
 
 Use Node `>=24.15.0 <25`; the root manifest records `pnpm@10.33.2`. Enable bundled Corepack with `corepack enable`. Use the root `pnpm-lock.yaml` and `pnpm-workspace.yaml`; setup is `pnpm install --frozen-lockfile` from the repository root when dependency installation is authorized. Do not create workspace lockfiles. Manifest scripts, [turbo.json](turbo.json), and [CI](.github/workflows/ci.yml) remain authoritative.
@@ -22,6 +26,7 @@ All commands below run from the repository root with dependencies installed:
 | --- | --- |
 | `pnpm run dev` | Shared build followed by web/API development processes and shared watcher; browser `http://127.0.0.1:3000`, internal API `3001` by default |
 | `pnpm run check` | Type-check all workspaces; Turbo builds shared dependencies first |
+| `pnpm run lint` | Repository-wide Oxlint checks with `@shadcn/lint` registered; configure rules in `.oxlintrc.json` |
 | `pnpm test` | Server and rendered-web suites through Turbo; no separate shared-package test task exists |
 | `pnpm test --filter=server` | Server suite, retaining Turbo's shared-build prerequisite |
 | `pnpm test --filter=web` | Rendered-web and Vite configuration suite, retaining the shared-build prerequisite |
@@ -33,7 +38,7 @@ All commands below run from the repository root with dependencies installed:
 | `pnpm run smoke:dev` | Actual development-stack integration on ports `43139` and `43140`; Linux/macOS, clean checkout without local environment files |
 | `pnpm start` | After a full build: compiled production server serving the web app and API on port `3000` by default |
 
-These are configured commands, not assertions of passing execution. No lint script is configured. For build selection, existing supported examples are `pnpm run build --filter=server` and `pnpm run build --filter=web`.
+These are configured commands, not assertions of passing execution. After code changes, run `pnpm run lint` and fix errors. Existing warnings are non-blocking; shadcn design rules remain opt-in in `.oxlintrc.json`. For build selection, existing supported examples are `pnpm run build --filter=server` and `pnpm run build --filter=web`.
 
 ## Test placement
 

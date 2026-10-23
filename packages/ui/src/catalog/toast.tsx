@@ -173,13 +173,14 @@ function ToastList() {
 function Toaster({
   children,
   toastManager = toast,
+  viewportProps,
   ...props
-}: ToastPrimitive.Provider.Props) {
+}: ToastPrimitive.Provider.Props & { viewportProps?: ToastPrimitive.Viewport.Props }) {
   return (
     <ToastProvider toastManager={toastManager} {...props}>
       {children}
       <ToastPortal>
-        <ToastViewport>
+        <ToastViewport {...viewportProps}>
           <ToastList />
         </ToastViewport>
       </ToastPortal>

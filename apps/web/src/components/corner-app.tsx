@@ -10,6 +10,7 @@ import {
 import type { AppState, FoodEntry, Ingredient, Macros, MealSlot, Mutation, PlanEntry, Recipe, RecipeCategory, RecipeRequest, Settings } from '@packages/shared/types';
 import { SLOTS } from '@packages/shared/types';
 import { activityForStateDate, applyMutation, dateKey, groceryList, macroTotal, mondayOf, shiftDate, targetForStateDate, weekDates } from '@packages/shared/domain';
+import { Button, createToastManager, Toaster } from '@packages/ui';
 import ProfileForm from '../profile-form';
 import AgentPanel, { AgentConnection } from '../agent-panel';
 import TrainingPanel from './training-panel';
@@ -22,7 +23,6 @@ import './food-entry.css';
 
 type View = 'agent' | 'today' | 'workouts' | 'planner' | 'recipes' | 'groceries' | 'studio' | 'settings';
 type Overlay = { kind: 'recipe'; recipe: Recipe } | { kind: 'recipeForm'; recipe?: Recipe } | { kind: 'food'; food?: FoodEntry } | { kind: 'pick'; date: string; slot: MealSlot; recipeId?: string } | null;
-type Notice = { message: string; error?: boolean };
 type ApiPayload = { state?: AppState; revision?: number; aiAvailable?: boolean; recipe?: Recipe; code?: string; error?: string | { message?: string; code?: string } };
 const navItems: { id: View; label: string; icon: typeof Home }[] = [
   { id: 'today', label: 'Today', icon: Home }, { id: 'workouts', label: 'Workouts', icon: Dumbbell }, { id: 'planner', label: 'Meal planner', icon: CalendarDays },
@@ -109,7 +109,7 @@ export default function CornerApp({ initialState, preview, displayName, initialR
   const [revision, setRevision] = useState(initialRevision);
   const [selectedDate, setSelectedDate] = useState(() => dateKey(new Date(), initialState.settings.timezone));
   const [overlay, setOverlay] = useState<Overlay>(null);
-  const [notice, setNotice] = useState<Notice | null>(null);
+  const [notifications] = useState(() => createToastManager());
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(!preview);
   const [hydrated, setHydrated] = useState(preview);
@@ -130,17 +130,29 @@ export default function CornerApp({ initialState, preview, displayName, initialR
   const latestRevision = useRef(initialRevision);
   const generationLock = useRef(false);
   const generationIntent = useRef<{ signature: string; requestId: string } | null>(null);
-  const toastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  const notify = useCallback((message: string, error = false) => { setNotice({ message, error }); if (toastTimer.current) clearTimeout(toastTimer.current); toastTimer.current = setTimeout(() => setNotice(null), 5500); }, []);
+  const notify = useCallback((message: string, error = false) => { notifications.add({ id: 'workspace-notice', title: message, type: error ? 'error' : 'success', priority: error ? 'high' : 'low' }); }, [notifications]);
   const readState = useCallback(async () => {
     if (preview || refreshLock.current || mutationLock.current) return;
     refreshLock.current = true;
     setLoading(true);
     try { const response = await fetch('/api/state', { cache: 'no-store' }); const payload = await response.json() as ApiPayload; if (response.status === 401 && payload.code === 'SIGN_IN_REQUIRED') { onSessionExpired?.(); return; } if (!response.ok || !payload.state) throw new Error(typeof payload.error === 'string' ? payload.error : 'Could not load your saved data. Please try again.'); if ((payload.revision ?? 0) >= latestRevision.current) { latestRevision.current = payload.revision ?? 0; setRevision(latestRevision.current); setState(payload.state); setAiAvailable(Boolean(payload.aiAvailable)); } setHydrated(true); setLoadError(null); }
-    catch (error) { const message = error instanceof Error ? error.message : 'Could not load your data.'; setLoadError(message); notify(message, true); }
+    catch (error) { setLoadError(error instanceof Error ? error.message : 'Could not load your data.'); }
     finally { refreshLock.current = false; setLoading(false); }
-  }, [preview, notify, onSessionExpired]);
+  }, [preview, onSessionExpired]);
   useEffect(() => { void readState(); }, [readState]);
+  useEffect(() => {
+    const id = 'workspace-load-error';
+    if (!loadError) { notifications.close(id); return; }
+    notifications.add({
+      id,
+      title: hydrated ? 'Your latest data could not be refreshed.' : 'Your saved data could not be loaded.',
+      description: hydrated ? loadError : 'Changes are paused until your saved data is available. Please retry.',
+      type: 'error',
+      priority: 'high',
+      timeout: 0,
+      actionProps: { children: loading ? 'Retrying…' : 'Retry', disabled: busy || loading, onClick: () => void readState() },
+    });
+  }, [loadError, hydrated, loading, busy, readState, notifications]);
   useEffect(() => {
     if (preview) return;
     const refresh = () => { if (document.visibilityState === 'visible') void readState(); };
@@ -167,7 +179,6 @@ export default function CornerApp({ initialState, preview, displayName, initialR
     document.addEventListener('keydown', onKeyDown);
     return () => { document.body.style.overflow = oldOverflow; document.removeEventListener('keydown', onKeyDown); trigger?.focus(); };
   }, [menuOpen]);
-  useEffect(() => () => { if (toastTimer.current) clearTimeout(toastTimer.current); }, []);
   const mutate = useCallback(async (mutation: Mutation, success?: string): Promise<boolean> => {
     if (!preview && !hydrated) { notify('Load your saved data before making changes. Use Retry to reconnect.', true); return false; }
     if (mutationLock.current) return false;
@@ -246,18 +257,21 @@ export default function CornerApp({ initialState, preview, displayName, initialR
     finally { generationLock.current = false; setGenerating(false); }
   };
 
-  return <div className="app-shell">
+  return <Toaster toastManager={notifications} timeout={5500} viewportProps={{ className: 'corner-ui' }}><div className="app-shell">
     {menuOpen && <button className="mobile-scrim" aria-label="Close navigation" onClick={() => setMenuOpen(false)} />}
     <aside id="corner-navigation" aria-label="Corner navigation" role={menuOpen ? 'dialog' : undefined} aria-modal={menuOpen || undefined} className={`sidebar ${menuOpen ? 'sidebar-open' : ''}`}>
       <div className="brand-row"><button className="brand" onClick={() => navigate('today')} aria-label="Corner home"><span className="brand-mark"><span /><span /><span /></span><span>corner<span className="brand-period">.</span></span></button><button className="icon-button mobile-close" onClick={() => setMenuOpen(false)} aria-label="Close navigation"><X size={20} /></button></div>
       <div className="sidebar-caption">NUTRITION & TRAINING</div>
-      <nav aria-label="Main navigation">{navItems.map(({ id, label, icon: Icon }) => <button key={id} className={`nav-item ${view === id ? 'active' : ''}`} onClick={() => navigate(id)} aria-current={view === id ? 'page' : undefined}><Icon size={18} strokeWidth={1.8} /><span>{label}</span>{view === id && <i />}</button>)}</nav>
-      <div className="sidebar-bottom"><button className="profile-button" onClick={() => navigate('settings')}><span className="avatar">{firstName.charAt(0).toUpperCase()}</span><span><b>{state.settings.name || displayName || 'Your workspace'}</b><small>Training & nutrition</small></span><Settings2 size={16} /></button></div>
+      <nav aria-label="Main navigation">{navItems.map(({ id, label, icon: Icon }) => <button key={id} className={`nav-item ${view === id ? 'active' : ''}`} onClick={() => navigate(id)} aria-current={view === id ? 'page' : undefined}><Icon size={18} strokeWidth={1.8} /><span>{label}</span></button>)}</nav>
+      <div className="sidebar-bottom">
+        <div className="sidebar-status" role="status">{preview ? <span className="preview-note"><i />Preview · changes stay in this session</span> : <span className="save-status">{busy || loading ? <Loader2 size={13} className="spin" /> : <span className="status-dot" />}{loading ? 'Loading your data' : busy ? 'Saving' : 'Private workspace'}</span>}</div>
+        <div className="account-toolbar corner-ui">{onSignOut && <Button variant="ghost" size="sm" disabled={signingOut || busy} onClick={onSignOut}><LogOut size={15} />{signingOut ? 'Signing out…' : 'Sign out'}</Button>}<Button variant="ghost" size="icon" aria-label="Refresh saved data" title="Refresh saved data" disabled={busy || loading || preview} onClick={() => void readState()}><RefreshCw size={16} /></Button></div>
+        <button className="profile-button" onClick={() => navigate('settings')}><span className="avatar">{firstName.charAt(0).toUpperCase()}</span><span><b>{state.settings.name || displayName || 'Your workspace'}</b><small>Training & nutrition</small></span><Settings2 size={16} /></button>
+      </div>
     </aside>
     <div className="main-shell">
-      <header className="topbar"><div className="topbar-left"><button id="mobile-navigation-toggle" className="icon-button mobile-menu" onClick={() => setMenuOpen(true)} aria-label="Open navigation" aria-controls="corner-navigation" aria-expanded={menuOpen}><Menu size={21} /></button><span className="topbar-context">Your corner</span><span className="topbar-slash">/</span><span>{navItems.find(item => item.id === view)?.label}</span></div><div className="topbar-right">{preview ? <span className="preview-note"><i />Preview · changes stay in this session</span> : <span className="save-status">{busy || loading ? <Loader2 size={13} className="spin" /> : <span className="status-dot" />}{loading ? 'Loading your data' : busy ? 'Saving' : 'Private workspace'}</span>}<div className="account-toolbar">{onSignOut && <button type="button" className="button subtle small" disabled={signingOut || busy} onClick={onSignOut}><LogOut size={15} />{signingOut ? 'Signing out…' : 'Sign out'}</button>}</div><IconButton label="Refresh saved data" disabled={busy || loading || preview} onClick={() => void readState()}><RefreshCw size={16} /></IconButton></div></header>
       <main className="workspace">
-        {loadError && <div className="data-error-banner" role="alert"><div><b>{hydrated ? 'Your latest data could not be refreshed.' : 'Your saved data could not be loaded.'}</b><p>{hydrated ? loadError : 'Changes are paused until your saved data is available. Please retry.'}</p></div><button className="button outline" disabled={busy || loading} onClick={() => void readState()}>{loading ? <Loader2 size={15} className="spin" /> : <RefreshCw size={15} />}Retry</button></div>}
+        <Button id="mobile-navigation-toggle" variant="ghost" size="icon" className="mobile-menu corner-ui" onClick={() => setMenuOpen(true)} aria-label="Open navigation" aria-controls="corner-navigation" aria-expanded={menuOpen}><Menu size={21} /></Button>
         {view === 'today' && <>
           <section className="page-heading"><div><div className="eyebrow">{formatDate(selectedDate, { weekday: 'long' })} · {selectedDate === currentDate ? 'Today' : 'Daily overview'}</div><h1>{selectedDate === currentDate ? `In your corner, ${firstName}.` : formatDate(selectedDate, { month: 'long', day: 'numeric' })}</h1><p>Eat with intention. Show up with energy.</p></div><div className="heading-actions"><DateControls date={selectedDate} setDate={setSelectedDate} />{selectedDate !== currentDate && <button className="button subtle" onClick={() => setSelectedDate(currentDate)}>Today</button>}</div></section>
           <div className="today-grid">
@@ -303,12 +317,11 @@ export default function CornerApp({ initialState, preview, displayName, initialR
         <footer className="workspace-footer"><span>Made for your everyday practice.</span><span>Nutrition estimates · Check product labels and portions</span></footer>
       </main>
     </div>
-    {notice && <div className={`toast ${notice.error ? 'toast-error' : ''}`} role={notice.error ? 'alert' : 'status'}>{notice.error ? <Circle size={17} /> : <CheckCircle2 size={17} />}<span>{notice.message}</span><button aria-label="Dismiss notification" onClick={() => setNotice(null)}><X size={15} /></button></div>}
     {overlay?.kind === 'recipe' && <RecipeDetail recipe={state.recipes.find(r => r.id === overlay.recipe.id) || overlay.recipe} busy={disabled} saved={state.recipes.some(r => r.id === overlay.recipe.id)} onClose={() => setOverlay(null)} onFavorite={recipe => void mutate({ type: 'recipe.favorite', data: { id: recipe.id, favorite: !recipe.favorite } })} onEdit={recipe => setOverlay({ kind: 'recipeForm', recipe })} onPlan={recipe => setOverlay({ kind: 'pick', date: selectedDate, slot: recipe.category === 'breakfast' ? 'breakfast' : recipe.category === 'snack' ? 'snack' : 'dinner', recipeId: recipe.id })} onSave={saveRecipe} onDelete={async recipe => { if (!window.confirm(`Delete “${recipe.name}” from your recipe collection? Remove any uses of this recipe from your meal plan first. Existing food log entries keep their nutrition.`)) return; if (await mutate({ type: 'recipe.delete', data: { id: recipe.id } }, 'Recipe deleted')) setOverlay(null); }} />}
     {overlay?.kind === 'recipeForm' && <RecipeForm recipe={overlay.recipe} busy={disabled} onClose={() => setOverlay(null)} onSave={saveRecipe} />}
     {overlay?.kind === 'food' && <FoodForm food={overlay.food} date={selectedDate} busy={disabled} aiAvailable={aiAvailable} onClose={() => setOverlay(null)} onSave={async food => { if (await mutate({ type: 'log.save', data: food }, 'Food log saved')) setOverlay(null); }} />}
     {overlay?.kind === 'pick' && <RecipePicker recipes={state.recipes} date={overlay.date} slot={overlay.slot} initialRecipeId={overlay.recipeId} busy={disabled} onClose={() => setOverlay(null)} onAdd={async (recipe, date, slot, servings, entryId) => { if (await mutate({ type: 'plan.save', data: { id: entryId, date, slot, recipeId: recipe.id, servings } }, 'Meal added to your plan')) setOverlay(null); }} />}
-  </div>;
+  </div></Toaster>;
 }
 
 function ingredientAmount(ingredient: Ingredient, servings: number) {

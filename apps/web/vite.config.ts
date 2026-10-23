@@ -1,6 +1,8 @@
 import { defineConfig, loadEnv, type ServerOptions } from 'vite';
 import react from '@vitejs/plugin-react';
+import tailwindcss from '@tailwindcss/vite';
 import { fileURLToPath } from 'node:url';
+import { readFileSync } from 'node:fs';
 
 const webRoot = fileURLToPath(new URL('.', import.meta.url));
 const repositoryRoot = fileURLToPath(new URL('../..', import.meta.url));
@@ -31,7 +33,8 @@ export function developmentServer(environment: Record<string, string | undefined
     },
     fs: {
       strict: true,
-      allow: [webRoot, fileURLToPath(new URL('../../packages/shared/dist', import.meta.url)), fileURLToPath(new URL('../../packages/ui/src/tokens.css', import.meta.url)), fileURLToPath(new URL('../../node_modules', import.meta.url))],
+      // Shared controls are public source; keep the repository and private data outside this allowlist.
+      allow: [webRoot, fileURLToPath(new URL('../../packages/shared/dist', import.meta.url)), fileURLToPath(new URL('../../packages/ui/src', import.meta.url)), fileURLToPath(new URL('../../node_modules', import.meta.url))],
       deny: ['**/.env', '**/.env.*', '**/*.{crt,pem,key}', '**/.git/**', '**/.npmrc', fileURLToPath(new URL('../../data/**', import.meta.url)), '**/private-config.json', '**/*.sqlite*', '**/*.db', '**/*.db-*'],
     },
   };
@@ -44,7 +47,12 @@ export default defineConfig(({ command, mode }) => {
   return {
     root: webRoot,
     envDir: repositoryRoot,
-    plugins: [react()],
+    plugins: [react(), tailwindcss(), {
+      name: 'corner-ui-license',
+      generateBundle() {
+        this.emitFile({ type: 'asset', fileName: 'licenses/shadcn-ui.txt', source: readFileSync(new URL('../../packages/ui/NOTICE', import.meta.url), 'utf8') });
+      },
+    }],
     resolve: { alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) } },
     build: { outDir: 'dist', sourcemap: false },
     server: command === 'serve' ? developmentServer(environment) : undefined,

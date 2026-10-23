@@ -9,7 +9,8 @@
     "./tokens.css": "./src/tokens.css",
     "./theme.css": "./src/theme.css",
     "./styles.css": "./src/components.css",
-    "./utilities.css": "./src/utilities.css"
+    "./utilities.css": "./src/utilities.css",
+    "./utilities-only.css": "./src/utilities-only.css"
   },
   "sideEffects": ["**/*.css"],
   "scripts": { "build": "tsc --noEmit", "check": "tsc --noEmit" },

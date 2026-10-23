@@ -1,7 +1,7 @@
 @import './tokens.css';
 
-/* Opt-in shadcn semantic names: legacy product --muted remains text-colored. */
-:root[data-corner-theme] {
+/* Opt in globally or scope semantic names around shared controls in a legacy app. */
+:root[data-corner-theme], .corner-ui {
   color-scheme: light;
   --background: #ffffff;
   --foreground: var(--ink);
