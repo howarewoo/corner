@@ -15,6 +15,13 @@ type Options = {
   localSecrets?: () => { authSecret: string; tokenEncryptionKey: string };
 };
 
+const developmentConfigurationError =
+  'Development requires loopback PostgreSQL and Auth in local mode. Run pnpm dev to start the isolated stack.';
+
+function isLoopback(hostname: string): boolean {
+  return hostname === '127.0.0.1' || hostname === 'localhost' || hostname === '[::1]';
+}
+
 /** Common validation without process environment, repository paths, or filesystem I/O. */
 export function loadRuntimeConfig(environment: NodeJS.ProcessEnv, options: Options): Config {
   const development = options.development === true;
@@ -22,17 +29,22 @@ export function loadRuntimeConfig(environment: NodeJS.ProcessEnv, options: Optio
   if (deployment !== 'local' && deployment !== 'hosted')
     throw new Error('CORNER_DEPLOYMENT must be local or hosted.');
   const databaseUrl = environment.DATABASE_URL;
+  const authUrl = environment.NEON_AUTH_BASE_URL;
+  if (development && (deployment !== 'local' || !databaseUrl || !authUrl))
+    throw new Error(developmentConfigurationError);
   if (!databaseUrl)
     throw new Error('DATABASE_URL is required. Run neon deploy to pull Neon configuration.');
+  let database: URL;
   try {
-    if (!['postgres:', 'postgresql:'].includes(new URL(databaseUrl).protocol)) throw new Error();
+    database = new URL(databaseUrl);
+    if (!['postgres:', 'postgresql:'].includes(database.protocol)) throw new Error();
   } catch {
     throw new Error('DATABASE_URL must be a PostgreSQL connection URL.');
   }
-  const authUrl = environment.NEON_AUTH_BASE_URL;
   if (!authUrl)
     throw new Error('NEON_AUTH_BASE_URL is required. Run neon deploy to pull Neon configuration.');
   let neonAuthBaseUrl: string;
+  let authHostname: string;
   try {
     const parsed = new URL(authUrl);
     if (
@@ -44,9 +56,16 @@ export function loadRuntimeConfig(environment: NodeJS.ProcessEnv, options: Optio
     )
       throw new Error();
     neonAuthBaseUrl = parsed.href.replace(/\/$/, '');
+    authHostname = parsed.hostname;
   } catch {
     throw new Error('NEON_AUTH_BASE_URL must be an HTTPS service URL.');
   }
+  if (development && (
+    !isLoopback(database.hostname) ||
+    !isLoopback(authHostname) ||
+    database.searchParams.has('host') ||
+    database.searchParams.has('hostaddr')
+  )) throw new Error(developmentConfigurationError);
   if (
     environment.NEON_AUTH_REQUIRE_EMAIL_VERIFICATION !== undefined &&
     !['true', 'false'].includes(environment.NEON_AUTH_REQUIRE_EMAIL_VERIFICATION)
@@ -84,7 +103,7 @@ export function loadRuntimeConfig(environment: NodeJS.ProcessEnv, options: Optio
   }
   if (deployment === 'hosted' && url.protocol !== 'https:')
     throw new Error('Hosted deployments require an HTTPS CORNER_ORIGIN.');
-  if (deployment === 'local' && !['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname)) {
+  if (deployment === 'local' && !isLoopback(url.hostname)) {
     throw new Error(
       'Local deployments require a loopback CORNER_ORIGIN. Use hosted mode for a public origin.',
     );

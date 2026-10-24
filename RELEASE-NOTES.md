@@ -1,3 +1,25 @@
+# Stable staging on workers.dev
+
+Staging releases now accept the fixed `corner-web-staging.<account-subdomain>.workers.dev` deployment hostname and enable only that frontend's `workers_dev` route at bootstrap. Production still requires a custom domain; backend and version-preview URLs remain disabled. Hostname-based Cloudflare Access must protect staging before bootstrap. A version-preview alias is not an isolated staging environment.
+
+Corrected the cutover instructions to keep PR #1 targeting the existing staging branch, then promote the foundation to main and synchronize both persistent branches before exact-tip CI qualification and explicit staging bootstrap. No PR merge, repository setting change, or cloud provisioning/deployment was performed.
+
+Observed on Node 24.21.0: the staging hostname was rejected before repair and accepted afterward; all 65 native tooling regressions passed, workspace builds and both Wrangler dry runs passed, and lint passed with 47 existing warnings. The actual paired Workers smoke passed with disposable PostgreSQL 17 and local HTTPS Auth, including account isolation, persistence/retries, version identities, and hosted AI restrictions. It still emitted the previously recorded private-safe `CORNER_DATABASE_CONNECTION_FAILED` diagnostics; passing assertions do not establish clean connection logs. This was local verification, not live Access, Neon Auth/email, or cloud deployment qualification.
+
+# Development is always local
+
+`pnpm dev` now owns the isolated PostgreSQL/Auth stack; `dev:seed`, `dev:down`, and confirmed `dev:reset` replace the redundant local-only aliases. There is no cloud-development command. Workspace API development rejects remote database/Auth endpoints, hosted mode, and connection-string host overrides before opening connections or creating private keys. Development entrypoints no longer load root environment files; production startup and explicit deployment/migration configuration remain separate.
+
+The controller reuses the native Turbo server task rather than a parallel API launcher. Development smoke invokes those underlying tasks with its own disposable local fixtures, without recursing through the public development command.
+
+Repeated `pnpm dev` now checks the authenticated existing controller before Docker discovery or startup. An already-running owned stack is reused with exit status zero, without restarting services or changing its ports. Foreign controller identities still fail closed. Verified against the running checkout: controller PID/configuration were unchanged, and both web/API health and the independent design catalog remained available after another actual `pnpm dev` invocation. The native regression also exercises reuse without Docker available and rejects a foreign controller.
+
+After the duplicate-start repair, all 64 native tooling regressions passed; lint retained 47 existing warnings and no errors.
+
+Observed on Node 24.21.0 with disposable loopback PostgreSQL 17: root type checks, lint (47 warnings, no errors), 63 tooling regressions, server 12/12 and web 6/6 files, and workspace builds passed. Production and development smokes passed in a credential-free source snapshot, including normal process-group cleanup. The new cloud-rejection regression failed before repair and passed afterward; an actual API entrypoint rejected cloud configuration before private-directory creation without exposing credentials.
+
+Actual `pnpm dev` ignored hostile inherited cloud/PG/Compose/Vite settings and synthetic root environment files, started all five workspace tasks, and served healthy HTTP without exposing the Vite canary. Explicit seeding, sign-in, native RPC reads, shutdown, and confirmed reset passed. Final startup reports local PostgreSQL/local Auth. Task-owned containers, volumes, and source snapshots were removed; an immediate cleanup assertion initially raced Docker's asynchronous auto-removal, and the subsequent container listing confirmed removal. No staging/production seed or cloud provider request was performed.
+
 # Isolated local PostgreSQL/Auth development
 
 Added `dev:local`, explicit `dev:local:seed`, non-destructive `dev:local:down`, and confirmed `dev:local:reset`. The local workflow uses owned PostgreSQL 17 plus an HTTPS Better Auth fixture, native `pg`, scrubbed child environments, and a private Unix controller socket. Root environment files and cloud URLs do not select seed destinations. Staging and production have no seed path.

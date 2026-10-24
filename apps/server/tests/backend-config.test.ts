@@ -9,6 +9,10 @@ const neonEnvironment = {
   DATABASE_URL: 'postgresql://test.invalid/corner',
   NEON_AUTH_BASE_URL: 'https://managed-auth.example.test/neondb/auth',
 };
+const developmentEnvironment = {
+  DATABASE_URL: 'postgresql://local:synthetic@127.0.0.1:5432/corner',
+  NEON_AUTH_BASE_URL: 'https://127.0.0.1:45901/neondb/auth',
+};
 const directories: string[] = [];
 const temporary = () => {
   const path = mkdtempSync(join(tmpdir(), 'corner-config-test-'));
@@ -37,7 +41,7 @@ test('development keeps the browser origin separate from its loopback API listen
   const dataDir = temporary();
   const config = loadConfig(
     {
-      ...neonEnvironment,
+      ...developmentEnvironment,
       CORNER_DATA_DIR: dataDir,
       CORNER_PORT: '9000',
       PORT: '9001',
@@ -50,7 +54,7 @@ test('development keeps the browser origin separate from its loopback API listen
   assert.equal(config.host, '127.0.0.1');
   const customized = loadConfig(
     {
-      ...neonEnvironment,
+      ...developmentEnvironment,
       CORNER_DATA_DIR: dataDir,
       CORNER_ORIGIN: 'http://127.0.0.1:4000',
       CORNER_DEV_API_PORT: '4001',
@@ -64,7 +68,7 @@ test('development keeps the browser origin separate from its loopback API listen
     assert.throws(
       () =>
         loadConfig(
-          { ...neonEnvironment, CORNER_DATA_DIR: dataDir, CORNER_DEV_API_PORT: port },
+          { ...developmentEnvironment, CORNER_DATA_DIR: dataDir, CORNER_DEV_API_PORT: port },
           { development: true },
         ),
       /CORNER_DEV_API_PORT/,
@@ -72,11 +76,30 @@ test('development keeps the browser origin separate from its loopback API listen
   assert.throws(
     () =>
       loadConfig(
-        { ...neonEnvironment, CORNER_DATA_DIR: dataDir, CORNER_DEV_API_PORT: '3000' },
+        { ...developmentEnvironment, CORNER_DATA_DIR: dataDir, CORNER_DEV_API_PORT: '3000' },
         { development: true },
       ),
     /must differ/,
   );
+});
+
+test('development refuses cloud database/Auth endpoints and routing overrides before creating private keys', () => {
+  const dataDir = temporary();
+  for (const override of [
+    { DATABASE_URL: neonEnvironment.DATABASE_URL },
+    { NEON_AUTH_BASE_URL: neonEnvironment.NEON_AUTH_BASE_URL },
+    { DATABASE_URL: `${developmentEnvironment.DATABASE_URL}?host=cloud.example.test` },
+    { DATABASE_URL: `${developmentEnvironment.DATABASE_URL}?hostaddr=198.51.100.1` },
+    { CORNER_DEPLOYMENT: 'hosted' },
+    { DATABASE_URL: undefined },
+    { NEON_AUTH_BASE_URL: undefined },
+  ]) {
+    assert.throws(
+      () => loadConfig({ ...developmentEnvironment, CORNER_DATA_DIR: dataDir, ...override }, { development: true }),
+      /Development requires loopback PostgreSQL and Auth/,
+    );
+  }
+  assert.equal(existsSync(join(dataDir, 'private-config.json')), false);
 });
 
 test('relative data paths resolve from the repository root even when a workspace changes cwd', () => {

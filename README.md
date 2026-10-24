@@ -14,18 +14,20 @@ Install **Node.js 24.15 or newer in the Node 24 series**, Docker with Compose, a
 git clone https://github.com/howarewoo/corner.git
 cd corner
 pnpm install --frozen-lockfile
-pnpm run dev:local
+pnpm run dev
 # In a second terminal:
-pnpm run dev:local:seed
+pnpm run dev:seed
 ```
 
 Open **http://127.0.0.1:3000**. The local controller builds the server and its dependencies, explicitly migrates its owned PostgreSQL 17 database, starts an HTTPS Better Auth fixture, then launches the existing API, web, design catalog, and shared/API watchers. The API uses **3001** and the catalog **3002**. Vite preserves the browser origin when proxying `/api` and `/auth/callback`. No Neon CLI, project, cloud credentials, or environment file is required. This is the local PostgreSQL approach in [Neon's local-development guide](https://neon.com/guides/local-development-with-neon); native `pg` needs no Neon HTTP proxy.
 
 The explicit seed command creates `empty@corner.test` and `demo@corner.test`, both with password **`Corner-local-only-2026!`**. The first account stays empty; the second has synthetic recipes, a current-week meal plan, food logs, workouts, and progress records. These are local-only credentials, never suitable for a public service. Signup and sign-in use the normal account flow; no onboarding is required. Settings owns optional profile editing and workspace import.
 
-`dev:local` never seeds automatically. Reseeding preserves edits and uses persistent seed dates/identities to recover interrupted account creation or imports. Account data and seed-completion records live in the owned Docker volume; `.corner-local/` holds private configuration, application keys, and the local Auth certificate. Both Git and Docker build contexts exclude that directory. No production/staging data is copied, and **there is no staging or production seed option**.
+`dev` never seeds automatically. Reseeding preserves edits and uses persistent seed dates/identities to recover interrupted account creation or imports. Account data and seed-completion records live in the owned Docker volume; `.corner-local/` holds private configuration, application keys, and the local Auth certificate. Both Git and Docker build contexts exclude that directory. No production/staging data is copied, and **there is no staging or production seed option**.
 
-If the default ports are occupied, use `pnpm run dev:local --port=45100`; the API and catalog use the next two ports. Occupied listeners are never killed. `pnpm run dev:local:down` stops owned services and retains all records and keys. To delete the entire owned local database, first finish any work using it, then run `pnpm run dev:local:reset --confirm-delete-local-data`. Reset retains local keys; restart and explicitly seed again. No existing repository `data/` or `.env` file is modified.
+If the default ports are occupied, use `pnpm run dev --port=45100`; the API and catalog use the next two ports. Occupied listeners are never killed. `pnpm run dev:down` stops owned services and retains all records and keys. To delete the entire owned local database, first finish any work using it, then run `pnpm run dev:reset --confirm-delete-local-data`. Reset retains local keys; restart and explicitly seed again. No existing repository `data/` or `.env` file is modified.
+
+Running `pnpm dev` again reuses the authenticated controller for this checkout and exits successfully, printing its actual URL. It does not restart, stop, or reseed services; `--port` applies only when starting a new stack. Use `dev:down` before changing ports. Unrelated listeners or a controller with a different installation identity are never adopted.
 
 Local children ignore root environment files and inherited database/Auth, Compose, PostgreSQL, Node-option, and `VITE_*` configuration. Docker must use a local Unix-socket context. The seed command contacts only the private local controller socket, not a supplied URL. The Auth fixture does not send email or model requests and does not simulate OTP or password-recovery delivery; it is not live Neon Auth qualification. Its TLS certificate is explicitly trusted by the API and renewed before expiry on startup.
 
@@ -35,11 +37,11 @@ The SDK is pinned to `0.6.0-beta` to satisfy its bundled `@neondatabase/auth-ui`
 
 Application calls use the shared `@packages/api` contract and native oRPC at `/api/rpc`; TanStack Query owns browser server state. This unreleased application starts with that protocol baseline: old application REST URLs are not supported, and no REST upgrade bridge, maintenance mode, or cutover controller is added. Managed Auth `/api/auth`, OAuth `/auth/callback`, and `GET /api/health` retain their separate protocols.
 
-For an explicitly selected **cloud-backed** development environment instead, install the Neon CLI (`pnpm add -g neon@latest`), select an isolated development branch, and configure Auth for its exact application origin. `neon deploy` applies `neon.ts` and pulls server-only Postgres/Auth URLs into `.env.local` (or an existing `.env`). Build, explicitly migrate that selected development database, then use `pnpm run dev`. This cloud path loads both files: `.env` overrides `.env.local`, and process environment values win. Never select staging/production as a local-development shortcut or put database credentials in `VITE_` variables. `dev:local` does not use this cloud configuration.
+**Development never connects to cloud Neon.** `pnpm dev` starts only its owned local PostgreSQL/Auth stack. API development also rejects non-loopback database/Auth endpoints and database host overrides before opening connections or writing private keys. Development does not load root environment files. Cloud configuration belongs to compiled production starts and explicit deployment/migration operations, not a separate cloud-development mode.
 
-`DATABASE_URL` is the pooled application connection; `DATABASE_URL_UNPOOLED` is used only by the explicit, versioned migration command. `NEON_AUTH_BASE_URL` is the managed account service. The app verifies cookies against its uncached session endpoint, so it does not need browser JWTs or `NEON_AUTH_JWKS_URL`. `NEON_AUTH_REQUIRE_EMAIL_VERIFICATION` must match the branch's email/password policy, with verification method **OTP**. SMTP and recovery delivery are configured in Neon; no app-owned Resend adapter remains. See `.env.example`.
+For production, `DATABASE_URL` is the pooled application connection; `DATABASE_URL_UNPOOLED` is used only by the explicit, versioned migration command. `NEON_AUTH_BASE_URL` is the managed account service. The app verifies cookies against its uncached session endpoint, so it does not need browser JWTs or `NEON_AUTH_JWKS_URL`. `NEON_AUTH_REQUIRE_EMAIL_VERIFICATION` must match the branch's email/password policy, with verification method **OTP**. SMTP and recovery delivery are configured in Neon; no app-owned Resend adapter remains. See `.env.example`.
 
-The cloud-backed Node path preserves private encryption/session-binding keys in repository-root `data/`; the isolated local controller uses `.corner-local/data/` instead. Keep existing keys across upgrades. `CORNER_ORIGIN` selects the browser origin and `CORNER_DEV_API_PORT` selects the API listener on the cloud-backed path; register each actual origin with `neon neon-auth domain add <origin>`.
+The production Node runtime preserves private encryption/session-binding keys in repository-root `data/`; development uses `.corner-local/data/` instead. Keep existing keys across upgrades. Production `CORNER_ORIGIN` must match the origin registered with Neon Auth. The development controller sets its loopback browser/API ports without cloud registration.
 
 ### Build and run production locally
 
@@ -55,11 +57,10 @@ The build compiles `@packages/shared` and `@packages/api`, then builds `server` 
 
 | Root command                   | Result                                                                                                                                      |
 | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `pnpm run dev:local`           | Isolated local PostgreSQL/Auth and development apps; optional `--port=45100` selects three consecutive loopback ports                         |
-| `pnpm run dev:local:seed`      | Explicitly create empty/demo local users; preserve existing fixture edits                                                                    |
-| `pnpm run dev:local:down`      | Stop owned local services without deleting data                                                                                             |
-| `pnpm run dev:local:reset --confirm-delete-local-data` | Delete only the owned local database; retain keys                                                              |
-| `pnpm run dev`                 | Web/API processes, shared/API package watchers, and the design catalog                                                                      |
+| `pnpm run dev`                | Isolated local PostgreSQL/Auth and development apps; optional `--port=45100` selects three consecutive loopback ports                         |
+| `pnpm run dev:seed`           | Explicitly create empty/demo local users; preserve existing fixture edits                                                                    |
+| `pnpm run dev:down`           | Stop owned local services without deleting data                                                                                             |
+| `pnpm run dev:reset --confirm-delete-local-data` | Delete only the owned local database; retain keys                                                              |
 | `pnpm run build`               | Cached dependency-aware builds for all workspaces                                                                                           |
 | `pnpm run check`               | Type checks for all apps and shared packages                                                                                                |
 | `pnpm run lint`                | Repository-wide Oxlint checks with the registered shadcn lint plugin                                                                        |
@@ -241,7 +242,7 @@ All non-documentation rows also run repository-wide lint.
 
 The required check is the unconditional `Test, build, and smoke check workspaces` job. This uses normal GitHub Actions repository-writer trust, not a workflow-specific unspoofable GitHub App gate. PR verification never receives Neon or production credentials. Dependency caches follow GitHub's branch/merge-ref isolation; no default-branch workflow dispatch executes PR code. Superseded PR runs cancel; successful command timings are retained as advisory artifacts, not authorization receipts.
 
-After the complete foundation/workflows land on `main`, create persistent `staging` from that landed revision and obtain successful full push CI on both exact branch tips. Privately supply an authorized repository-admin `GH_TOKEN`, then inspect and apply the policy:
+Merge foundation PR #1 into the existing `staging` branch, promote **staging → main** with a merge commit, and synchronize main back into staging. Keep deployment inactive until setup is complete; do not recreate either persistent branch. Obtain successful full push CI on both exact current tips. Privately supply an authorized repository-admin `GH_TOKEN`, then inspect and apply the policy:
 
 ```bash
 pnpm run ci:configure -- --reviewer howarewoo
@@ -264,7 +265,7 @@ Promote a reviewed release through a **staging → main** PR using a merge commi
 
 After **every release**, synchronize **main → staging** with a merge commit before the next release. Emergency production fixes may target main directly with an explicit release-review exception, then require the same synchronization. If the branches have diverged, create a temporary sync branch from current staging, merge main into it, resolve conflicts, pass CI, and merge that PR into staging. This satisfies strict up-to-date protection without bypassing it. Never squash/rebase-replace persistent history. These protections prevent normal/automatic deletion, not an administrator deliberately removing the policy.
 
-The foundation/current PR still targets main to establish the new baseline. Do not retarget it to a staging branch created from the older main. See [operator cutover order](HOSTING.md#one-time-protected-configuration-and-cutover-order) before switching defaults.
+Foundation PR #1 targets the existing staging branch. Its first merge runs CI but does not create staging infrastructure or activate deployment: promote the foundation to main, synchronize the branches, and complete the [operator cutover order](HOSTING.md#one-time-protected-configuration-and-cutover-order). Staging can use the Access-protected stable `https://corner-web-staging.adam-nathaniel-woo.workers.dev` hostname without a purchased domain; production's domain policy is unchanged.
 
 Old feature-preview provisioning workflows are removed. Existing provider resources are not deleted by a source update; inventory and explicitly retire only verified unused `preview/pr-*` Neon branches and obsolete Cloudflare Previews after stable staging passes its live gates. Preserve production, staging, backups, and unrelated resources.
 

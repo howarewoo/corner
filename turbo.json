@@ -24,7 +24,7 @@
       "dependsOn": ["^build"],
       "cache": false,
       "persistent": true,
-      "passThroughEnv": ["CORNER_ORIGIN", "CORNER_DEV_API_PORT", "CORNER_LOCAL_DEV", "CORNER_DESIGN_PORT"]
+      "passThroughEnv": ["CORNER_ORIGIN", "CORNER_DEV_API_PORT", "CORNER_DESIGN_PORT"]
     },
     "server#dev": {
       "dependsOn": ["^build"],

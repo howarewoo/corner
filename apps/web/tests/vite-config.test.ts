@@ -75,6 +75,16 @@ test('resolved Vite configuration exposes only public environment values', async
     join(fixture, '.env'),
     'VITE_BOUNDARY_PROBE=public-ui-test\nCORNER_ORIGIN=https://corner.example.test\nCORNER_TOKEN_ENCRYPTION_KEY=synthetic-private-canary\nBETTER_AUTH_SECRET=synthetic-session-canary\n',
   );
+  const development =
+    typeof configuration === 'function'
+      ? await configuration({ command: 'serve', mode: 'test', isPreview: false, isSsrBuild: false })
+      : configuration;
+  const local = await resolveConfig(
+    { ...development, configFile: false, root: fixture, mode: 'test', logLevel: 'silent' },
+    'serve',
+    'test',
+  );
+  assert.equal(Object.hasOwn(local.env, 'VITE_BOUNDARY_PROBE'), false);
   const resolved = await resolveConfig(
     {
       ...base,

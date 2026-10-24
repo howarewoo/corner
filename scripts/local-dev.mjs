@@ -238,7 +238,7 @@ async function stopChildren(children) {
 async function serve(config, engine, port) {
   const origin = `http://127.0.0.1:${port}`;
   const handle = await open(lock, 'wx', 0o600).catch(() => {
-    throw new Error('Local controller lock exists. Run pnpm run dev:local:down before restarting.');
+    throw new Error('Local controller lock exists. Run pnpm run dev:down before restarting.');
   });
   await handle.writeFile(String(process.pid));
   await handle.close();
@@ -311,7 +311,7 @@ async function serve(config, engine, port) {
     if (stopRequested) return;
     starting = false;
     const environment = {
-      ...isolatedEnvironment(), NODE_ENV: 'development', CORNER_LOCAL_DEV: '1',
+      ...isolatedEnvironment(), NODE_ENV: 'development',
       CORNER_DEPLOYMENT: 'local', CORNER_ORIGIN: origin, CORNER_DEV_API_PORT: String(port + 1),
       CORNER_DESIGN_PORT: String(port + 2),
       CORNER_DATA_DIR: join(stateDirectory, 'data'), DATABASE_URL: databaseUrl,
@@ -333,10 +333,8 @@ async function serve(config, engine, port) {
         onSignal();
       });
     };
-    // Bypass the server task's explicit root --env-file flags, not its runtime entrypoint.
-    launch(process.execPath, ['--watch', '--watch-preserve-output', '--import', 'tsx', 'src/index.ts', '--dev'], join(root, 'apps/server'));
-    launch('pnpm', ['exec', 'turbo', 'run', 'dev', '--filter=web', '--filter=design', '--filter=@packages/shared', '--filter=@packages/api'], root);
-    console.log(`Local-only Corner: ${origin}\nRun pnpm run dev:local:seed to create synthetic users. No cloud credentials are used.`);
+    launch('pnpm', ['exec', 'turbo', 'run', 'dev', '--filter=server', '--filter=web', '--filter=design', '--filter=@packages/shared', '--filter=@packages/api'], root);
+    console.log(`Local-only Corner: ${origin}\nRun pnpm run dev:seed to create synthetic users. No cloud credentials are used.`);
     await ended;
     await stopping;
   } finally {
@@ -373,6 +371,15 @@ export async function main(args = process.argv.slice(2)) {
     await control(config, 'seed');
     console.log('Local users ready: empty@corner.test and demo@corner.test\nPassword for both: Corner-local-only-2026!\nExisting workspace edits were preserved.');
     return;
+  }
+  if (action === 'up') {
+    try {
+      const running = await control(config, 'status');
+      console.log(`Local-only Corner is already running at ${running.origin}. Reusing it; no services were started or stopped.`);
+      return;
+    } catch (error) {
+      if (!['ENOENT', 'ECONNREFUSED'].includes(error.code)) throw error;
+    }
   }
   const engine = await docker(config);
   if (action === 'up') return serve(config, engine, port);

@@ -242,6 +242,8 @@ try {
   child = spawn(
     'pnpm',
     [
+      'exec',
+      'turbo',
       'run',
       'dev',
       '--filter=web',

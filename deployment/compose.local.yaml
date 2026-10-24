@@ -3,11 +3,11 @@ services:
   postgres:
     image: postgres:17
     environment:
-      POSTGRES_DB: ${CORNER_LOCAL_DATABASE:?Use pnpm run dev:local}
-      POSTGRES_USER: ${CORNER_LOCAL_DATABASE:?Use pnpm run dev:local}
-      POSTGRES_PASSWORD: ${CORNER_LOCAL_PASSWORD:?Use pnpm run dev:local}
+      POSTGRES_DB: ${CORNER_LOCAL_DATABASE:?Use pnpm run dev}
+      POSTGRES_USER: ${CORNER_LOCAL_DATABASE:?Use pnpm run dev}
+      POSTGRES_PASSWORD: ${CORNER_LOCAL_PASSWORD:?Use pnpm run dev}
     labels:
-      corner.local.instance: ${CORNER_LOCAL_INSTANCE:?Use pnpm run dev:local}
+      corner.local.instance: ${CORNER_LOCAL_INSTANCE:?Use pnpm run dev}
     ports:
       - '127.0.0.1::5432'
     volumes:
@@ -20,4 +20,4 @@ services:
 volumes:
   postgres-data:
     labels:
-      corner.local.instance: ${CORNER_LOCAL_INSTANCE:?Use pnpm run dev:local}
+      corner.local.instance: ${CORNER_LOCAL_INSTANCE:?Use pnpm run dev}

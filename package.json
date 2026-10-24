@@ -13,11 +13,10 @@
     "node": ">=24.15.0 <25"
   },
   "scripts": {
-    "dev": "turbo run dev",
-    "dev:local": "node scripts/local-dev.mjs up",
-    "dev:local:seed": "node scripts/local-dev.mjs seed",
-    "dev:local:down": "node scripts/local-dev.mjs down",
-    "dev:local:reset": "node scripts/local-dev.mjs reset",
+    "dev": "node scripts/local-dev.mjs up",
+    "dev:seed": "node scripts/local-dev.mjs seed",
+    "dev:down": "node scripts/local-dev.mjs down",
+    "dev:reset": "node scripts/local-dev.mjs reset",
     "build": "turbo run build",
     "check": "turbo run check",
     "lint": "oxlint .",

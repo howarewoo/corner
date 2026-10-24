@@ -1,10 +1,13 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { X509Certificate } from 'node:crypto';
+import { dirname, join } from 'node:path';
+import { createHash, X509Certificate } from 'node:crypto';
 import { createServer, get } from 'node:https';
+import { createServer as createHTTPServer } from 'node:http';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { isolatedEnvironment, localArguments, localCertificate, ownedPostgres, validateLocalConfig } from '../local-dev.mjs';
 
 const config = {
@@ -95,6 +98,52 @@ test('local Auth certificates survive restart and renew before expiry without di
     assert.equal(body, 'local-auth-ready');
   } finally {
     if (server?.listening) await new Promise((accept) => server.close(accept));
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('repeated startup preserves the owned controller without Docker and rejects a foreign controller', {
+  skip: process.platform === 'win32',
+}, async () => {
+  const directory = await mkdtemp('/tmp/corner-reuse-');
+  const root = await realpath(directory);
+  const state = join(root, '.corner-local');
+  const local = { ...config, workspace: createHash('sha256').update(root).digest('hex').slice(0, 12) };
+  let reportedInstance = local.instance;
+  let unexpectedRequest = false;
+  const server = createHTTPServer((request, response) => {
+    if (request.method !== 'POST' || request.url !== '/status' ||
+        request.headers.authorization !== `Bearer ${local.controlSecret}`) {
+      unexpectedRequest = true;
+      response.writeHead(403); response.end(); return;
+    }
+    response.setHeader('Content-Type', 'application/json');
+    response.end(JSON.stringify({ instance: reportedInstance, origin: 'http://127.0.0.1:45400' }));
+  });
+  try {
+    await mkdir(join(root, 'scripts'));
+    await mkdir(state, { mode: 0o700 });
+    await copyFile(new URL('../local-dev.mjs', import.meta.url), join(root, 'scripts/local-dev.mjs'));
+    const saved = JSON.stringify(local);
+    const pid = String(process.pid);
+    await writeFile(join(state, 'config.json'), saved, { mode: 0o600 });
+    await writeFile(join(state, 'controller.pid'), pid, { mode: 0o600 });
+    await new Promise((accept) => server.listen(join(state, 'control.sock'), accept));
+    const run = () => promisify(execFile)(process.execPath, ['scripts/local-dev.mjs', 'up'], {
+      cwd: root, env: { PATH: dirname(process.execPath) }, timeout: 10_000,
+    });
+    await run();
+    await run();
+    assert.equal(server.listening, true);
+    assert.equal(unexpectedRequest, false);
+    assert.equal(await readFile(join(state, 'controller.pid'), 'utf8'), pid);
+    assert.equal(await readFile(join(state, 'config.json'), 'utf8'), saved);
+    reportedInstance = 'foreign-installation';
+    await assert.rejects(run(), (error) => /Wrong local controller identity/.test(error.stderr));
+    assert.equal(server.listening, true);
+    assert.equal(await readFile(join(state, 'controller.pid'), 'utf8'), pid);
+  } finally {
+    if (server.listening) await new Promise((accept) => server.close(accept));
     await rm(directory, { recursive: true, force: true });
   }
 });

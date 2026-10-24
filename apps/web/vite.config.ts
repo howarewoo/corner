@@ -1,4 +1,4 @@
-import { defineConfig, loadEnv, type ServerOptions } from 'vite';
+import { defineConfig, type ServerOptions } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 import { fileURLToPath } from 'node:url';
@@ -78,17 +78,12 @@ export function developmentServer(environment: Record<string, string | undefined
   };
 }
 
-export default defineConfig(({ command, mode }) => {
-  // These settings stay inside the Node config process. The client keeps
-  // Vite's default VITE_ allowlist; CORNER_* values are never defined in JS.
-  const local = process.env.CORNER_LOCAL_DEV === '1';
-  const environment =
-    command === 'serve'
-      ? (local ? process.env : loadEnv(mode, repositoryRoot, ['CORNER_ORIGIN', 'CORNER_DEV_API_PORT']))
-      : {};
+export default defineConfig(({ command }) => {
+  // Development never reads cloud configuration from root environment files.
+  const environment = command === 'serve' ? process.env : {};
   return {
     root: webRoot,
-    envDir: local ? false : repositoryRoot,
+    envDir: command === 'serve' ? false : repositoryRoot,
     plugins: [
       react(),
       tailwindcss(),

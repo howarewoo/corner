@@ -282,6 +282,35 @@ test('configuration excludes secrets and binds explicit public settings plus ope
     /custom-domain/,
   );
 });
+test('only staging accepts its fixed workers.dev deployment hostname, never a production or version-preview hostname', () => {
+  const before = { ...process.env };
+  const stagingOrigin = 'https://corner-web-staging.adam-nathaniel-woo.workers.dev';
+  const settings = (origin) => JSON.stringify({
+    CORNER_ORIGIN: origin,
+    NEON_AUTH_REQUIRE_EMAIL_VERIFICATION: 'true',
+  });
+  try {
+    process.env.CORNER_RELEASE_ENVIRONMENT = 'staging';
+    process.env.CORNER_STAGING_BINDINGS_REVISION = 'test-config-1';
+    delete process.env.CORNER_STAGING_ORIGIN;
+    assert.equal(validateConfiguration(settings(stagingOrigin)).origin, stagingOrigin);
+    for (const origin of [
+      'https://corner-web.adam-nathaniel-woo.workers.dev',
+      'https://staging-corner-web.adam-nathaniel-woo.workers.dev',
+      'https://12345678-corner-web-staging.adam-nathaniel-woo.workers.dev',
+      'https://corner-server-staging.adam-nathaniel-woo.workers.dev',
+      'https://corner-web-staging.adam-nathaniel-woo.workers.dev:8443',
+      'https://corner-web-staging.workers.dev',
+      'https://corner-web-staging.example.workers-preview.com',
+      'http://corner-web-staging.adam-nathaniel-woo.workers.dev',
+    ]) assert.throws(() => validateConfiguration(settings(origin)), /Release requires/);
+    process.env.CORNER_RELEASE_ENVIRONMENT = 'production';
+    assert.throws(() => validateConfiguration(settings(stagingOrigin)), /Release requires/);
+  } finally {
+    for (const key of Object.keys(process.env)) if (!(key in before)) delete process.env[key];
+    Object.assign(process.env, before);
+  }
+});
 test('receipt and rollback require real qualified identities and CURRENT compatibility/configuration', () => {
   validateReceipt(receipt);
   assert.throws(() => validateReceipt({ ...receipt, artifactId: 'invented' }), /numeric/);
@@ -877,11 +906,21 @@ test('staging accepts only current successful staging CI and fixed nonproduction
     process.env.CORNER_STAGING_BINDINGS_REVISION = 'test-config-1';
     process.env.CORNER_STAGING_ACCESS_CLIENT_ID = 'synthetic-access-id';
     process.env.CORNER_STAGING_ACCESS_CLIENT_SECRET = 'synthetic-access-secret';
+    const stagingConfiguration = JSON.stringify({
+      CORNER_ORIGIN: 'https://corner-web-staging.adam-nathaniel-woo.workers.dev',
+      NEON_AUTH_REQUIRE_EMAIL_VERIFICATION: 'true',
+    });
+    const stagingConfig = validateConfiguration(stagingConfiguration);
     assert.throws(() => verifyRun(run, source), /push-to-staging/);
     verifyRun({ ...run, head_branch: 'staging' }, source);
     assert.throws(() => validateReceipt(receipt), /paired release receipt/);
-    const f = fixture();
-    Object.assign(f.payload, { kind: 'corner-staging', manualReview: null });
+    const f = fixture({ configuration: stagingConfiguration });
+    Object.assign(f.payload, {
+      kind: 'corner-staging',
+      manualReview: null,
+      origin: stagingConfig.origin,
+      runtimeConfigurationDigest: stagingConfig.digest,
+    });
     f.github.baseline = async () =>
       f.records.at(-1)?.phase === 'backend-deployed'
         ? { id: 20 + f.records.length, payload: f.records.at(-1) }
@@ -903,6 +942,9 @@ test('staging accepts only current successful staging CI and fixed nonproduction
     const frontendConfig = JSON.parse(await readFile(join(work, 'wrangler-frontend.json'), 'utf8'));
     assert.equal(serverConfig.name, 'corner-server-staging');
     assert.equal(frontendConfig.name, 'corner-web-staging');
+    assert.equal(frontendConfig.workers_dev, true);
+    assert.equal(serverConfig.workers_dev, false);
+    assert.equal(serverConfig.preview_urls, false);
     assert.deepEqual(frontendConfig.services, [
       { binding: 'SERVER', service: 'corner-server-staging' },
     ]);

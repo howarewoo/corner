@@ -24,7 +24,10 @@ All commands below run from the repository root with dependencies installed:
 
 | Command                                        | Purpose and conditions                                                                                                                     |
 | ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `pnpm run dev`                                 | Shared build followed by web/API development processes and shared watcher; browser `http://127.0.0.1:3000`, internal API `3001` by default |
+| `pnpm run dev`                                 | Owned local PostgreSQL/Auth plus web/API/catalog and compiler watchers; never cloud Neon; browser `http://127.0.0.1:3000`, API `3001` by default |
+| `pnpm run dev:seed`                            | Explicitly seed empty/demo users only in the running owned local stack; never staging or production |
+| `pnpm run dev:down`                            | Stop owned local services without deleting records or keys |
+| `pnpm run dev:reset --confirm-delete-local-data` | Delete only the owned local database; retain local keys |
 | `pnpm run check`                               | Type-check all workspaces; Turbo builds shared dependencies first                                                                          |
 | `pnpm run lint`                                | Repository-wide Oxlint checks with `@shadcn/lint` registered; configure rules in `.oxlintrc.json`                                          |
 | `pnpm test`                                    | Server and rendered-web suites through Turbo; no separate shared-package test task exists                                                  |

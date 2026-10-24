@@ -58,15 +58,18 @@ export function validateConfiguration(
     'Only public runtime settings are accepted',
   );
   const origin = new URL(value.CORNER_ORIGIN);
+  const workersDev =
+    releaseTarget().staging &&
+    /^corner-web-staging\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.workers\.dev$/.test(origin.host);
   need(
     origin.protocol === 'https:' &&
       origin.origin === value.CORNER_ORIGIN &&
       !origin.username &&
       !origin.password &&
-      !/(^|\.)workers\.dev$|(^|\.)workers-preview\.com$/.test(origin.hostname) &&
+      (workersDev || !/(^|\.)workers\.dev$|(^|\.)workers-preview\.com$/.test(origin.hostname)) &&
       origin.hostname.includes('.') &&
       value.NEON_AUTH_REQUIRE_EMAIL_VERIFICATION === 'true',
-    'Production requires a registered HTTPS custom-domain origin and email verification',
+    'Release requires a registered HTTPS custom-domain origin (or the fixed staging workers.dev host) and email verification',
   );
   need(
     /^[A-Za-z0-9._-]{1,100}$/.test(revision ?? ''),
@@ -79,7 +82,7 @@ export function validateConfiguration(
     vars: Object.fromEntries(Object.entries(value).sort()),
     bindingsRevision: revision,
   });
-  return { value, origin: origin.origin, bindingsRevision: revision, digest: hash(canonical) };
+  return { value, origin: origin.origin, workersDev, bindingsRevision: revision, digest: hash(canonical) };
 }
 export function validateReceipt(receipt) {
   need(
@@ -895,6 +898,7 @@ export async function promote({
     JSON.stringify({
       ...frontendConfig,
       name: target.frontendName,
+      workers_dev: config.workersDev,
       main: join(candidate.directory, candidate.manifest.frontendEntry),
       assets: { ...frontendConfig.assets, directory: join(candidate.directory, 'assets') },
       services: [{ binding: 'SERVER', service: target.workerName }],

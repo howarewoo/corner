@@ -123,7 +123,7 @@ server.listen(config.port, config.host, () => {
       `Development API listens at http://${config.host}:${config.port}; browser requests arrive through the web workspace proxy.\n`,
     );
   process.stdout.write(
-    `Mode: ${config.deployment}${development ? ' (development)' : ''}. Records: Neon Postgres. Accounts: Neon Auth.\n`,
+    `Mode: ${config.deployment}${development ? ' (development)' : ''}. Records: ${development ? 'local PostgreSQL' : 'Neon Postgres'}. Accounts: ${development ? 'local Auth' : 'Neon Auth'}.\n`,
   );
 });
 
