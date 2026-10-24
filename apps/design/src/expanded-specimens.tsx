@@ -1,6 +1,5 @@
 import { useState, type ReactNode } from 'react';
 import * as UI from '@packages/ui';
-import { toast as sonnerToast } from 'sonner';
 import { ArrowRight, Bookmark, Check, Dumbbell, Info, Plus, Search, Settings2 } from 'lucide-react';
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from 'recharts';
 import { DataTableSpecimen } from './table-specimen';
@@ -852,29 +851,6 @@ export function ExpandedSpecimen({ id }: { id: string }) {
             Unavailable effort target
           </p>
           <UI.Slider aria-labelledby="unavailable-effort" defaultValue={[40]} disabled />
-        </div>
-      );
-      break;
-    case 'sonner':
-      example = (
-        <div className="specimen-row">
-          <UI.Button
-            variant="outline"
-            onClick={() =>
-              sonnerToast.success('Sample session updated', {
-                description: 'No product data was saved.',
-                action: {
-                  label: 'Undo',
-                  onClick: () => setStatus('Sample change undone.'),
-                },
-              })
-            }
-          >
-            Show Sonner message
-          </UI.Button>
-          <UI.Button variant="ghost" onClick={() => sonnerToast.dismiss()}>
-            Dismiss messages
-          </UI.Button>
         </div>
       );
       break;

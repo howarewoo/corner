@@ -10,7 +10,7 @@
     "Lucide icons replace registry icon placeholders; cn uses clsx and tailwind-merge.",
     "Sidebar uses the 760px product breakpoint, protects editable shortcuts, and forwards explicit phone initial/final focus. Search expands collapsed desktop navigation before focusing; every phone opening resets cancellation focus. The app disables the extra Sheet close button.",
     "Calendar day sizing, selected states, and day-button keyboard-focus refs adapt to the existing Corner Button API. Menubar declares its own inset prop. Chart axis-label selectors match Recharts 3.8's actual tick-value class so light/dark semantic text colors apply.",
-    "Sonner receives the application theme directly instead of requiring next-themes. The public alias SonnerToaster avoids collision with the Base UI Toaster. Base UI Toaster accepts viewportProps for portal theme scoping without replacing its shared composition.",
+    "Base UI Toaster accepts viewportProps for portal theme scoping without replacing its shared composition. Toasts use flat borderless fills and the shared floating shadow; action controls use tonal fills.",
     "Form is a native form composed with Field; the current form registry item has no source files. Data Table uses the current TanStack Table v9 recipe.",
     "Conversation specimens use explicit local-only content, not an AI transport. Code Block previews terminal output without a copy control.",
     "Combobox's composed icon trigger and clear control have accessible default labels; catalog Slider and Resizable examples use explicit labels.",
@@ -896,22 +896,6 @@
       ]
     },
     {
-      "id": "sonner",
-      "owner": "@packages/ui",
-      "implementation": "packages/ui/src/catalog/sonner.tsx",
-      "specimen": "apps/design/src/expanded-specimens.tsx#sonner",
-      "coverage": "upstream-adapted",
-      "registry": "https://ui.shadcn.com/r/styles/base-nova/sonner.json",
-      "docs": "https://ui.shadcn.com/docs/components/base/sonner",
-      "retrieved": "2026-10-23",
-      "sourceSha256": [
-        {
-          "path": "registry/base-nova/ui/sonner.tsx",
-          "sha256": "d5178ce4c7834d3f46d261698395b498b8f45fef29975585df7e26cb43aa3cc7"
-        }
-      ]
-    },
-    {
       "id": "spinner",
       "owner": "@packages/ui",
       "implementation": "packages/ui/src/catalog/spinner.tsx",
@@ -1153,9 +1137,9 @@
       "trace",
       "typography"
     ],
-    "registryExtras": ["form", "sonner"],
+    "registryExtras": ["form"],
     "projectFoundations": ["colors", "spacing"],
-    "navigationEntries": 70,
+    "navigationEntries": 69,
     "gaps": [],
     "limits": [
       "Component inventory coverage, not every upstream variant, subcomponent, demo, or unchanged API.",

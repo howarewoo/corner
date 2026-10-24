@@ -96,7 +96,6 @@ const entries = [
   ],
   ['skeleton', 'Skeleton', 'Feedback', 'Represent the shape of content while it is loading.'],
   ['slider', 'Slider', 'Forms', 'Choose a numeric value within a visible range.'],
-  ['sonner', 'Sonner', 'Feedback', 'Show an actionable transient message with Sonner.'],
   ['spinner', 'Spinner', 'Feedback', 'Make a busy state visible without implying completed work.'],
   [
     'toast',

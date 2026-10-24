@@ -56,5 +56,4 @@ export * from './catalog/marker';
 export * from './catalog/trace';
 export * from './catalog/code-block';
 export * from './catalog/message';
-export { Toaster as SonnerToaster } from './catalog/sonner';
 export { useHighlightedCode } from './hooks/use-highlighted-code';

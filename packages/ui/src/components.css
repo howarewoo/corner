@@ -654,8 +654,12 @@
   outline-offset: 3px;
 }
 /* Keep sourced utility-based controls flat without removing keyboard focus. */
-:root[data-corner-theme] [data-slot] {
+:root[data-corner-theme] [data-slot]:not([data-slot='toast']) {
   box-shadow: none;
+}
+[data-slot='toast-action'],
+[data-slot='toast-close'] {
+  border: 0;
 }
 :root[data-corner-theme] :focus-visible {
   outline: 3px solid var(--ring);
@@ -1286,12 +1290,7 @@
       body:has(.ui-sidebar-provider[data-mobile-layout='fullscreen']),
       .ui-sidebar-provider[data-mobile-layout='fullscreen']
     )
-    [data-slot='toast-viewport'],
-  :is(
-      body:has(.ui-sidebar-provider[data-mobile-layout='fullscreen']),
-      .ui-sidebar-provider[data-mobile-layout='fullscreen']
-    )
-    [data-sonner-toaster] {
+    [data-slot='toast-viewport'] {
     bottom: calc(56px + env(safe-area-inset-bottom, 0px) + 12px);
   }
 }

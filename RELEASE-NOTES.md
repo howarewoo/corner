@@ -1,3 +1,13 @@
+# Flat Base UI toasts
+
+Shared Base UI toasts now use solid borderless surfaces and the existing `--shadow-floating` elevation token. Toast actions use tonal fills; action and dismiss controls remain borderless with visible keyboard focus. The catalog's flat-control reset no longer suppresses toast shadows.
+
+Removed the separate Sonner implementation, public export, root toaster, catalog specimen, and direct workspace dependencies. The catalog now has 69 entries and uses only Base UI Toast for notifications. Sonner remains in the lockfile solely through the existing Neon Auth UI dependency graph; authentication packages are unchanged.
+
+Observed in the live catalog at desktop and 390px phone widths, including light/dark appearance: borderless toast/action/dismiss styles, floating elevation, wrapped error content without horizontal overflow, Undo and Retry actions, and keyboard dismissal with a visible focus outline.
+
+Local verification: web suite 6/6 files passed, UI type check passed, design and web production builds passed, and repository lint completed with 46 warnings and no errors. Both builds retained their large-chunk advisory.
+
 # Stable staging on workers.dev
 
 Staging releases now accept the fixed `corner-web-staging.<account-subdomain>.workers.dev` deployment hostname and enable only that frontend's `workers_dev` route at bootstrap. Production still requires a custom domain; backend and version-preview URLs remain disabled. Hostname-based Cloudflare Access must protect staging before bootstrap. A version-preview alias is not an isolated staging environment.

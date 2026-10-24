@@ -59,6 +59,8 @@ Prioritize phone logging and review in future usability work without claiming th
 
 Sections normally use tonal layering and spacing, not borders or card shadows. `--shadow` is `none`; `--shadow-shell` provides gentle separation for primary shells. `--shadow-layer` and `--shadow-floating` are reserved for elevated layers and floating surfaces. Reuse these roles rather than adding per-card shadows.
 
+Shared Base UI toasts use flat, solid fills without borders. Their separation comes from `--shadow-floating`; the catalog's flat-control shadow reset excludes toast surfaces. Toast actions use tonal fills, and dismiss controls remain borderless with visible keyboard focus.
+
 Focus is an interaction cue, not a permanent border treatment. Preserve the existing `:focus-visible`, higher-contrast, forced-color, and reduced-motion rules in the global stylesheet. Their presence is not a claim of audited accessibility conformance.
 
 Workspace load and refresh errors use a persistent error toast with a Retry action, not an inline banner that shifts page content. Successful recovery clears the toast; initial-load failures continue to pause mutations until hydration succeeds.

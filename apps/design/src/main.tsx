@@ -8,7 +8,6 @@ import {
   SidebarInset,
   SidebarProvider,
   SidebarTrigger,
-  SonnerToaster,
   Toaster,
   TooltipProvider,
   WorkspaceHeader,
@@ -244,7 +243,6 @@ function CatalogApp() {
           </footer>
         </section>
       </SidebarInset>
-      <SonnerToaster theme={theme} closeButton />
     </>
   );
 }
