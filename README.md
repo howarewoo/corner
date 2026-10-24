@@ -8,36 +8,38 @@ The intended direction is a hosted service for performance-focused trainees, wit
 
 ## Start development
 
-Install **Node.js 24.15 or newer in the Node 24 series** and enable its bundled Corepack with `corepack enable`. The repository pins pnpm 10.33.2 through `packageManager`; Corepack selects that version automatically. Workspace membership, dependency overrides, and approved dependency build scripts live in `pnpm-workspace.yaml`; all workspaces share `pnpm-lock.yaml`. Clone it, then run:
+Install **Node.js 24.15 or newer in the Node 24 series**, Docker with Compose, and OpenSSL. Start Docker and enable bundled Corepack with `corepack enable`. The repository pins pnpm 10.33.2 through `packageManager`; Corepack selects that version automatically. Workspace membership, dependency overrides, and approved dependency build scripts live in `pnpm-workspace.yaml`; all workspaces share `pnpm-lock.yaml`.
 
 ```bash
 git clone https://github.com/howarewoo/corner.git
 cd corner
 pnpm install --frozen-lockfile
-pnpm add -g neon@latest
-neon init --agent codex -y --project-id YOUR_PROJECT_ID --branch production --no-config --mcp-auth oauth --mcp-config-location global
-neon deploy
-neon neon-auth domain add http://127.0.0.1:3000
-pnpm run build
-pnpm run db:migrate
-pnpm run dev
+pnpm run dev:local
+# In a second terminal:
+pnpm run dev:local:seed
 ```
 
-Turborepo builds shared and API dependencies first, then starts the web app, API server, shared-code/API-contract watchers, and independent design catalog. The browser uses port **3000**; the API listens separately on **3001**. Vite proxies `/api` and `/auth/callback` to the API while preserving the browser origin for account sessions and consent callbacks. The server no longer starts Vite itself.
+Open **http://127.0.0.1:3000**. The local controller builds the server and its dependencies, explicitly migrates its owned PostgreSQL 17 database, starts an HTTPS Better Auth fixture, then launches the existing API, web, design catalog, and shared/API watchers. The API uses **3001** and the catalog **3002**. Vite preserves the browser origin when proxying `/api` and `/auth/callback`. No Neon CLI, project, cloud credentials, or environment file is required. This is the local PostgreSQL approach in [Neon's local-development guide](https://neon.com/guides/local-development-with-neon); native `pg` needs no Neon HTTP proxy.
 
-Open **http://127.0.0.1:3000**. Use that exact address for the subscription callback. Create an account with an email, a name, and a password of at least 12 characters. With verification disabled in Neon, signup signs you in immediately. If verification is enabled, enter the email code and then sign in. Once authenticated, the app opens directly without onboarding. Profile preferences, optional nutrition targets, and workspace import are available in **Settings**.
+The explicit seed command creates `empty@corner.test` and `demo@corner.test`, both with password **`Corner-local-only-2026!`**. The first account stays empty; the second has synthetic recipes, a current-week meal plan, food logs, workouts, and progress records. These are local-only credentials, never suitable for a public service. Signup and sign-in use the normal account flow; no onboarding is required. Settings owns optional profile editing and workspace import.
 
-The account form uses Neon's `@neondatabase/auth` SDK (`signUp.email` and `signIn.email`) through Corner's same-origin `/api/auth` proxy. After authentication, native oRPC `account.session` reads the current managed user server-side. Session tokens stay in HttpOnly cookies; no browser Auth URL or `VITE_` credentials are needed. The setup command targets Codex agent tooling; choose your editor's supported `--agent` value instead if needed. `--no-config` preserves the checked-in `neon.ts`, which already enables Auth.
+`dev:local` never seeds automatically. Reseeding preserves edits and uses persistent seed dates/identities to recover interrupted account creation or imports. Account data and seed-completion records live in the owned Docker volume; `.corner-local/` holds private configuration, application keys, and the local Auth certificate. Both Git and Docker build contexts exclude that directory. No production/staging data is copied, and **there is no staging or production seed option**.
+
+If the default ports are occupied, use `pnpm run dev:local --port=45100`; the API and catalog use the next two ports. Occupied listeners are never killed. `pnpm run dev:local:down` stops owned services and retains all records and keys. To delete the entire owned local database, first finish any work using it, then run `pnpm run dev:local:reset --confirm-delete-local-data`. Reset retains local keys; restart and explicitly seed again. No existing repository `data/` or `.env` file is modified.
+
+Local children ignore root environment files and inherited database/Auth, Compose, PostgreSQL, Node-option, and `VITE_*` configuration. Docker must use a local Unix-socket context. The seed command contacts only the private local controller socket, not a supplied URL. The Auth fixture does not send email or model requests and does not simulate OTP or password-recovery delivery; it is not live Neon Auth qualification. Its TLS certificate is explicitly trusted by the API and renewed before expiry on startup.
+
+The account form uses Neon's `@neondatabase/auth` SDK (`signUp.email` and `signIn.email`) through Corner's same-origin `/api/auth` proxy. After authentication, native oRPC `account.session` reads the current user server-side. Session tokens stay in HttpOnly cookies; no browser Auth URL or `VITE_` credentials are needed.
 
 The SDK is pinned to `0.6.0-beta` to satisfy its bundled `@neondatabase/auth-ui` peer contract; the `0.7.0-beta` release still pulls UI that requires `0.6.0-beta`. Workspace pnpm overrides align Better Auth/core at `1.7.12` and `better-call` at `1.4.4`, avoiding conflicting legacy-UI plugin peers. Corner uses only the programmatic SDK, not those UI components. Revisit these pins together when Neon's published dependency graph is compatible without overrides.
 
 Application calls use the shared `@packages/api` contract and native oRPC at `/api/rpc`; TanStack Query owns browser server state. This unreleased application starts with that protocol baseline: old application REST URLs are not supported, and no REST upgrade bridge, maintenance mode, or cutover controller is added. Managed Auth `/api/auth`, OAuth `/auth/callback`, and `GET /api/health` retain their separate protocols.
 
-Install the CLI with `pnpm add -g neon@latest` (run `pnpm setup` first if no global bin directory is configured) or use `pnpm dlx neon@latest` in place of `neon`. `neon deploy` applies `neon.ts` and pulls server-only Postgres/Auth URLs into `.env.local` (or an existing `.env`). Both files are loaded by the server; `.env` overrides `.env.local`, and existing process environment values win. Never put database credentials in `VITE_` variables.
+For an explicitly selected **cloud-backed** development environment instead, install the Neon CLI (`pnpm add -g neon@latest`), select an isolated development branch, and configure Auth for its exact application origin. `neon deploy` applies `neon.ts` and pulls server-only Postgres/Auth URLs into `.env.local` (or an existing `.env`). Build, explicitly migrate that selected development database, then use `pnpm run dev`. This cloud path loads both files: `.env` overrides `.env.local`, and process environment values win. Never select staging/production as a local-development shortcut or put database credentials in `VITE_` variables. `dev:local` does not use this cloud configuration.
 
 `DATABASE_URL` is the pooled application connection; `DATABASE_URL_UNPOOLED` is used only by the explicit, versioned migration command. `NEON_AUTH_BASE_URL` is the managed account service. The app verifies cookies against its uncached session endpoint, so it does not need browser JWTs or `NEON_AUTH_JWKS_URL`. `NEON_AUTH_REQUIRE_EMAIL_VERIFICATION` must match the branch's email/password policy, with verification method **OTP**. SMTP and recovery delivery are configured in Neon; no app-owned Resend adapter remains. See `.env.example`.
 
-Private encryption/session-binding keys still live in the repository-root `data/` directory in local mode. Keep those keys across upgrades; records and accounts no longer live in that directory. `CORNER_ORIGIN` selects the browser origin and `CORNER_DEV_API_PORT` selects the development API listener. Register each actual origin with `neon neon-auth domain add <origin>` before signing in.
+The cloud-backed Node path preserves private encryption/session-binding keys in repository-root `data/`; the isolated local controller uses `.corner-local/data/` instead. Keep existing keys across upgrades. `CORNER_ORIGIN` selects the browser origin and `CORNER_DEV_API_PORT` selects the API listener on the cloud-backed path; register each actual origin with `neon neon-auth domain add <origin>`.
 
 ### Build and run production locally
 
@@ -53,6 +55,10 @@ The build compiles `@packages/shared` and `@packages/api`, then builds `server` 
 
 | Root command                   | Result                                                                                                                                      |
 | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm run dev:local`           | Isolated local PostgreSQL/Auth and development apps; optional `--port=45100` selects three consecutive loopback ports                         |
+| `pnpm run dev:local:seed`      | Explicitly create empty/demo local users; preserve existing fixture edits                                                                    |
+| `pnpm run dev:local:down`      | Stop owned local services without deleting data                                                                                             |
+| `pnpm run dev:local:reset --confirm-delete-local-data` | Delete only the owned local database; retain keys                                                              |
 | `pnpm run dev`                 | Web/API processes, shared/API package watchers, and the design catalog                                                                      |
 | `pnpm run build`               | Cached dependency-aware builds for all workspaces                                                                                           |
 | `pnpm run check`               | Type checks for all apps and shared packages                                                                                                |

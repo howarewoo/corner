@@ -81,13 +81,14 @@ export function developmentServer(environment: Record<string, string | undefined
 export default defineConfig(({ command, mode }) => {
   // These settings stay inside the Node config process. The client keeps
   // Vite's default VITE_ allowlist; CORNER_* values are never defined in JS.
+  const local = process.env.CORNER_LOCAL_DEV === '1';
   const environment =
     command === 'serve'
-      ? loadEnv(mode, repositoryRoot, ['CORNER_ORIGIN', 'CORNER_DEV_API_PORT'])
+      ? (local ? process.env : loadEnv(mode, repositoryRoot, ['CORNER_ORIGIN', 'CORNER_DEV_API_PORT']))
       : {};
   return {
     root: webRoot,
-    envDir: repositoryRoot,
+    envDir: local ? false : repositoryRoot,
     plugins: [
       react(),
       tailwindcss(),

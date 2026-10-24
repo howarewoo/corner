@@ -13,3 +13,4 @@
 **/.wrangler
 **/.dev.vars
 **/.dev.vars.*
+/.corner-local

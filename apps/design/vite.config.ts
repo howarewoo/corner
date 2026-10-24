@@ -5,9 +5,12 @@ import { readFileSync } from 'node:fs';
 import tailwindcss from '@tailwindcss/vite';
 
 const appRoot = fileURLToPath(new URL('.', import.meta.url));
+const localPort = process.env.CORNER_LOCAL_DEV === '1' ? Number(process.env.CORNER_DESIGN_PORT) : 3002;
+if (!Number.isInteger(localPort) || localPort < 1024 || localPort > 65535)
+  throw new Error('CORNER_DESIGN_PORT must be a valid local development port.');
 const localServer = {
   host: '127.0.0.1',
-  port: 3002,
+  port: localPort,
   strictPort: true,
   allowedHosts: ['127.0.0.1', 'localhost'],
 };

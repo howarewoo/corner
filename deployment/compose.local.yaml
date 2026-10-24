@@ -1,0 +1,23 @@
+# Used only by scripts/local-dev.mjs; never by deployment or release commands.
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: ${CORNER_LOCAL_DATABASE:?Use pnpm run dev:local}
+      POSTGRES_USER: ${CORNER_LOCAL_DATABASE:?Use pnpm run dev:local}
+      POSTGRES_PASSWORD: ${CORNER_LOCAL_PASSWORD:?Use pnpm run dev:local}
+    labels:
+      corner.local.instance: ${CORNER_LOCAL_INSTANCE:?Use pnpm run dev:local}
+    ports:
+      - '127.0.0.1::5432'
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"']
+      interval: 2s
+      timeout: 3s
+      retries: 30
+volumes:
+  postgres-data:
+    labels:
+      corner.local.instance: ${CORNER_LOCAL_INSTANCE:?Use pnpm run dev:local}

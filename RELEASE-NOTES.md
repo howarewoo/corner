@@ -1,3 +1,15 @@
+# Isolated local PostgreSQL/Auth development
+
+Added `dev:local`, explicit `dev:local:seed`, non-destructive `dev:local:down`, and confirmed `dev:local:reset`. The local workflow uses owned PostgreSQL 17 plus an HTTPS Better Auth fixture, native `pg`, scrubbed child environments, and a private Unix controller socket. Root environment files and cloud URLs do not select seed destinations. Staging and production have no seed path.
+
+Local fixtures include independent empty and populated synthetic accounts. Stable account IDs, seed dates, authenticated workspace imports, and durable completion bookkeeping preserve edits and recover interrupted seed operations. Local application keys persist separately from the resettable database volume. This fixture does not qualify live Neon Auth, send email, or invoke a model.
+
+Observed with Node 24.21.0 and disposable PostgreSQL 17: root type checks, lint (47 warnings, no errors), 63 native tooling regressions, 12/12 server files, and 6/6 web files passed. A credential-free source snapshot built all workspaces and passed production HTTP smoke. Actual local runs exercised hostile inherited/root-file configuration, private-file denial, separate empty/demo browser sign-in at desktop and 390px widths, edit preservation across restart/reseed, confirmation rejection, and reset/recreation with unchanged keys/environment files and an untouched unrelated database. The lost-signup/import acknowledgement regression and certificate renewal/TLS test passed. These are task-source observations, not immutable artifact qualification.
+
+Final-controller smoke also verified startup from the packaged `deployment/compose.local.yaml` location and an unexpected owned API-process exit: the controller returned nonzero, stopped its own stack, removed its lock, and retained records/keys without stopping the unrelated verification database. A startup-cancellation race reproduced before repair; afterward, interruption during both the pending build and actual container creation left no running stack or lock. Normal startup/seed/sign-in/native-RPC/shutdown/reset passed again. Task-owned verification containers and temporary source snapshots were removed afterward.
+
+Separately, the operator reported that an unchanged clean archive of oRPC commit `63341e62f24d38591ec0f6f7ba0f0a6dfd7adee7` passed the existing development smoke in 16.36 seconds, including owned process-group cleanup, without permission/source changes or an alternate caller. That later result supersedes the earlier cleanup failure below for that commit only; it is not verification of these subsequent local-development edits.
+
 # Initial native oRPC application baseline
 
 The unreleased application now uses a shared `@packages/api` native oRPC contract and TanStack Query browser server state. Application REST routes are removed; `/api/auth`, `/auth/callback`, and `GET /api/health` retain their independent protocols. Old application URLs and unpublished REST artifacts are not supported. No maintenance machinery, upgrade bridge, or cutover controller is introduced.

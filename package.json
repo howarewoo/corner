@@ -14,6 +14,10 @@
   },
   "scripts": {
     "dev": "turbo run dev",
+    "dev:local": "node scripts/local-dev.mjs up",
+    "dev:local:seed": "node scripts/local-dev.mjs seed",
+    "dev:local:down": "node scripts/local-dev.mjs down",
+    "dev:local:reset": "node scripts/local-dev.mjs reset",
     "build": "turbo run build",
     "check": "turbo run check",
     "lint": "oxlint .",
