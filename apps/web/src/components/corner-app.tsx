@@ -1010,6 +1010,70 @@ function CornerWorkspace({
                     }
                   />
                   <div className="today-grid">
+                    <section className="rhythm-panel" aria-labelledby="training-week-title">
+                      <div className="rhythm-heading">
+                        <h2 id="training-week-title">Your training week</h2>
+                        <p className="rhythm-current">{activityLabel(selectedActivity)}</p>
+                        <p>
+                          {formatDate(selectedDate, {
+                            weekday: 'long',
+                            month: 'short',
+                            day: 'numeric',
+                          })}{' '}
+                          · {selectedActivity}
+                        </p>
+                      </div>
+                      <ToggleGroup
+                        className="rhythm-days"
+                        aria-label="Training week day"
+                        value={[selectedDate]}
+                        onValueChange={(values) => {
+                          if (values[0]) setSelectedDate(String(values[0]));
+                        }}
+                      >
+                        {days.map((day) => {
+                          const a = activityForStateDate(state, day),
+                            Icon = activityIcon(a);
+                          return (
+                            <ToggleGroupItem
+                              value={day}
+                              key={day}
+                              aria-label={`${formatDate(day, { weekday: 'long' })}: ${activityLabel(a)}`}
+                              title={`${formatDate(day, { weekday: 'long' })}: ${activityLabel(a)}`}
+                            >
+                              <span>{formatDate(day, { weekday: 'short' })}</span>
+                              <i>
+                                <Icon size={16} />
+                              </i>
+                            </ToggleGroupItem>
+                          );
+                        })}
+                      </ToggleGroup>
+                      <div className="rhythm-footer">
+                        <div className="rhythm-legend">
+                          <span>
+                            <Activity size={13} />
+                            Conditioning
+                          </span>
+                          <span>
+                            <Dumbbell size={13} />
+                            Strength
+                          </span>
+                          <span>
+                            <Leaf size={13} />
+                            Recovery
+                          </span>
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="default"
+                          onClick={() => navigate('workouts')}
+                          className="rhythm-link"
+                        >
+                          Open your workouts <ArrowRight size={16} />
+                        </Button>
+                      </div>
+                    </section>
                     <Card className="panel nutrition-panel">
                       <div className="panel-heading">
                         <div>
@@ -1076,66 +1140,6 @@ function CornerWorkspace({
                         </Button>
                       </div>
                     </Card>
-                    <section className="rhythm-panel">
-                      <div className="eyebrow">Your training week</div>
-                      <h2 className="rhythm-current">{activityLabel(selectedActivity)}</h2>
-                      <p>
-                        {formatDate(selectedDate, {
-                          weekday: 'long',
-                          month: 'short',
-                          day: 'numeric',
-                        })}{' '}
-                        · {selectedActivity}
-                      </p>
-                      <ToggleGroup
-                        className="rhythm-days"
-                        aria-label="Training week day"
-                        value={[selectedDate]}
-                        onValueChange={(values) => {
-                          if (values[0]) setSelectedDate(String(values[0]));
-                        }}
-                      >
-                        {days.map((day) => {
-                          const a = activityForStateDate(state, day),
-                            Icon = activityIcon(a);
-                          return (
-                            <ToggleGroupItem
-                              value={day}
-                              key={day}
-                              aria-label={`${formatDate(day, { weekday: 'long' })}: ${activityLabel(a)}`}
-                              title={`${formatDate(day, { weekday: 'long' })}: ${activityLabel(a)}`}
-                            >
-                              <span>{formatDate(day, { weekday: 'narrow' })}</span>
-                              <i>
-                                <Icon size={16} />
-                              </i>
-                            </ToggleGroupItem>
-                          );
-                        })}
-                      </ToggleGroup>
-                      <div className="rhythm-legend">
-                        <span>
-                          <Activity size={13} />
-                          Conditioning
-                        </span>
-                        <span>
-                          <Dumbbell size={13} />
-                          Strength
-                        </span>
-                        <span>
-                          <Leaf size={13} />
-                          Recovery
-                        </span>
-                      </div>
-                      <Button
-                        variant="ghost"
-                        size="default"
-                        onClick={() => navigate('workouts')}
-                        className="rhythm-link"
-                      >
-                        Open your workouts <ArrowRight size={16} />
-                      </Button>
-                    </section>
                   </div>
                   <div className="today-bottom-grid">
                     <Card className="panel meals-panel">
