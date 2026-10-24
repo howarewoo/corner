@@ -1,0 +1,13 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "jsPlugins": ["@shadcn/lint"],
+  "settings": {
+    "shadcn": {
+      "ui": "@packages/ui",
+      "themeImports": ["^@packages/ui/"],
+      "note": "Follow DESIGN.md; reuse shared primitives in packages/ui and examples in apps/design."
+    }
+  },
+  "ignorePatterns": ["**/.generated/**"],
+  "rules": {}
+}

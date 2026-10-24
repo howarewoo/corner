@@ -32,9 +32,14 @@ function matchesExercise(current: WorkoutExercise, previous: WorkoutExercise): b
 }
 
 function completedWorkingSets(exercise: WorkoutExercise): WorkoutSet[] {
-  return exercise.sets.filter(set => set.kind === 'working' && set.completed
-    && set.reps !== null && set.reps > 0
-    && (exercise.loadType === 'bodyweight' || set.weight !== null));
+  return exercise.sets.filter(
+    (set) =>
+      set.kind === 'working' &&
+      set.completed &&
+      set.reps !== null &&
+      set.reps > 0 &&
+      (exercise.loadType === 'bodyweight' || set.weight !== null),
+  );
 }
 
 /**
@@ -42,17 +47,30 @@ function completedWorkingSets(exercise: WorkoutExercise): WorkoutSet[] {
  * retain entered actual values and copy suggestions into actuals only when the
  * user records a set. Opening or rescheduling a plan cannot create work history.
  */
-export function getWorkoutPrefill(session: WorkoutSession, history: readonly WorkoutSession[]): WorkoutPrefill {
+export function getWorkoutPrefill(
+  session: WorkoutSession,
+  history: readonly WorkoutSession[],
+): WorkoutPrefill {
   const result: WorkoutPrefill = Object.create(null);
   if (session.status !== 'planned' && session.status !== 'in_progress') return result;
 
   const priorSessions = history
-    .filter(previous => previous.id !== session.id && previous.status === 'completed' && previous.date < session.date)
-    .sort((a, b) => b.date.localeCompare(a.date) || b.updatedAt.localeCompare(a.updatedAt) || a.id.localeCompare(b.id));
+    .filter(
+      (previous) =>
+        previous.id !== session.id &&
+        previous.status === 'completed' &&
+        previous.date < session.date,
+    )
+    .sort(
+      (a, b) =>
+        b.date.localeCompare(a.date) ||
+        b.updatedAt.localeCompare(a.updatedAt) ||
+        a.id.localeCompare(b.id),
+    );
 
   for (const exercise of session.exercises) {
-    const workingSets = exercise.sets.filter(set => set.kind === 'working');
-    if (!workingSets.some(set => !set.completed)) continue;
+    const workingSets = exercise.sets.filter((set) => set.kind === 'working');
+    if (!workingSets.some((set) => !set.completed)) continue;
 
     let previousSession: WorkoutSession | undefined;
     let previousSets: WorkoutSet[] = [];
@@ -76,16 +94,22 @@ export function getWorkoutPrefill(session: WorkoutSession, history: readonly Wor
       const plannedLoad = exercise.targetLoad;
       const weight = hasPreviousWeight
         ? convertTrainingWeight(previousSet.weight!, previousSession!.unit, session.unit)
-        : plannedLoad ? convertTrainingWeight(plannedLoad.weight, plannedLoad.unit, session.unit) : null;
+        : plannedLoad
+          ? convertTrainingWeight(plannedLoad.weight, plannedLoad.unit, session.unit)
+          : null;
 
       suggestions[set.id] = {
         weight,
-        reps: previousSet?.reps === null || previousSet?.reps === undefined
-          ? exercise.repMin : Math.min(exercise.repMax, Math.max(exercise.repMin, previousSet.reps)),
+        reps:
+          previousSet?.reps === null || previousSet?.reps === undefined
+            ? exercise.repMin
+            : Math.min(exercise.repMax, Math.max(exercise.repMin, previousSet.reps)),
         rir: previousSet?.rir ?? exercise.targetRir,
         source: previousSet ? 'history' : 'targets',
         weightSource: hasPreviousWeight ? 'history' : plannedLoad ? 'targets' : null,
-        ...(previousSession ? { sourceDate: previousSession.date, sourceSessionId: previousSession.id } : {}),
+        ...(previousSession
+          ? { sourceDate: previousSession.date, sourceSessionId: previousSession.id }
+          : {}),
       };
     });
     result[exercise.id] = suggestions;

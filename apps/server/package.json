@@ -1,5 +1,5 @@
 {
-  "name": "@corner/server",
+  "name": "server",
   "version": "0.3.0",
   "private": true,
   "type": "module",
@@ -7,22 +7,31 @@
     "node": ">=24.15.0 <25"
   },
   "scripts": {
-    "dev": "node --env-file-if-exists=../../.env --watch --watch-preserve-output --import tsx src/index.ts --dev",
+    "dev": "node --watch --watch-preserve-output --import tsx src/index.ts --dev",
     "build": "tsc -p tsconfig.build.json",
     "check": "tsc --noEmit",
     "test": "node ../../scripts/test.mjs",
-    "start": "node --env-file-if-exists=../../.env dist/index.js"
+    "start": "node --env-file-if-exists=../../.env.local --env-file-if-exists=../../.env dist/index.js"
   },
   "dependencies": {
-    "@corner/shared": "*",
-    "better-auth": "1.7.12",
+    "@orpc/client": "1.16.1",
+    "@orpc/server": "1.16.1",
+    "@orpc/standard-server-fetch": "1.16.1",
+    "@packages/api": "workspace:*",
+    "@packages/shared": "workspace:*",
+    "hono": "4.13.13",
     "jose": "6.2.13",
+    "pg": "^8.23.1",
     "zod": "3.25.76",
     "zod-to-json-schema": "3.25.1"
   },
   "devDependencies": {
     "@types/node": "24.19.2",
+    "@types/pg": "^8.23.1",
+    "better-auth": "^1.7.12",
     "tsx": "4.22.1",
-    "typescript": "5.9.3"
+    "typescript": "5.9.3",
+    "undici": "8.12.3",
+    "wrangler": "4.152.0"
   }
 }

@@ -1,0 +1,232 @@
+* {
+  box-sizing: border-box;
+}
+html {
+  font-size: 15px;
+  scrollbar-color: var(--border) var(--background);
+  scrollbar-width: thin;
+}
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  color: var(--foreground);
+  background: var(--backdrop);
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+a {
+  color: inherit;
+  text-underline-offset: 4px;
+}
+button,
+a,
+input,
+textarea,
+select {
+  -webkit-tap-highlight-color: transparent;
+}
+::selection {
+  background: var(--accent);
+  color: var(--accent-foreground);
+}
+:focus-visible {
+  outline: 3px solid var(--ring);
+  outline-offset: 3px;
+}
+svg {
+  flex-shrink: 0;
+}
+.design-topbar {
+  display: flex;
+  flex-shrink: 0;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  min-height: 82px;
+  padding: 16px 40px;
+  font-size: 13px;
+}
+.breadcrumb,
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.breadcrumb {
+  min-width: 0;
+}
+.breadcrumb-root,
+.breadcrumb-divider {
+  color: var(--muted-foreground);
+}
+.local-label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted-foreground);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.local-label > span {
+  width: 6px;
+  height: 6px;
+  background: var(--primary);
+  border-radius: 50%;
+}
+.catalog-content {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  width: 100%;
+  padding: 24px 40px 22px;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+.component-origin {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--accent);
+  color: var(--accent-foreground);
+  padding: 6px 10px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  margin-top: 5px;
+}
+.source-line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  color: var(--muted-foreground);
+  font-size: 11px;
+  margin-bottom: 34px;
+}
+.source-line code {
+  font-size: 11px;
+  color: var(--foreground);
+  overflow-wrap: anywhere;
+  padding: 5px 9px;
+  background: var(--muted);
+  border-radius: 7px;
+}
+.source-note {
+  margin-left: auto;
+}
+.page-pagination {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  margin-top: 48px;
+  padding: 24px 0;
+  border-top: 1px solid var(--border);
+}
+.page-pagination a {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 600;
+}
+.page-pagination a:hover {
+  color: var(--primary);
+}
+.page-pagination small {
+  display: block;
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--muted-foreground);
+  margin-bottom: 2px;
+}
+.page-pagination a:last-child {
+  text-align: right;
+}
+.catalog-footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 10px 0 0;
+  color: var(--muted-foreground);
+  font-size: 10px;
+}
+.skip-link {
+  position: fixed;
+  z-index: 200;
+  left: 24px;
+  top: -100px;
+  background: var(--primary);
+  color: var(--primary-foreground);
+  padding: 12px 20px;
+  border-radius: 14px;
+}
+.skip-link:focus {
+  top: 24px;
+}
+@media (max-width: 1100px) {
+  .design-topbar {
+    padding-inline: 28px;
+  }
+  .catalog-content {
+    padding-inline: 28px;
+  }
+  .component-origin {
+    display: none;
+  }
+  .source-note {
+    display: none;
+  }
+}
+@media (max-width: 760px) {
+  .design-topbar {
+    padding: 15px 16px;
+    min-height: 72px;
+    gap: 8px;
+  }
+  .breadcrumb {
+    gap: 8px;
+    font-size: 12px;
+  }
+  .breadcrumb-root {
+    display: none;
+  }
+  .breadcrumb-divider {
+    display: none;
+  }
+  .local-label {
+    display: none;
+  }
+  .catalog-content {
+    padding: 14px 20px 20px;
+  }
+  .source-line {
+    margin-bottom: 28px;
+  }
+  .catalog-footer {
+    flex-direction: column;
+    gap: 5px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation: none !important;
+    transition: none !important;
+  }
+}
+@media (forced-colors: active) {
+  .local-label > span {
+    background: CanvasText;
+  }
+}

@@ -1,0 +1,12 @@
+packages:
+  - apps/*
+  - packages/*
+
+overrides:
+  '@better-auth/core': 1.7.12
+  better-auth: 1.7.12
+  better-call: 1.4.4
+
+onlyBuiltDependencies:
+  - esbuild
+  - workerd

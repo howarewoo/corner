@@ -1,0 +1,78 @@
+@import './tokens.css';
+
+/* Opt in globally or scope semantic names around shared controls in a legacy app. */
+:root[data-corner-theme],
+.corner-ui {
+  color-scheme: light;
+  --background: #ffffff;
+  --foreground: var(--ink);
+  --card: var(--surface-secondary);
+  --card-foreground: var(--ink);
+  --popover: var(--background);
+  --popover-foreground: var(--ink);
+  --primary: var(--forest);
+  --primary-foreground: #ffffff;
+  --secondary: var(--surface-inset);
+  --secondary-foreground: var(--ink);
+  --muted: var(--surface-secondary);
+  --muted-foreground: #242924;
+  --accent: var(--surface-accent);
+  --accent-foreground: var(--ink);
+  --destructive: var(--danger-text);
+  --destructive-foreground: #ffffff;
+  --border: #d7dfd9;
+  --ring: var(--forest);
+  --control-bg: #637469;
+  --control-fg: #ffffff;
+  --control-hover: #637469;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 14px;
+  --radius-xl: 24px;
+  --sidebar: var(--background);
+  --sidebar-foreground: var(--ink);
+  --sidebar-primary: var(--primary);
+  --sidebar-primary-foreground: var(--primary-foreground);
+  --sidebar-accent: var(--accent);
+  --sidebar-accent-foreground: var(--accent-foreground);
+  --sidebar-border: var(--border);
+  --sidebar-ring: var(--ring);
+  --chart-1: var(--forest);
+  --chart-2: #87968c;
+  --chart-3: #b6c2b9;
+  --chart-4: #87652d;
+  --chart-5: var(--danger-text);
+}
+
+:root[data-corner-theme='dark'] {
+  color-scheme: dark;
+  --backdrop: #171c19;
+  --background: #222823;
+  --surface-secondary: #2b332e;
+  --surface-inset: #343e37;
+  --surface-hover: #3c4840;
+  --surface-accent: #3b4a40;
+  --ink: #e7ece9;
+  --text: #d4ddd7;
+  --forest: #a3b3a7;
+  --forest-hover: #b4c3b8;
+  --on-accent: #19231c;
+  --primary-foreground: #19231c;
+  --muted-foreground: #b7c3ba;
+  --control-bg: #637469;
+  --control-hover: #5b6c61;
+  --control-fg: #ffffff;
+  --input: var(--control-bg);
+  --input-hover: var(--control-hover);
+  --input-text: var(--control-fg);
+  --border: #4c5950;
+  --progress-track: #3c4840;
+  --warning-surface: #493e29;
+  --warning-text: #eddbb1;
+  --danger-surface: #4a3430;
+  --danger-text: #efb8ad;
+  --scrim: rgb(10 15 12 / 65%);
+  --chart-2: #7d9384;
+  --chart-3: #5e7465;
+  --chart-4: var(--warning-text);
+}
