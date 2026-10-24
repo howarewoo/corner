@@ -10,57 +10,52 @@ Two packages do the work: the official [`@modelcontextprotocol/sdk`](https://git
 
 ```typescript
 // src/index.ts
-import { Hono } from "hono";
-import { drizzle } from "drizzle-orm/node-postgres";
-import { Pool } from "pg";
-import { eq } from "drizzle-orm";
-import { z } from "zod";
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { StreamableHTTPTransport } from "@hono/mcp";
-import { attachDatabasePool } from "@neon/functions";
-import { contacts } from "./db/schema";
+import { Hono } from 'hono';
+import { drizzle } from 'drizzle-orm/node-postgres';
+import { Pool } from 'pg';
+import { eq } from 'drizzle-orm';
+import { z } from 'zod';
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { StreamableHTTPTransport } from '@hono/mcp';
+import { attachDatabasePool } from '@neon/functions';
+import { contacts } from './db/schema';
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 5 });
 attachDatabasePool(pool);
 const db = drizzle(pool);
 
-const mcpServer = new McpServer({ name: "contacts", version: "1.0.0" });
+const mcpServer = new McpServer({ name: 'contacts', version: '1.0.0' });
 
 // Each tool: a name, a config (description + a Zod input schema), and a handler
 // that returns MCP content. The Zod shape becomes the tool's JSON schema, which
 // the client uses to call the tool correctly.
 mcpServer.registerTool(
-  "create_contact",
+  'create_contact',
   {
-    title: "Create contact",
-    description: "Create a new contact.",
+    title: 'Create contact',
+    description: 'Create a new contact.',
     inputSchema: {
-      name: z.string().describe("Full name (required)."),
-      email: z.string().optional().describe("Email address."),
+      name: z.string().describe('Full name (required).'),
+      email: z.string().optional().describe('Email address.'),
     },
   },
   async ({ name, email }) => {
     const [row] = await db.insert(contacts).values({ name, email }).returning();
-    return { content: [{ type: "text", text: JSON.stringify(row) }] };
+    return { content: [{ type: 'text', text: JSON.stringify(row) }] };
   },
 );
 
 mcpServer.registerTool(
-  "delete_contact",
+  'delete_contact',
   {
-    title: "Delete contact",
-    description: "Delete a contact by id.",
+    title: 'Delete contact',
+    description: 'Delete a contact by id.',
     inputSchema: { id: z.number().int().positive() },
   },
   async ({ id }) => {
-    const [row] = await db
-      .delete(contacts)
-      .where(eq(contacts.id, id))
-      .returning();
+    const [row] = await db.delete(contacts).where(eq(contacts.id, id)).returning();
     return {
-      content: [
-        { type: "text", text: JSON.stringify(row ?? { error: "not found" }) },
-      ],
+      content: [{ type: 'text', text: JSON.stringify(row ?? { error: 'not found' }) }],
     };
   },
 );
@@ -70,7 +65,7 @@ mcpServer.registerTool(
 const transport = new StreamableHTTPTransport();
 const app = new Hono();
 
-app.all("/mcp", async (c) => {
+app.all('/mcp', async (c) => {
   if (!mcpServer.isConnected()) await mcpServer.connect(transport);
   return transport.handleRequest(c);
 });
@@ -101,16 +96,16 @@ Your Neon Function is the **resource server** — a separate service from the Be
 // src/index.ts (sketch) — verify the bearer token against your remote Better Auth server.
 // Import path/name depend on your Better Auth version (createMcpAuthClient in better-auth/plugins/mcp/client,
 // or createMcpResourceClient in @better-auth/mcp/client) — check the docs.
-import { createMcpAuthClient } from "better-auth/plugins/mcp/client";
+import { createMcpAuthClient } from 'better-auth/plugins/mcp/client';
 
 const mcpAuth = createMcpAuthClient({ authURL: process.env.AUTH_URL }); // your Better Auth base URL
 
-app.all("/mcp", async (c) => {
+app.all('/mcp', async (c) => {
   const session = await mcpAuth.verify?.(c.req.raw); // verifies the Bearer token via the remote JWKS
   if (!session) {
     // Tell the client where to authenticate (RFC 9728 / MCP spec).
-    return c.json({ error: "unauthorized" }, 401, {
-      "WWW-Authenticate": `Bearer resource_metadata="${process.env.AUTH_URL}/.well-known/oauth-protected-resource"`,
+    return c.json({ error: 'unauthorized' }, 401, {
+      'WWW-Authenticate': `Bearer resource_metadata="${process.env.AUTH_URL}/.well-known/oauth-protected-resource"`,
     });
   }
   if (!mcpServer.isConnected()) await mcpServer.connect(transport);
@@ -130,10 +125,9 @@ When the callers are your own agents/services or a personal MCP server, you don'
 Either way it's one check at the top of the `/mcp` route — reject anything that doesn't carry a valid key/token before connecting the transport:
 
 ```typescript
-app.all("/mcp", async (c) => {
-  const auth = c.req.header("authorization");
-  if (!(await isValidApiKey(auth)))
-    return c.json({ error: "unauthorized" }, 401);
+app.all('/mcp', async (c) => {
+  const auth = c.req.header('authorization');
+  if (!(await isValidApiKey(auth))) return c.json({ error: 'unauthorized' }, 401);
   if (!mcpServer.isConnected()) await mcpServer.connect(transport);
   return transport.handleRequest(c);
 });

@@ -7,12 +7,23 @@ const args = process.argv.slice(2);
 const domain = args.length === 2 && args[0] === '--domain' ? args[1].toLowerCase() : '';
 const labels = domain.split('.');
 let canonicalHostname = '';
-try { canonicalHostname = new URL(`https://${domain}`).hostname; } catch { /* Invalid host rejected below. */ }
+try {
+  canonicalHostname = new URL(`https://${domain}`).hostname;
+} catch {
+  /* Invalid host rejected below. */
+}
 // Reject IPv4 shorthand and legacy numeric spellings that a browser would
 // silently normalize into an IP address instead of a public DNS hostname.
-if (domain.length > 253 || labels.length < 2 || domain !== canonicalHostname || isIP(canonicalHostname)
-  || labels.some(label => !/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label))) {
-  process.stderr.write('Use: node scripts/init-hosted.mjs --domain corner.your-domain.com\nSupply a bare DNS hostname you control, without a protocol, port, or path.\n');
+if (
+  domain.length > 253 ||
+  labels.length < 2 ||
+  domain !== canonicalHostname ||
+  isIP(canonicalHostname) ||
+  labels.some((label) => !/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label))
+) {
+  process.stderr.write(
+    'Use: node scripts/init-hosted.mjs --domain corner.your-domain.com\nSupply a bare DNS hostname you control, without a protocol, port, or path.\n',
+  );
   process.exitCode = 1;
 } else {
   const destination = resolve('.env.hosted');
@@ -33,11 +44,15 @@ if (domain.length > 253 || labels.length < 2 || domain !== canonicalHostname || 
   ].join('\n');
   try {
     writeFileSync(destination, contents, { mode: 0o600, flag: 'wx' });
-    process.stdout.write('Created .env.hosted with three independent private keys.\nAdd Neon connection URLs and configure managed Auth, then follow HOSTING.md.\n');
+    process.stdout.write(
+      'Created .env.hosted with three independent private keys.\nAdd Neon connection URLs and configure managed Auth, then follow HOSTING.md.\n',
+    );
   } catch (error) {
-    process.stderr.write(error?.code === 'EEXIST'
-      ? '.env.hosted already exists. Keep its keys; edit it deliberately instead of regenerating them.\n'
-      : 'Could not create the private deployment file. Check directory permissions.\n');
+    process.stderr.write(
+      error?.code === 'EEXIST'
+        ? '.env.hosted already exists. Keep its keys; edit it deliberately instead of regenerating them.\n'
+        : 'Could not create the private deployment file. Check directory permissions.\n',
+    );
     process.exitCode = 1;
   }
 }

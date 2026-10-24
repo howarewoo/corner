@@ -42,5 +42,5 @@
   --background: var(--backdrop);
   --foreground: var(--ink);
   --border: transparent;
-  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
 }

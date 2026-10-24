@@ -10,10 +10,10 @@ This guide does not create a cloud account, register a domain, configure SMTP, o
 
 Each environment has a fixed two-Worker deployment. Only the backend holds credentials:
 
-| Environment | Frontend | Backend (`SERVER` service binding) | Git source |
-| --- | --- | --- | --- |
-| Staging | `corner-web-staging` | `corner-server-staging` | `staging` |
-| Production | `corner-web` | `corner-server` | `main` |
+| Environment | Frontend             | Backend (`SERVER` service binding) | Git source |
+| ----------- | -------------------- | ---------------------------------- | ---------- |
+| Staging     | `corner-web-staging` | `corner-server-staging`            | `staging`  |
+| Production  | `corner-web`         | `corner-server`                    | `main`     |
 
 One exact HTTPS custom-domain origin per environment serves assets, `/api/*`, and `/auth/callback`. The backend validates that canonical origin; no browser backend URL or cross-origin cookie setup is needed. Frontend bindings contain no database/Auth credentials. `workers.dev`, version URLs, and feature-branch Previews remain disabled. Hosted ChatGPT connections stay disabled.
 
@@ -162,15 +162,15 @@ The helper writes `.env.hosted` with owner-only file permissions and three indep
 
 Edit `.env.hosted` on the server and supply the pooled `DATABASE_URL`, direct `DATABASE_URL_UNPOOLED`, and `NEON_AUTH_BASE_URL` pulled by Neon. Keep URLs and private keys server-only.
 
-| Setting | Purpose |
-| --- | --- |
-| `CORNER_DOMAIN` | Public hostname without a protocol, port, or path |
-| `BETTER_AUTH_SECRET` | Binds ChatGPT OAuth attempts to the managed Corner session; does not sign login cookies |
-| `CORNER_TOKEN_ENCRYPTION_KEY` | Encrypts stored model credentials; exactly 32 bytes encoded as base64 |
-| `CORNER_PROXY_SECRET` | Allows the HTTPS edge to attest client identity; never trust arbitrary forwarding headers |
-| `DATABASE_URL` | Pooled Neon PostgreSQL application connection |
-| `DATABASE_URL_UNPOOLED` | Direct connection for explicit versioned migrations |
-| `NEON_AUTH_BASE_URL` | Full managed Auth URL, including its database/auth path |
+| Setting                       | Purpose                                                                                   |
+| ----------------------------- | ----------------------------------------------------------------------------------------- |
+| `CORNER_DOMAIN`               | Public hostname without a protocol, port, or path                                         |
+| `BETTER_AUTH_SECRET`          | Binds ChatGPT OAuth attempts to the managed Corner session; does not sign login cookies   |
+| `CORNER_TOKEN_ENCRYPTION_KEY` | Encrypts stored model credentials; exactly 32 bytes encoded as base64                     |
+| `CORNER_PROXY_SECRET`         | Allows the HTTPS edge to attest client identity; never trust arbitrary forwarding headers |
+| `DATABASE_URL`                | Pooled Neon PostgreSQL application connection                                             |
+| `DATABASE_URL_UNPOOLED`       | Direct connection for explicit versioned migrations                                       |
+| `NEON_AUTH_BASE_URL`          | Full managed Auth URL, including its database/auth path                                   |
 
 Compose derives `CORNER_ORIGIN` from the hostname and sets `NEON_AUTH_REQUIRE_EMAIL_VERIFICATION=true`. The Neon branch policy must agree. Cookies, redirects, and unsafe browser requests remain restricted to the exact canonical origin.
 

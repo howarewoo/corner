@@ -10,13 +10,13 @@ With `@mastra/core` 1.47+, use a `neon/<model>` magic string — Mastra reads `N
 
 ```typescript
 // src/mastra/agents/pricing.ts
-import { Agent } from "@mastra/core/agent";
+import { Agent } from '@mastra/core/agent';
 
 export const pricingAgent = new Agent({
-  id: "pricing-analyst",
-  name: "pricing-analyst",
-  instructions: "You are a meticulous pricing analyst. …",
-  model: "neon/gpt-5-mini",
+  id: 'pricing-analyst',
+  name: 'pricing-analyst',
+  instructions: 'You are a meticulous pricing analyst. …',
+  model: 'neon/gpt-5-mini',
 });
 ```
 
@@ -28,9 +28,9 @@ Gotcha: `Observability` requires **at least one exporter** — passing an empty 
 
 ```typescript
 // src/mastra/index.ts
-import { Mastra } from "@mastra/core/mastra";
-import { Observability, MastraPlatformExporter } from "@mastra/observability";
-import { pricingAgent } from "./agents/pricing";
+import { Mastra } from '@mastra/core/mastra';
+import { Observability, MastraPlatformExporter } from '@mastra/observability';
+import { pricingAgent } from './agents/pricing';
 
 const platformReady = Boolean(
   process.env.MASTRA_PLATFORM_ACCESS_TOKEN && process.env.MASTRA_PROJECT_ID,
@@ -39,7 +39,7 @@ const platformReady = Boolean(
 const observability = platformReady
   ? new Observability({
       configs: {
-        default: { serviceName: "my-app", exporters: [new MastraPlatformExporter()] },
+        default: { serviceName: 'my-app', exporters: [new MastraPlatformExporter()] },
       },
     })
   : undefined;
@@ -57,7 +57,7 @@ Agents must be **registered on the `Mastra` instance** (the `agents` map) for th
 The gateway does not enforce **native** structured output, so a bare `structuredOutput: { schema }` can come back missing fields (e.g. a nested `meta` object), failing Zod validation. Set `jsonPromptInjection: true` so Mastra injects the schema into the prompt and the model returns the full shape:
 
 ```typescript
-const agent = mastra.getAgent("pricingAgent");
+const agent = mastra.getAgent('pricingAgent');
 const result = await agent.generate(prompt, {
   structuredOutput: { schema: myZodSchema, jsonPromptInjection: true },
   abortSignal: AbortSignal.timeout(70_000), // bound each attempt; the gateway has an upstream timeout

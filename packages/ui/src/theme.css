@@ -1,7 +1,8 @@
 @import './tokens.css';
 
 /* Opt in globally or scope semantic names around shared controls in a legacy app. */
-:root[data-corner-theme], .corner-ui {
+:root[data-corner-theme],
+.corner-ui {
   color-scheme: light;
   --background: #ffffff;
   --foreground: var(--ink);

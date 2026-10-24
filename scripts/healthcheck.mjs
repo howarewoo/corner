@@ -9,23 +9,35 @@ try {
   // Node's fetch can replace Host with the listener's hostname. The HTTP API
   // sends the explicit public Host required by the app's rebinding protection.
   const healthy = await new Promise((resolve, reject) => {
-    const probe = get(`http://127.0.0.1:${port}/api/health`, {
-      headers: { Host: origin.host }, agent: false,
-      signal: AbortSignal.timeout(4000),
-    }, response => {
-      if (response.statusCode !== 200) { response.resume(); resolve(false); return; }
-      let body = '';
-      response.setEncoding('utf8');
-      response.on('data', chunk => {
-        body += chunk;
-        if (body.length > 4096) probe.destroy(new Error('Health response is too large'));
-      });
-      response.on('error', reject);
-      response.on('end', () => {
-        try { resolve(JSON.parse(body)?.ok === true); }
-        catch { resolve(false); }
-      });
-    });
+    const probe = get(
+      `http://127.0.0.1:${port}/api/health`,
+      {
+        headers: { Host: origin.host },
+        agent: false,
+        signal: AbortSignal.timeout(4000),
+      },
+      (response) => {
+        if (response.statusCode !== 200) {
+          response.resume();
+          resolve(false);
+          return;
+        }
+        let body = '';
+        response.setEncoding('utf8');
+        response.on('data', (chunk) => {
+          body += chunk;
+          if (body.length > 4096) probe.destroy(new Error('Health response is too large'));
+        });
+        response.on('error', reject);
+        response.on('end', () => {
+          try {
+            resolve(JSON.parse(body)?.ok === true);
+          } catch {
+            resolve(false);
+          }
+        });
+      },
+    );
     probe.on('error', reject);
   });
   process.exitCode = healthy ? 0 : 1;

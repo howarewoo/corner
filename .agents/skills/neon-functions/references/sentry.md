@@ -31,14 +31,14 @@ Put `Sentry.init` in its own module and import it as the very first import of yo
 
 ```typescript
 // src/instrument.ts
-import * as Sentry from "@sentry/node";
+import * as Sentry from '@sentry/node';
 
 Sentry.init({
   dsn: process.env.SENTRY_DSN,
   enabled: Boolean(process.env.SENTRY_DSN),
   enableLogs: true,
   tracesSampleRate: Number(process.env.SENTRY_TRACES_SAMPLE_RATE ?? 1),
-  traceLifecycle: "stream",
+  traceLifecycle: 'stream',
   streamGenAiSpans: true,
   integrations: [
     Sentry.vercelAIIntegration({ force: true }),
@@ -46,25 +46,24 @@ Sentry.init({
   ],
   release: process.env.SENTRY_RELEASE,
   environment:
-    process.env.NEON_BRANCH &&
-    process.env.NEON_BRANCH !== process.env.PRODUCTION_BRANCH
+    process.env.NEON_BRANCH && process.env.NEON_BRANCH !== process.env.PRODUCTION_BRANCH
       ? process.env.NEON_BRANCH
-      : "production",
+      : 'production',
 });
 
-process.on("SIGTERM", () => void Sentry.flush(2000));
-process.on("SIGINT", () => void Sentry.flush(2000));
+process.on('SIGTERM', () => void Sentry.flush(2000));
+process.on('SIGINT', () => void Sentry.flush(2000));
 
 export { Sentry };
 ```
 
 ```typescript
 // src/index.ts
-import "./instrument"; // MUST be the first import, before the framework/agent
-import { Sentry } from "./instrument";
-import { attachDatabasePool } from "@neon/functions";
-import { Hono } from "hono";
-import { Pool } from "pg";
+import './instrument'; // MUST be the first import, before the framework/agent
+import { Sentry } from './instrument';
+import { attachDatabasePool } from '@neon/functions';
+import { Hono } from 'hono';
+import { Pool } from 'pg';
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 5 });
 attachDatabasePool(pool, {
@@ -100,21 +99,21 @@ or declare it under the function's `env` in `neon.ts` (read from `process.env` t
 The runtime invokes your handler through its own ingress rather than a plain `node:http` server, so give each request an isolation scope and a root span yourself — one Hono middleware covers it, and everything else (gen_ai spans, logs, outbound fetches) nests under it with clean route names. The `flush` at the end matters: an idle isolate can be suspended, so buffered telemetry has to ship while the request is alive.
 
 ```typescript
-app.use("*", (c, next) =>
+app.use('*', (c, next) =>
   Sentry.withIsolationScope(() =>
     Sentry.startSpan(
       {
-        op: "http.server",
+        op: 'http.server',
         name: `${c.req.method} ${c.req.path}`,
         forceTransaction: true,
         attributes: {
-          "http.request.method": c.req.method,
-          "url.path": c.req.path,
+          'http.request.method': c.req.method,
+          'url.path': c.req.path,
         },
       },
       async (span) => {
         await next();
-        span.setAttribute("http.response.status_code", c.res.status);
+        span.setAttribute('http.response.status_code', c.res.status);
       },
     ).finally(() => Sentry.flush(2000)),
   ),
@@ -126,8 +125,8 @@ Then wire a top-level error handler so any error thrown in a route is reported. 
 ```typescript
 app.onError((err, c) => {
   Sentry.captureException(err);
-  c.header("access-control-allow-origin", "*"); // cors() doesn't run on error responses
-  return c.json({ error: "internal_error" }, 500);
+  c.header('access-control-allow-origin', '*'); // cors() doesn't run on error responses
+  return c.json({ error: 'internal_error' }, 500);
 });
 ```
 
@@ -152,13 +151,13 @@ for (const model of models) {
       prompt,
       experimental_telemetry: { isEnabled: true },
     });
-    Sentry.logger.info("summary produced", { component: "agent", model });
+    Sentry.logger.info('summary produced', { component: 'agent', model });
     return c.json({ summary, model });
   } catch (err) {
     lastError = err;
-    Sentry.logger.warn("model attempt failed", {
-      component: "agent",
-      phase: "summarize-attempt",
+    Sentry.logger.warn('model attempt failed', {
+      component: 'agent',
+      phase: 'summarize-attempt',
       model,
       error: String(err),
     });
@@ -166,10 +165,10 @@ for (const model of models) {
 }
 
 Sentry.captureException(lastError, {
-  tags: { component: "agent", phase: "summarize-all-failed" },
+  tags: { component: 'agent', phase: 'summarize-all-failed' },
   contexts: { agent: { attempts: models.length } },
 });
-return c.json({ error: "all models failed" }, 502);
+return c.json({ error: 'all models failed' }, 502);
 ```
 
 - Log **attributes** (the second argument — flat `string | number | boolean` values) are individually searchable and filterable in Sentry's Logs view.
@@ -190,7 +189,7 @@ const result = streamText({
   experimental_telemetry: { isEnabled: true },
   onError: ({ error }) => {
     Sentry.captureException(error, {
-      tags: { component: "agent", phase: "chat-stream" },
+      tags: { component: 'agent', phase: 'chat-stream' },
     });
   },
 });
@@ -210,7 +209,7 @@ const stream = result.textStream
   )
   .pipeThrough(new TextEncoderStream());
 return new Response(stream, {
-  headers: { "content-type": "text/plain; charset=utf-8" },
+  headers: { 'content-type': 'text/plain; charset=utf-8' },
 });
 ```
 

@@ -9,7 +9,7 @@ services:
       CORNER_DEPLOYMENT: hosted
       CORNER_ORIGIN: https://${CORNER_DOMAIN:?Set CORNER_DOMAIN in .env.hosted}
       CORNER_HOST: 0.0.0.0
-      CORNER_PORT: "3000"
+      CORNER_PORT: '3000'
       CORNER_DATA_DIR: /app/data
       BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?Generate BETTER_AUTH_SECRET}
       CORNER_TOKEN_ENCRYPTION_KEY: ${CORNER_TOKEN_ENCRYPTION_KEY:?Generate CORNER_TOKEN_ENCRYPTION_KEY}
@@ -17,7 +17,7 @@ services:
       DATABASE_URL: ${DATABASE_URL:?Pull the Neon pooled DATABASE_URL}
       DATABASE_URL_UNPOOLED: ${DATABASE_URL_UNPOOLED:?Pull the Neon direct URL for migrations}
       NEON_AUTH_BASE_URL: ${NEON_AUTH_BASE_URL:?Pull NEON_AUTH_BASE_URL}
-      NEON_AUTH_REQUIRE_EMAIL_VERIFICATION: "true"
+      NEON_AUTH_REQUIRE_EMAIL_VERIFICATION: 'true'
     volumes:
       - corner-data:/app/data
     init: true
@@ -32,9 +32,9 @@ services:
       corner:
         condition: service_healthy
     ports:
-      - "80:80"
-      - "443:443"
-      - "443:443/udp"
+      - '80:80'
+      - '443:443'
+      - '443:443/udp'
     environment:
       CORNER_DOMAIN: ${CORNER_DOMAIN:?Set CORNER_DOMAIN in .env.hosted}
       CORNER_PROXY_SECRET: ${CORNER_PROXY_SECRET:?Generate CORNER_PROXY_SECRET}

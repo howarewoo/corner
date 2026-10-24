@@ -1,10 +1,10 @@
 // Adapted from current shadcn base-nova; license and source digests: ../../NOTICE, ../../provenance.json.
-import { cn } from "../lib/utils";
+import { cn } from '../lib/utils';
 function AspectRatio({
   ratio,
   className,
   ...props
-}: React.ComponentProps<"div"> & {
+}: React.ComponentProps<'div'> & {
   ratio: number;
 }) {
   return (
@@ -12,10 +12,10 @@ function AspectRatio({
       data-slot="aspect-ratio"
       style={
         {
-          "--ratio": ratio,
+          '--ratio': ratio,
         } as React.CSSProperties
       }
-      className={cn("relative aspect-(--ratio)", className)}
+      className={cn('relative aspect-(--ratio)', className)}
       {...props}
     />
   );

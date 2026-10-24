@@ -49,26 +49,36 @@ The build compiles `@packages/shared`, then builds `server` and `web` as separat
 
 ### Workspace commands
 
-| Root command | Result |
-| --- | --- |
-| `pnpm run dev` | Web/API processes, a shared-package watcher, and the design catalog |
-| `pnpm run build` | Cached dependency-aware builds for all workspaces |
-| `pnpm run check` | Type checks for all apps and shared packages |
-| `pnpm run lint` | Repository-wide Oxlint checks with the registered shadcn lint plugin |
-| `pnpm test` | Independent server and rendered-web test suites |
-| `pnpm run smoke` | Actual compiled-server account, proxy, health, and shutdown checks |
-| `pnpm run smoke:dev` | Actual two-app development proxy, session, and shared-catalog checks |
-| `pnpm start` | The compiled production server and built web app |
-| `pnpm run db:migrate` | Apply checked-in PostgreSQL migrations through `DATABASE_URL_UNPOOLED`, after a build |
+| Root command                   | Result                                                                                                                                      |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm run dev`                 | Web/API processes, a shared-package watcher, and the design catalog                                                                         |
+| `pnpm run build`               | Cached dependency-aware builds for all workspaces                                                                                           |
+| `pnpm run check`               | Type checks for all apps and shared packages                                                                                                |
+| `pnpm run lint`                | Repository-wide Oxlint checks with the registered shadcn lint plugin                                                                        |
+| `pnpm run format`              | Format supported repository files with Oxfmt                                                                                                |
+| `pnpm run format:check`        | Check formatting without changing files                                                                                                     |
+| `pnpm test`                    | Independent server and rendered-web test suites                                                                                             |
+| `pnpm run smoke`               | Actual compiled-server account, proxy, health, and shutdown checks                                                                          |
+| `pnpm run smoke:dev`           | Actual two-app development proxy, session, and shared-catalog checks                                                                        |
+| `pnpm start`                   | The compiled production server and built web app                                                                                            |
+| `pnpm run db:migrate`          | Apply checked-in PostgreSQL migrations through `DATABASE_URL_UNPOOLED`, after a build                                                       |
 | `pnpm run db:baseline:staging` | Explicit verified migration-history baseline for a new empty schema-only staging branch; build first, private operator environment required |
-| `pnpm run build:workers` | Build all workspaces and dry-run the backend/frontend pair without deployment |
-| `pnpm run build:web:worker` | Build the web workspace and dry-run only the `corner-web` bundle; not an independent deployment path |
-| `pnpm run verify -- --plan` | Show conservative changed-path selection without running checks |
-| `pnpm run verify` | Run selected local checks; `-- --full` forces the complete qualification |
-| `pnpm run test:ci` | Native Node CI, release, and artifact regression tests |
-| `pnpm run smoke:workers` | Actual paired workerd runtime with service bindings, disposable PostgreSQL, and HTTPS Auth fixtures, after `build:workers` |
+| `pnpm run build:workers`       | Build all workspaces and dry-run the backend/frontend pair without deployment                                                               |
+| `pnpm run build:web:worker`    | Build the web workspace and dry-run only the `corner-web` bundle; not an independent deployment path                                        |
+| `pnpm run verify -- --plan`    | Show conservative changed-path selection without running checks                                                                             |
+| `pnpm run verify`              | Run selected local checks; `-- --full` forces the complete qualification                                                                    |
+| `pnpm run test:ci`             | Native Node CI, release, and artifact regression tests                                                                                      |
+| `pnpm run smoke:workers`       | Actual paired workerd runtime with service bindings, disposable PostgreSQL, and HTTPS Auth fixtures, after `build:workers`                  |
 
 For a focused build, use `pnpm run build --filter=server` or `pnpm run build --filter=web`. Turbo also builds their shared dependency. Each app declares its own dependencies; domain models and validation are imported through `@packages/shared/<module>` rather than relative paths into the other app.
+
+### Formatting
+
+Run `pnpm run format` to write formatting changes, or `pnpm run format:check` for a read-only check. Append file or directory paths to either command to limit its scope, for example `pnpm run format apps/web/src/main.tsx`.
+
+[`.oxfmtrc.json`](.oxfmtrc.json) keeps single quotes and existing `package.json` key ordering, and excludes generated test bundles. Oxfmt also respects `.gitignore` and skips lockfiles. Other formatting options use Oxfmt's defaults.
+
+Formatter installation does not reformat the existing repository. The initial repository-wide check reports existing formatting differences; formatting is an explicit command, not part of `verify` or CI.
 
 ### Linting
 
@@ -210,14 +220,14 @@ Production smoke starts disposable compiled servers on loopback ports 43137 and 
 
 Local targeting uses [scripts/verify.mjs](scripts/verify.mjs). Selection compares the working tree and untracked files with `HEAD` by default; use `--base origin/main` for the complete branch. `--scope docs|web|design|ui|server|full` is an advisory local override, never an independent merge qualification. Missing/unknown comparisons, mixed workspaces, shared/server/auth/runtime changes, and verification policy select the full profile. PR and main CI always run `--full`; there is no targeted CI activation or duplicate advisory CI job.
 
-| Change | Selected work |
-| --- | --- |
-| Root product/hosting Markdown or `docs/*.md` | Local Markdown link targets; source claims and anchors remain human checks |
-| Ordinary web components/styles | Web build and existing rendered-web suite, with Turbo shared prerequisites |
-| Design catalog | Catalog build/typecheck |
-| Shared UI source | UI, web, and catalog builds plus existing web suite |
-| Server/shared/auth/runtime, mixed or uncertain changes | CI/release regressions, root check, server/web suites, all builds, and production/development/Workers smokes |
-| Workflows, scripts, dependency/build configuration, unknown root controls | Full profile |
+| Change                                                                    | Selected work                                                                                                |
+| ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| Root product/hosting Markdown or `docs/*.md`                              | Local Markdown link targets; source claims and anchors remain human checks                                   |
+| Ordinary web components/styles                                            | Web build and existing rendered-web suite, with Turbo shared prerequisites                                   |
+| Design catalog                                                            | Catalog build/typecheck                                                                                      |
+| Shared UI source                                                          | UI, web, and catalog builds plus existing web suite                                                          |
+| Server/shared/auth/runtime, mixed or uncertain changes                    | CI/release regressions, root check, server/web suites, all builds, and production/development/Workers smokes |
+| Workflows, scripts, dependency/build configuration, unknown root controls | Full profile                                                                                                 |
 
 All non-documentation rows also run repository-wide lint.
 
@@ -252,15 +262,15 @@ Old feature-preview provisioning workflows are removed. Existing provider resour
 
 ### Main source areas
 
-| Folder | Responsibility |
-| --- | --- |
-| `apps/web/src/` | React account UI, profile/import settings, meal planner, recipes, workouts, and agent review |
-| `apps/server/src/` | Managed Auth boundary, PostgreSQL persistence, HTTP routes, model connection, and planning agent |
-| `packages/shared/src/` | Shared models, validation, nutrition/training calculations, proposal rules, and exercise data |
-| `apps/web/tests/` | Rendered account/connection controls and development configuration checks |
-| `apps/server/tests/` | Accounts, email, data isolation, agent, provider, and proxy regression checks |
-| `scripts/` | Workspace test runner, production/development smoke checks, configuration, and packaging |
-| `deployment/` | HTTPS edge configuration for the optional hosted Compose deployment |
+| Folder                 | Responsibility                                                                                   |
+| ---------------------- | ------------------------------------------------------------------------------------------------ |
+| `apps/web/src/`        | React account UI, profile/import settings, meal planner, recipes, workouts, and agent review     |
+| `apps/server/src/`     | Managed Auth boundary, PostgreSQL persistence, HTTP routes, model connection, and planning agent |
+| `packages/shared/src/` | Shared models, validation, nutrition/training calculations, proposal rules, and exercise data    |
+| `apps/web/tests/`      | Rendered account/connection controls and development configuration checks                        |
+| `apps/server/tests/`   | Accounts, email, data isolation, agent, provider, and proxy regression checks                    |
+| `scripts/`             | Workspace test runner, production/development smoke checks, configuration, and packaging         |
+| `deployment/`          | HTTPS edge configuration for the optional hosted Compose deployment                              |
 
 ## Project guidance
 
@@ -278,4 +288,3 @@ The four contributor guides above are available in repository checkouts. The cur
 The exercise catalog is derived from [hasaneyldrm/exercises-dataset](https://github.com/hasaneyldrm/exercises-dataset). Its source metadata is in `packages/shared/src/data/exercises-source.json`; its supplied license and attribution notice are preserved in `apps/web/public/licenses/`. Exercise information is a movement reference, not a personalized prescribed load.
 
 The source package contains no personal workspace export, private database, runtime secret, ChatGPT token, original Sites deployment identity, or `node_modules`. Dependency versions and integrity hashes are recorded in `pnpm-lock.yaml`.
-

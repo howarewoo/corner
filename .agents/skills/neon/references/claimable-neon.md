@@ -25,7 +25,7 @@ neon claim --help
 If that help lists `create` and you need Auth, `npm i @neon/config` and write `neon.ts`. Then `neon claim create --env-pull`.
 
 ```typescript
-import { defineConfig } from "@neon/config/v1";
+import { defineConfig } from '@neon/config/v1';
 
 export default defineConfig({
   auth: true,
@@ -65,8 +65,8 @@ neon deploy
 ```typescript
 export default defineConfig({
   dataApi: {
-    authProvider: "external",
-    jwksUrl: "https://example.com/.well-known/jwks.json",
+    authProvider: 'external',
+    jwksUrl: 'https://example.com/.well-known/jwks.json',
   },
 });
 ```

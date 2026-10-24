@@ -1,4 +1,4 @@
-import { useState, type CSSProperties, type ReactNode } from "react";
+import { useState, type CSSProperties, type ReactNode } from 'react';
 import {
   AlertCircle,
   ArrowRight,
@@ -9,7 +9,7 @@ import {
   Plus,
   Settings2,
   Trash2,
-} from "lucide-react";
+} from 'lucide-react';
 import {
   Accordion,
   AccordionContent,
@@ -68,39 +68,87 @@ import {
   TabsList,
   TabsTrigger,
   Textarea,
-} from "@packages/ui";
-import "./specimens.css";
-import { expandedCatalog } from "./expanded-catalog";
-import { ExpandedSpecimen } from "./expanded-specimens";
+} from '@packages/ui';
+import './specimens.css';
+import { expandedCatalog } from './expanded-catalog';
+import { ExpandedSpecimen } from './expanded-specimens';
 
 // Live compositions adapted on 2026-10-23 from each current upstream page:
 // https://ui.shadcn.com/docs/components/base/<id> (18 component IDs below).
 // Corner content, controlled transitions, invalid states, and foundations are project extensions.
 const coreEntries: [string, string, string, string, string?][] = [
-  ["colors", "Colors", "Foundations", "Forest, sage, and purposeful surfaces. One palette, assigned by role.", "@packages/ui/theme.css"],
-  ["typography", "Typography", "Foundations", "A familiar system font, a clear hierarchy, and quantities that stay readable.", "@packages/ui/theme.css"],
-  ["spacing", "Spacing & shape", "Foundations", "Room to scan. Consistent spacing and soft corners without decorative depth.", "@packages/ui/theme.css"],
-  ["button", "Button", "Actions", "Clear actions, from the next step to the quieter alternative."],
-  ["input", "Input", "Forms", "Dark editable fields, persistent labels, and explicit validation."],
-  ["textarea", "Textarea", "Forms", "Space for context, notes, and details in the user’s own words."],
-  ["checkbox", "Checkbox", "Forms", "Independent choices with a clear selected state."],
-  ["switch", "Switch", "Forms", "An immediate on/off preference with a visible state."],
-  ["radio-group", "Radio Group", "Forms", "Choose one option from a small, visible set."],
-  ["select", "Select", "Forms", "A compact choice list with keyboard selection and a real portal."],
-  ["card", "Card", "Structure", "Group related content with tonal fill, not borders and shadows."],
-  ["separator", "Separator", "Structure", "A quiet rule when spacing alone does not communicate the boundary."],
-  ["tabs", "Tabs", "Structure", "Switch between related views without leaving the current context."],
-  ["accordion", "Accordion", "Structure", "Keep supporting detail available without overwhelming the main task."],
-  ["table", "Table", "Structure", "Compare structured records with visible units and aligned quantities."],
-  ["badge", "Badge", "Feedback", "Short, explicit status labels that never rely on color alone."],
-  ["alert", "Alert", "Feedback", "Useful context, confirmation, and recoverable errors."],
-  ["progress", "Progress", "Feedback", "Show completed work against a named, measurable target."],
-  ["dialog", "Dialog", "Overlays", "A focused editing task with deliberate confirmation and cancellation."],
-  ["popover", "Popover", "Overlays", "Small contextual settings, anchored to their trigger."],
-  ["dropdown-menu", "Dropdown Menu", "Overlays", "Related actions in a keyboard-navigable menu."],
+  [
+    'colors',
+    'Colors',
+    'Foundations',
+    'Forest, sage, and purposeful surfaces. One palette, assigned by role.',
+    '@packages/ui/theme.css',
+  ],
+  [
+    'typography',
+    'Typography',
+    'Foundations',
+    'A familiar system font, a clear hierarchy, and quantities that stay readable.',
+    '@packages/ui/theme.css',
+  ],
+  [
+    'spacing',
+    'Spacing & shape',
+    'Foundations',
+    'Room to scan. Consistent spacing and soft corners without decorative depth.',
+    '@packages/ui/theme.css',
+  ],
+  ['button', 'Button', 'Actions', 'Clear actions, from the next step to the quieter alternative.'],
+  ['input', 'Input', 'Forms', 'Dark editable fields, persistent labels, and explicit validation.'],
+  [
+    'textarea',
+    'Textarea',
+    'Forms',
+    'Space for context, notes, and details in the user’s own words.',
+  ],
+  ['checkbox', 'Checkbox', 'Forms', 'Independent choices with a clear selected state.'],
+  ['switch', 'Switch', 'Forms', 'An immediate on/off preference with a visible state.'],
+  ['radio-group', 'Radio Group', 'Forms', 'Choose one option from a small, visible set.'],
+  ['select', 'Select', 'Forms', 'A compact choice list with keyboard selection and a real portal.'],
+  ['card', 'Card', 'Structure', 'Group related content with tonal fill, not borders and shadows.'],
+  [
+    'separator',
+    'Separator',
+    'Structure',
+    'A quiet rule when spacing alone does not communicate the boundary.',
+  ],
+  [
+    'tabs',
+    'Tabs',
+    'Structure',
+    'Switch between related views without leaving the current context.',
+  ],
+  [
+    'accordion',
+    'Accordion',
+    'Structure',
+    'Keep supporting detail available without overwhelming the main task.',
+  ],
+  [
+    'table',
+    'Table',
+    'Structure',
+    'Compare structured records with visible units and aligned quantities.',
+  ],
+  ['badge', 'Badge', 'Feedback', 'Short, explicit status labels that never rely on color alone.'],
+  ['alert', 'Alert', 'Feedback', 'Useful context, confirmation, and recoverable errors.'],
+  ['progress', 'Progress', 'Feedback', 'Show completed work against a named, measurable target.'],
+  [
+    'dialog',
+    'Dialog',
+    'Overlays',
+    'A focused editing task with deliberate confirmation and cancellation.',
+  ],
+  ['popover', 'Popover', 'Overlays', 'Small contextual settings, anchored to their trigger.'],
+  ['dropdown-menu', 'Dropdown Menu', 'Overlays', 'Related actions in a keyboard-navigable menu.'],
 ];
 const coreCatalog = coreEntries.map(
-  ([id, label, group, description, importPath = "@packages/ui"]) => ({
+  ([id, label, group, description, importPath = '@packages/ui']) => ({
     id,
     label,
     group,
@@ -109,20 +157,19 @@ const coreCatalog = coreEntries.map(
   }),
 );
 const groupOrder = [
-  "Foundations",
-  "Actions",
-  "Forms",
-  "Structure",
-  "Navigation",
-  "Data",
-  "Feedback",
-  "Overlays",
-  "Conversation",
+  'Foundations',
+  'Actions',
+  'Forms',
+  'Structure',
+  'Navigation',
+  'Data',
+  'Feedback',
+  'Overlays',
+  'Conversation',
 ];
 export const catalog = [...coreCatalog, ...expandedCatalog].sort(
   (a, b) =>
-    groupOrder.indexOf(a.group) - groupOrder.indexOf(b.group) ||
-    a.label.localeCompare(b.label),
+    groupOrder.indexOf(a.group) - groupOrder.indexOf(b.group) || a.label.localeCompare(b.label),
 );
 
 function Section({
@@ -144,15 +191,7 @@ function Section({
     </section>
   );
 }
-function Field({
-  label,
-  children,
-  hint,
-}: {
-  label: string;
-  children: ReactNode;
-  hint?: string;
-}) {
+function Field({ label, children, hint }: { label: string; children: ReactNode; hint?: string }) {
   return (
     <label className="specimen-field">
       <span>{label}</span>
@@ -169,76 +208,74 @@ function Status({ children }: { children: ReactNode }) {
   );
 }
 const units = [
-  { value: "kg", label: "Kilograms (kg)" },
-  { value: "lb", label: "Pounds (lb)" },
-  { value: "stone", label: "Stone (unavailable)" },
+  { value: 'kg', label: 'Kilograms (kg)' },
+  { value: 'lb', label: 'Pounds (lb)' },
+  { value: 'stone', label: 'Stone (unavailable)' },
 ];
 const colors = [
   {
-    label: "Forest",
-    token: "--primary",
-    purpose: "Primary actions",
-    foreground: "--primary-foreground",
+    label: 'Forest',
+    token: '--primary',
+    purpose: 'Primary actions',
+    foreground: '--primary-foreground',
   },
   {
-    label: "Sage",
-    token: "--accent",
-    purpose: "Selected surfaces",
-    foreground: "--accent-foreground",
+    label: 'Sage',
+    token: '--accent',
+    purpose: 'Selected surfaces',
+    foreground: '--accent-foreground',
   },
   {
-    label: "Paper",
-    token: "--background",
-    purpose: "Primary shells",
-    foreground: "--foreground",
+    label: 'Paper',
+    token: '--background',
+    purpose: 'Primary shells',
+    foreground: '--foreground',
   },
   {
-    label: "Soft",
-    token: "--muted",
-    purpose: "Quiet sections",
-    foreground: "--muted-foreground",
+    label: 'Soft',
+    token: '--muted',
+    purpose: 'Quiet sections',
+    foreground: '--muted-foreground',
   },
   {
-    label: "Canvas",
-    token: "--backdrop",
-    purpose: "Behind the workspace",
-    foreground: "--foreground",
+    label: 'Canvas',
+    token: '--backdrop',
+    purpose: 'Behind the workspace',
+    foreground: '--foreground',
   },
   {
-    label: "Editable",
-    token: "--control-bg",
-    purpose: "Inputs and selection",
-    foreground: "--control-fg",
+    label: 'Editable',
+    token: '--control-bg',
+    purpose: 'Inputs and selection',
+    foreground: '--control-fg',
   },
   {
-    label: "Warning",
-    token: "--warning-surface",
-    purpose: "Needs review",
-    foreground: "--warning-text",
+    label: 'Warning',
+    token: '--warning-surface',
+    purpose: 'Needs review',
+    foreground: '--warning-text',
   },
   {
-    label: "Danger",
-    token: "--danger-surface",
-    purpose: "Errors and removal",
-    foreground: "--danger-text",
+    label: 'Danger',
+    token: '--danger-surface',
+    purpose: 'Errors and removal',
+    foreground: '--danger-text',
   },
 ];
 
 function CoreSpecimen({ id }: { id: string }) {
-  const [status, setStatus] = useState(
-    "Try an action. Changes stay in this preview.",
-  );
+  const [status, setStatus] = useState('Try an action. Changes stay in this preview.');
   const [checked, setChecked] = useState(true);
   const [enabled, setEnabled] = useState(false);
-  const [choice, setChoice] = useState("strength");
-  const [unit, setUnit] = useState<string | null>("kg");
+  const [choice, setChoice] = useState('strength');
+  const [unit, setUnit] = useState<string | null>('kg');
   const [progress, setProgress] = useState(3);
   const [open, setOpen] = useState(false);
-  const [name, setName] = useState("Upper body");
+  const [name, setName] = useState('Upper body');
   const [draft, setDraft] = useState(name);
-  const [tab, setTab] = useState("training");
+  const [tab, setTab] = useState('training');
   switch (id) {
-    case "colors":
+    case 'colors':
       return (
         <>
           <Section
@@ -265,23 +302,18 @@ function CoreSpecimen({ id }: { id: string }) {
               ))}
             </div>
           </Section>
-          <Section
-            title="A surface has a job"
-            description="The same palette, used with restraint."
-          >
+          <Section title="A surface has a job" description="The same palette, used with restraint.">
             <div className="surface-example">
               <div>
                 <Badge variant="secondary">Illustrative preview</Badge>
                 <h3>Make room for your next step.</h3>
                 <p>
-                  White shells hold the task. Sage brings related content
-                  together. Forest points to the next action.
+                  White shells hold the task. Sage brings related content together. Forest points to
+                  the next action.
                 </p>
                 <Button
                   onClick={() =>
-                    setStatus(
-                      "You chose the primary action. Nothing was saved to Corner.",
-                    )
+                    setStatus('You chose the primary action. Nothing was saved to Corner.')
                   }
                 >
                   Continue <ArrowRight size={16} />
@@ -290,8 +322,8 @@ function CoreSpecimen({ id }: { id: string }) {
               <div className="surface-inset">
                 <span>Flat by default</span>
                 <p>
-                  Tone and spacing create hierarchy. Focus gets an outline;
-                  ordinary panels do not need a shadow.
+                  Tone and spacing create hierarchy. Focus gets an outline; ordinary panels do not
+                  need a shadow.
                 </p>
               </div>
             </div>
@@ -299,7 +331,7 @@ function CoreSpecimen({ id }: { id: string }) {
           </Section>
         </>
       );
-    case "typography":
+    case 'typography':
       return (
         <>
           <Section
@@ -318,8 +350,8 @@ function CoreSpecimen({ id }: { id: string }) {
               <div>
                 <span>Body · 15 / 1.55 · 400</span>
                 <p className="type-body">
-                  Plan what comes next. Record what actually happened. Keep the
-                  details clear enough to adjust tomorrow.
+                  Plan what comes next. Record what actually happened. Keep the details clear enough
+                  to adjust tomorrow.
                 </p>
               </div>
               <div>
@@ -343,13 +375,13 @@ function CoreSpecimen({ id }: { id: string }) {
               </span>
             </div>
             <p className="specimen-note">
-              Illustrative values · tabular numerals keep changing quantities
-              aligned. Units and planned versus recorded meaning stay visible.
+              Illustrative values · tabular numerals keep changing quantities aligned. Units and
+              planned versus recorded meaning stay visible.
             </p>
           </Section>
         </>
       );
-    case "spacing":
+    case 'spacing':
       return (
         <>
           <Section
@@ -363,10 +395,10 @@ function CoreSpecimen({ id }: { id: string }) {
                   <i style={{ width: value * 4 }} />
                   <small>
                     {value <= 12
-                      ? "Within a group"
+                      ? 'Within a group'
                       : value <= 24
-                        ? "Between elements"
-                        : "Between sections"}
+                        ? 'Between elements'
+                        : 'Between sections'}
                   </small>
                 </div>
               ))}
@@ -375,14 +407,12 @@ function CoreSpecimen({ id }: { id: string }) {
           <Section title="Shapes, by purpose">
             <div className="shape-samples">
               {[
-                { radius: 14, label: "Controls" },
-                { radius: 24, label: "Panels" },
-                { radius: 30, label: "Outer shells" },
+                { radius: 14, label: 'Controls' },
+                { radius: 24, label: 'Panels' },
+                { radius: 30, label: 'Outer shells' },
               ].map((shape) => (
                 <div key={shape.label}>
-                  <div style={{ borderRadius: shape.radius }}>
-                    {shape.radius} px
-                  </div>
+                  <div style={{ borderRadius: shape.radius }}>{shape.radius} px</div>
                   <span>{shape.label}</span>
                 </div>
               ))}
@@ -390,7 +420,7 @@ function CoreSpecimen({ id }: { id: string }) {
           </Section>
         </>
       );
-    case "button":
+    case 'button':
       return (
         <>
           <Section
@@ -398,37 +428,26 @@ function CoreSpecimen({ id }: { id: string }) {
             description="One primary action. Supporting and destructive actions have distinct roles."
           >
             <div className="specimen-row">
-              <Button onClick={() => setStatus("Preview saved locally.")}>
-                Save changes
-              </Button>
-              <Button
-                variant="secondary"
-                onClick={() => setStatus("Secondary action selected.")}
-              >
+              <Button onClick={() => setStatus('Preview saved locally.')}>Save changes</Button>
+              <Button variant="secondary" onClick={() => setStatus('Secondary action selected.')}>
                 Secondary
               </Button>
               <Button
                 variant="outline"
-                onClick={() => setStatus("Changes cancelled in this preview.")}
+                onClick={() => setStatus('Changes cancelled in this preview.')}
               >
                 Cancel
               </Button>
-              <Button
-                variant="ghost"
-                onClick={() => setStatus("More options selected.")}
-              >
+              <Button variant="ghost" onClick={() => setStatus('More options selected.')}>
                 Ghost
               </Button>
               <Button
                 variant="destructive"
-                onClick={() => setStatus("Sample removed from this preview.")}
+                onClick={() => setStatus('Sample removed from this preview.')}
               >
                 Remove
               </Button>
-              <Button
-                variant="link"
-                onClick={() => setStatus("Link-style action selected.")}
-              >
+              <Button variant="link" onClick={() => setStatus('Link-style action selected.')}>
                 View details
               </Button>
             </div>
@@ -436,26 +455,18 @@ function CoreSpecimen({ id }: { id: string }) {
           </Section>
           <Section title="Sizes & icons">
             <div className="specimen-row">
-              <Button
-                size="sm"
-                onClick={() => setStatus("Small action selected.")}
-              >
+              <Button size="sm" onClick={() => setStatus('Small action selected.')}>
                 Small
               </Button>
-              <Button onClick={() => setStatus("Default action selected.")}>
-                Default
-              </Button>
-              <Button
-                size="lg"
-                onClick={() => setStatus("Large action selected.")}
-              >
+              <Button onClick={() => setStatus('Default action selected.')}>Default</Button>
+              <Button size="lg" onClick={() => setStatus('Large action selected.')}>
                 Large <ArrowRight />
               </Button>
               <Button
                 variant="secondary"
                 size="icon"
                 aria-label="Add sample"
-                onClick={() => setStatus("Sample added to this preview.")}
+                onClick={() => setStatus('Sample added to this preview.')}
               >
                 <Plus />
               </Button>
@@ -475,15 +486,12 @@ function CoreSpecimen({ id }: { id: string }) {
           </Section>
         </>
       );
-    case "input":
+    case 'input':
       return (
         <>
           <Section title="Editable & invalid">
             <div className="specimen-grid">
-              <Field
-                label="Workout name"
-                hint="Name the session so you can find it later."
-              >
+              <Field label="Workout name" hint="Name the session so you can find it later.">
                 <Input placeholder="e.g. Upper body" />
               </Field>
               <label className="specimen-field">
@@ -515,15 +523,12 @@ function CoreSpecimen({ id }: { id: string }) {
           </Section>
         </>
       );
-    case "textarea":
+    case 'textarea':
       return (
         <>
           <Section title="Notes">
             <div className="specimen-grid">
-              <Field
-                label="Session notes"
-                hint="Add context that numbers alone cannot capture."
-              >
+              <Field label="Session notes" hint="Add context that numbers alone cannot capture.">
                 <Textarea placeholder="How did the session feel?" />
               </Field>
               <label className="specimen-field">
@@ -555,7 +560,7 @@ function CoreSpecimen({ id }: { id: string }) {
           </Section>
         </>
       );
-    case "checkbox":
+    case 'checkbox':
       return (
         <>
           <Section title="Independent choices">
@@ -577,13 +582,11 @@ function CoreSpecimen({ id }: { id: string }) {
                 <span>Keep recorded activity (required)</span>
               </label>
             </div>
-            <Status>
-              Warm-up {checked ? "included" : "not included"} in this preview.
-            </Status>
+            <Status>Warm-up {checked ? 'included' : 'not included'} in this preview.</Status>
           </Section>
         </>
       );
-    case "switch":
+    case 'switch':
       return (
         <>
           <Section title="Immediate preferences">
@@ -601,13 +604,11 @@ function CoreSpecimen({ id }: { id: string }) {
                 <span>Coach notifications (unavailable)</span>
               </label>
             </div>
-            <Status>
-              Rest timers are {enabled ? "on" : "off"} in this preview.
-            </Status>
+            <Status>Rest timers are {enabled ? 'on' : 'off'} in this preview.</Status>
           </Section>
         </>
       );
-    case "radio-group":
+    case 'radio-group':
       return (
         <>
           <Section
@@ -636,7 +637,7 @@ function CoreSpecimen({ id }: { id: string }) {
           </Section>
         </>
       );
-    case "select":
+    case 'select':
       return (
         <>
           <Section
@@ -656,7 +657,7 @@ function CoreSpecimen({ id }: { id: string }) {
                     <SelectItem
                       key={option.value}
                       value={option.value}
-                      disabled={option.value === "stone"}
+                      disabled={option.value === 'stone'}
                     >
                       {option.label}
                     </SelectItem>
@@ -683,7 +684,7 @@ function CoreSpecimen({ id }: { id: string }) {
           </Section>
         </>
       );
-    case "card":
+    case 'card':
       return (
         <>
           <Section
@@ -697,9 +698,7 @@ function CoreSpecimen({ id }: { id: string }) {
                   <span className="specimen-note">Illustrative preview</span>
                 </div>
                 <CardTitle>Upper body</CardTitle>
-                <CardDescription>
-                  A focused strength session, with room to adjust.
-                </CardDescription>
+                <CardDescription>A focused strength session, with room to adjust.</CardDescription>
               </CardHeader>
               <CardContent>
                 <div className="training-summary">
@@ -718,14 +717,10 @@ function CoreSpecimen({ id }: { id: string }) {
                 </div>
               </CardContent>
               <CardFooter>
-                <span className="specimen-note">
-                  Targets are not completed work.
-                </span>
+                <span className="specimen-note">Targets are not completed work.</span>
                 <Button
                   size="sm"
-                  onClick={() =>
-                    setStatus("Sample session opened in this preview.")
-                  }
+                  onClick={() => setStatus('Sample session opened in this preview.')}
                 >
                   View session <ArrowRight />
                 </Button>
@@ -735,16 +730,14 @@ function CoreSpecimen({ id }: { id: string }) {
           </Section>
         </>
       );
-    case "separator":
+    case 'separator':
       return (
         <>
           <Section title="Horizontal">
             <div className="specimen-stack">
               <strong>Session targets</strong>
               <Separator />
-              <p className="specimen-note">
-                Actual sets are recorded separately.
-              </p>
+              <p className="specimen-note">Actual sets are recorded separately.</p>
             </div>
           </Section>
           <Section title="Vertical">
@@ -758,7 +751,7 @@ function CoreSpecimen({ id }: { id: string }) {
           </Section>
         </>
       );
-    case "tabs":
+    case 'tabs':
       return (
         <>
           <Section
@@ -776,61 +769,50 @@ function CoreSpecimen({ id }: { id: string }) {
               <TabsContent value="training">
                 <h3 className="preview-title">Your training, at a glance.</h3>
                 <p className="specimen-note">
-                  Illustrative plan: an upper-body session today. No completed
-                  sets recorded.
+                  Illustrative plan: an upper-body session today. No completed sets recorded.
                 </p>
               </TabsContent>
               <TabsContent value="nutrition">
                 <h3 className="preview-title">Room for your next meal.</h3>
                 <p className="specimen-note">
-                  Illustrative plan: breakfast, lunch, and dinner. Planned meals
-                  are not food logs.
+                  Illustrative plan: breakfast, lunch, and dinner. Planned meals are not food logs.
                 </p>
               </TabsContent>
             </Tabs>
           </Section>
         </>
       );
-    case "accordion":
+    case 'accordion':
       return (
         <>
           <Section
             title="Supporting detail"
             description="Open more than one section when comparison helps."
           >
-            <Accordion defaultValue={["planned"]} multiple>
+            <Accordion defaultValue={['planned']} multiple>
               <AccordionItem value="planned">
-                <AccordionTrigger>
-                  What counts as planned activity?
-                </AccordionTrigger>
+                <AccordionTrigger>What counts as planned activity?</AccordionTrigger>
                 <AccordionContent>
-                  A target describes what you intend to do. It stays separate
-                  from the sets, meals, and measurements you actually record.
+                  A target describes what you intend to do. It stays separate from the sets, meals,
+                  and measurements you actually record.
                 </AccordionContent>
               </AccordionItem>
               <AccordionItem value="estimate">
-                <AccordionTrigger>
-                  How should I use a nutrition estimate?
-                </AccordionTrigger>
+                <AccordionTrigger>How should I use a nutrition estimate?</AccordionTrigger>
                 <AccordionContent>
-                  Review the food, portion, and assumptions. Edit the draft
-                  before saving, and check a product label when one is
-                  available.
+                  Review the food, portion, and assumptions. Edit the draft before saving, and check
+                  a product label when one is available.
                 </AccordionContent>
               </AccordionItem>
               <AccordionItem value="unavailable" disabled>
-                <AccordionTrigger>
-                  Coaching guidance (unavailable)
-                </AccordionTrigger>
-                <AccordionContent>
-                  Coaching is outside this preview.
-                </AccordionContent>
+                <AccordionTrigger>Coaching guidance (unavailable)</AccordionTrigger>
+                <AccordionContent>Coaching is outside this preview.</AccordionContent>
               </AccordionItem>
             </Accordion>
           </Section>
         </>
       );
-    case "table":
+    case 'table':
       return (
         <>
           <Section
@@ -856,9 +838,9 @@ function CoreSpecimen({ id }: { id: string }) {
               </TableHeader>
               <TableBody>
                 {[
-                  { set: 1, load: "20 kg", reps: 10 },
-                  { set: 2, load: "22.5 kg", reps: 8 },
-                  { set: 3, load: "22.5 kg", reps: 8 },
+                  { set: 1, load: '20 kg', reps: 10 },
+                  { set: 2, load: '22.5 kg', reps: 8 },
+                  { set: 3, load: '22.5 kg', reps: 8 },
                 ].map((row) => (
                   <TableRow key={row.set}>
                     <TableCell>Dumbbell press</TableCell>
@@ -878,7 +860,7 @@ function CoreSpecimen({ id }: { id: string }) {
           </Section>
         </>
       );
-    case "badge":
+    case 'badge':
       return (
         <>
           <Section title="State, in a few words">
@@ -907,7 +889,7 @@ function CoreSpecimen({ id }: { id: string }) {
           </Section>
         </>
       );
-    case "alert":
+    case 'alert':
       return (
         <>
           <Section
@@ -926,8 +908,7 @@ function CoreSpecimen({ id }: { id: string }) {
                 <CheckCircle2 />
                 <AlertTitle>Sample updated</AlertTitle>
                 <AlertDescription>
-                  Your preview changes are visible here. No product data was
-                  saved.
+                  Your preview changes are visible here. No product data was saved.
                 </AlertDescription>
               </Alert>
               <Alert variant="warning">
@@ -941,15 +922,15 @@ function CoreSpecimen({ id }: { id: string }) {
                 <AlertCircle />
                 <AlertTitle>Couldn’t save the sample</AlertTitle>
                 <AlertDescription>
-                  This is an error-state specimen. In a real form, keep the
-                  user’s draft and offer Retry.
+                  This is an error-state specimen. In a real form, keep the user’s draft and offer
+                  Retry.
                 </AlertDescription>
               </Alert>
             </div>
           </Section>
         </>
       );
-    case "progress":
+    case 'progress':
       return (
         <>
           <Section
@@ -969,17 +950,13 @@ function CoreSpecimen({ id }: { id: string }) {
                 >
                   Complete next exercise
                 </Button>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => setProgress(0)}
-                >
+                <Button size="sm" variant="ghost" onClick={() => setProgress(0)}>
                   Reset preview
                 </Button>
               </div>
               <Status>
                 {progress === 5
-                  ? "All five sample exercises are complete."
+                  ? 'All five sample exercises are complete.'
                   : `${progress} of 5 sample exercises completed.`}
               </Status>
             </div>
@@ -992,7 +969,7 @@ function CoreSpecimen({ id }: { id: string }) {
           </Section>
         </>
       );
-    case "dialog":
+    case 'dialog':
       return (
         <>
           <Section
@@ -1033,9 +1010,7 @@ function CoreSpecimen({ id }: { id: string }) {
                       />
                     </Field>
                     <DialogFooter>
-                      <DialogClose render={<Button variant="outline" />}>
-                        Cancel
-                      </DialogClose>
+                      <DialogClose render={<Button variant="outline" />}>Cancel</DialogClose>
                       <Button type="submit" disabled={!draft.trim()}>
                         Save preview
                       </Button>
@@ -1048,7 +1023,7 @@ function CoreSpecimen({ id }: { id: string }) {
           </Section>
         </>
       );
-    case "popover":
+    case 'popover':
       return (
         <>
           <Section
@@ -1062,28 +1037,21 @@ function CoreSpecimen({ id }: { id: string }) {
               </PopoverTrigger>
               <PopoverContent>
                 <PopoverTitle>Display settings</PopoverTitle>
-                <PopoverDescription>
-                  Adjust this sample’s detail level.
-                </PopoverDescription>
+                <PopoverDescription>Adjust this sample’s detail level.</PopoverDescription>
                 <label className="choice-label">
                   <Switch checked={enabled} onCheckedChange={setEnabled} />
                   <span>Show session notes</span>
                 </label>
               </PopoverContent>
             </Popover>
-            <Status>
-              Session notes are {enabled ? "visible" : "hidden"} in this
-              preview.
-            </Status>
+            <Status>Session notes are {enabled ? 'visible' : 'hidden'} in this preview.</Status>
             {enabled && (
-              <p className="sample-note">
-                Sample note: keep the same targets next time.
-              </p>
+              <p className="sample-note">Sample note: keep the same targets next time.</p>
             )}
           </Section>
         </>
       );
-    case "dropdown-menu":
+    case 'dropdown-menu':
       return (
         <>
           <Section
@@ -1095,18 +1063,12 @@ function CoreSpecimen({ id }: { id: string }) {
                 Sample actions <ChevronMenu />
               </DropdownMenuTrigger>
               <DropdownMenuContent>
-                <DropdownMenuItem
-                  onClick={() =>
-                    setStatus("Sample duplicated in this preview.")
-                  }
-                >
+                <DropdownMenuItem onClick={() => setStatus('Sample duplicated in this preview.')}>
                   <Plus size={15} />
                   Duplicate sample
                 </DropdownMenuItem>
                 <DropdownMenuItem
-                  onClick={() =>
-                    setStatus("Sample moved to tomorrow in this preview.")
-                  }
+                  onClick={() => setStatus('Sample moved to tomorrow in this preview.')}
                 >
                   <ArrowRight size={15} />
                   Move to tomorrow
@@ -1114,7 +1076,7 @@ function CoreSpecimen({ id }: { id: string }) {
                 <DropdownMenuItem disabled>Share with a coach</DropdownMenuItem>
                 <DropdownMenuItem
                   variant="destructive"
-                  onClick={() => setStatus("Sample removed from this preview.")}
+                  onClick={() => setStatus('Sample removed from this preview.')}
                 >
                   <Trash2 size={15} />
                   Remove sample

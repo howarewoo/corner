@@ -15,18 +15,15 @@ const encoder = new TextEncoder();
 export default {
   fetch(request: Request): Response {
     const url = new URL(request.url);
-    if (url.pathname !== "/events") return new Response("ok");
+    if (url.pathname !== '/events') return new Response('ok');
 
     let timer: ReturnType<typeof setInterval>;
     const stream = new ReadableStream<Uint8Array>({
       start(controller) {
         // An SSE frame is `data: <payload>\n\n`. A line starting with `:` is a
         // comment — used here as a heartbeat to keep the stream from going idle.
-        controller.enqueue(encoder.encode("data: hello\n\n"));
-        timer = setInterval(
-          () => controller.enqueue(encoder.encode(": ping\n\n")),
-          25_000,
-        );
+        controller.enqueue(encoder.encode('data: hello\n\n'));
+        timer = setInterval(() => controller.enqueue(encoder.encode(': ping\n\n')), 25_000);
       },
       // cancel() fires when the client disconnects.
       cancel() {
@@ -36,9 +33,9 @@ export default {
 
     return new Response(stream, {
       headers: {
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache, no-transform",
-        Connection: "keep-alive",
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache, no-transform',
+        Connection: 'keep-alive',
       },
     });
   },
@@ -53,23 +50,23 @@ Hono routes the HTTP side; the SSE response is the same `ReadableStream`. Return
 
 ```typescript
 // src/index.ts
-import { Hono } from "hono";
-import { cors } from "hono/cors";
+import { Hono } from 'hono';
+import { cors } from 'hono/cors';
 
 const app = new Hono();
-app.use("*", cors({ origin: process.env.WEB_ORIGIN ?? "*" })); // EventSource is cross-origin from a SPA
+app.use('*', cors({ origin: process.env.WEB_ORIGIN ?? '*' })); // EventSource is cross-origin from a SPA
 
-app.get("/events", (c) => {
+app.get('/events', (c) => {
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
-      controller.enqueue(new TextEncoder().encode("data: connected\n\n"));
+      controller.enqueue(new TextEncoder().encode('data: connected\n\n'));
       // ...register `controller` in a broadcast set; see fan-out below.
     },
   });
   return new Response(stream, {
     headers: {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache, no-transform",
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache, no-transform',
     },
   });
 });
@@ -82,14 +79,14 @@ export default app;
 If the data is database rows (live dashboards, feeds, chat over stored messages), use Neon Realtime (the `neon-realtime` skill) instead of hand-rolling fan-out. Otherwise, the fan-out rule is identical to WebSockets ([Fan-out across isolates](../SKILL.md#fan-out-across-isolates-do-not-skip-this)): each isolate keeps its **own** set of open streams, so broadcasting in-process only reaches the clients on that isolate. Hold a `Set` of stream controllers and pick a strategy there — **poll Postgres** by default (keeps Scale to Zero), or `LISTEN`/`NOTIFY` (shown below) for lowest latency on always-on compute. Keep the source-of-truth state in Postgres — module state doesn't survive eviction.
 
 ```typescript
-import { attachDatabasePool } from "@neon/functions";
-import { Pool, Client } from "pg";
+import { attachDatabasePool } from '@neon/functions';
+import { Pool, Client } from 'pg';
 
 const encoder = new TextEncoder();
 const clients = new Set<ReadableStreamDefaultController<Uint8Array>>();
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 5 });
 attachDatabasePool(pool);
-const CHANNEL = "events";
+const CHANNEL = 'events';
 
 // One dedicated DIRECT connection per isolate to receive events (LISTEN needs a
 // real session — use DATABASE_URL_UNPOOLED, not the pooled URL).
@@ -98,11 +95,11 @@ const CHANNEL = "events";
 const listener = new Client({
   connectionString: process.env.DATABASE_URL_UNPOOLED,
 });
-listener.on("error", (err) => {
+listener.on('error', (err) => {
   console.error(err);
 });
 listener.connect().then(() => listener.query(`LISTEN ${CHANNEL}`));
-listener.on("notification", (msg) => {
+listener.on('notification', (msg) => {
   if (!msg.payload) return;
   const frame = encoder.encode(`data: ${msg.payload}\n\n`);
   for (const controller of clients) {
@@ -116,10 +113,7 @@ listener.on("notification", (msg) => {
 
 // Anywhere you mutate state, NOTIFY so every isolate pushes to its own streams.
 function publish(payload: unknown) {
-  return pool.query("SELECT pg_notify($1, $2)", [
-    CHANNEL,
-    JSON.stringify(payload),
-  ]);
+  return pool.query('SELECT pg_notify($1, $2)', [CHANNEL, JSON.stringify(payload)]);
 }
 ```
 
@@ -143,7 +137,7 @@ Send `data:` with no `event:` field to deliver the default `message` event, whic
 
 ```typescript
 const source = new EventSource(`${FUNCTION_URL}/events`); // GET only
-source.onmessage = (e) => console.log("update", e.data);
+source.onmessage = (e) => console.log('update', e.data);
 source.onerror = () => {
   /* EventSource auto-reconnects; nothing to do */
 };

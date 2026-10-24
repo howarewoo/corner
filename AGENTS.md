@@ -22,21 +22,21 @@ Use Node `>=24.15.0 <25`; the root manifest records `pnpm@10.33.2`. Enable bundl
 
 All commands below run from the repository root with dependencies installed:
 
-| Command | Purpose and conditions |
-| --- | --- |
-| `pnpm run dev` | Shared build followed by web/API development processes and shared watcher; browser `http://127.0.0.1:3000`, internal API `3001` by default |
-| `pnpm run check` | Type-check all workspaces; Turbo builds shared dependencies first |
-| `pnpm run lint` | Repository-wide Oxlint checks with `@shadcn/lint` registered; configure rules in `.oxlintrc.json` |
-| `pnpm test` | Server and rendered-web suites through Turbo; no separate shared-package test task exists |
-| `pnpm test --filter=server` | Server suite, retaining Turbo's shared-build prerequisite |
-| `pnpm test --filter=web` | Rendered-web and Vite configuration suite, retaining the shared-build prerequisite |
-| `pnpm run verify -- --plan --base origin/main` | Inspect conservative branch selection; omit `--plan` to run it, or use `--full` in a credential-free checkout |
-| `pnpm run test:ci` | Native Node regressions colocated in `scripts/__tests__` for verification, release controls, and artifacts |
-| `pnpm run build` | Compile shared/server outputs and type-check/build the web app |
-| `pnpm run db:migrate` | After a build: apply checked-in PostgreSQL migrations via the direct `DATABASE_URL_UNPOOLED`; no schema writes occur at app startup |
-| `pnpm run smoke` | After a full build: disposable production servers on loopback ports `43137` and `43138` |
-| `pnpm run smoke:dev` | Actual development-stack integration on ports `43139` and `43140`; Linux/macOS, clean checkout without local environment files |
-| `pnpm start` | After a full build: compiled production server serving the web app and API on port `3000` by default |
+| Command                                        | Purpose and conditions                                                                                                                     |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `pnpm run dev`                                 | Shared build followed by web/API development processes and shared watcher; browser `http://127.0.0.1:3000`, internal API `3001` by default |
+| `pnpm run check`                               | Type-check all workspaces; Turbo builds shared dependencies first                                                                          |
+| `pnpm run lint`                                | Repository-wide Oxlint checks with `@shadcn/lint` registered; configure rules in `.oxlintrc.json`                                          |
+| `pnpm test`                                    | Server and rendered-web suites through Turbo; no separate shared-package test task exists                                                  |
+| `pnpm test --filter=server`                    | Server suite, retaining Turbo's shared-build prerequisite                                                                                  |
+| `pnpm test --filter=web`                       | Rendered-web and Vite configuration suite, retaining the shared-build prerequisite                                                         |
+| `pnpm run verify -- --plan --base origin/main` | Inspect conservative branch selection; omit `--plan` to run it, or use `--full` in a credential-free checkout                              |
+| `pnpm run test:ci`                             | Native Node regressions colocated in `scripts/__tests__` for verification, release controls, and artifacts                                 |
+| `pnpm run build`                               | Compile shared/server outputs and type-check/build the web app                                                                             |
+| `pnpm run db:migrate`                          | After a build: apply checked-in PostgreSQL migrations via the direct `DATABASE_URL_UNPOOLED`; no schema writes occur at app startup        |
+| `pnpm run smoke`                               | After a full build: disposable production servers on loopback ports `43137` and `43138`                                                    |
+| `pnpm run smoke:dev`                           | Actual development-stack integration on ports `43139` and `43140`; Linux/macOS, clean checkout without local environment files             |
+| `pnpm start`                                   | After a full build: compiled production server serving the web app and API on port `3000` by default                                       |
 
 These are configured commands, not assertions of passing execution. After code changes, run `pnpm run lint` and fix errors. Existing warnings are non-blocking; shadcn design rules remain opt-in in `.oxlintrc.json`. For build selection, existing supported examples are `pnpm run build --filter=server` and `pnpm run build --filter=web`.
 

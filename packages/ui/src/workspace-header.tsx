@@ -24,15 +24,31 @@ export type WorkspaceHeaderProps = Omit<ComponentProps<'header'>, 'title'> & {
   titleRef?: Ref<HTMLHeadingElement>;
 };
 
-export function WorkspaceHeader({ title, actions, eyebrow, description, titleRef, className, ...props }: WorkspaceHeaderProps) {
-  return <header data-slot="workspace-header" className={className ? `ui-workspace-header ${className}` : 'ui-workspace-header'} {...props}>
-    <div className="ui-workspace-header-copy">
-      {eyebrow && <div className="ui-workspace-header-eyebrow">{eyebrow}</div>}
-      <h1 className="ui-workspace-header-title" ref={titleRef} tabIndex={-1}>{title}</h1>
-      {description && <p className="ui-workspace-header-description">{description}</p>}
-    </div>
-    {actions && <div className="ui-workspace-header-actions">{actions}</div>}
-  </header>;
+export function WorkspaceHeader({
+  title,
+  actions,
+  eyebrow,
+  description,
+  titleRef,
+  className,
+  ...props
+}: WorkspaceHeaderProps) {
+  return (
+    <header
+      data-slot="workspace-header"
+      className={className ? `ui-workspace-header ${className}` : 'ui-workspace-header'}
+      {...props}
+    >
+      <div className="ui-workspace-header-copy">
+        {eyebrow && <div className="ui-workspace-header-eyebrow">{eyebrow}</div>}
+        <h1 className="ui-workspace-header-title" ref={titleRef} tabIndex={-1}>
+          {title}
+        </h1>
+        {description && <p className="ui-workspace-header-description">{description}</p>}
+      </div>
+      {actions && <div className="ui-workspace-header-actions">{actions}</div>}
+    </header>
+  );
 }
 
 export type WorkspaceMobileBarProps = Omit<ComponentProps<'header'>, 'children'> & {

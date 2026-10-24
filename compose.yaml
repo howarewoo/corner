@@ -3,12 +3,12 @@ services:
     build: .
     restart: unless-stopped
     ports:
-      - "127.0.0.1:3000:3000"
+      - '127.0.0.1:3000:3000'
     environment:
       CORNER_DEPLOYMENT: local
       CORNER_ORIGIN: http://127.0.0.1:3000
       CORNER_HOST: 0.0.0.0
-      CORNER_PORT: "3000"
+      CORNER_PORT: '3000'
       CORNER_DATA_DIR: /app/data
       DATABASE_URL: ${DATABASE_URL:?Pull the Neon pooled DATABASE_URL}
       DATABASE_URL_UNPOOLED: ${DATABASE_URL_UNPOOLED:?Pull the Neon direct URL for migrations}
@@ -22,4 +22,3 @@ services:
 
 volumes:
   corner-data:
-

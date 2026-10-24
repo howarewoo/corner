@@ -27,16 +27,16 @@ Rules:
 
 ```typescript
 // drizzle.config.ts
-import "dotenv/config";
-import { defineConfig } from "drizzle-kit";
+import 'dotenv/config';
+import { defineConfig } from 'drizzle-kit';
 
 const databaseUrl = process.env.DATABASE_URL_UNPOOLED;
-if (!databaseUrl) throw new Error("Missing DATABASE_URL_UNPOOLED");
+if (!databaseUrl) throw new Error('Missing DATABASE_URL_UNPOOLED');
 
 export default defineConfig({
-  schema: "./src/schema.ts",
-  out: "./drizzle",
-  dialect: "postgresql",
+  schema: './src/schema.ts',
+  out: './drizzle',
+  dialect: 'postgresql',
   // Direct (unpooled) URL. Neon exposes it as DATABASE_URL_UNPOOLED.
   dbCredentials: { url: databaseUrl },
 });
@@ -62,40 +62,26 @@ The columns, the generated `tsvector`, and the `lakebase_ann` index all go in `s
 
 ```typescript
 // src/schema.ts
-import {
-  pgTable,
-  bigint,
-  text,
-  vector,
-  index,
-  customType,
-} from "drizzle-orm/pg-core";
-import { sql } from "drizzle-orm";
+import { pgTable, bigint, text, vector, index, customType } from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
 
 const tsvector = customType<{ data: string }>({
   dataType() {
-    return "tsvector";
+    return 'tsvector';
   },
 });
 
 export const documents = pgTable(
-  "documents",
+  'documents',
   {
-    id: bigint("id", { mode: "number" })
-      .generatedByDefaultAsIdentity()
-      .primaryKey(),
-    title: text("title").notNull(),
-    body: text("body").notNull(),
-    embedding: vector("embedding", { dimensions: 1024 }),
-    bodyTsv: tsvector("body_tsv").generatedAlwaysAs(
-      sql`to_tsvector('english', "body")`,
-    ),
+    id: bigint('id', { mode: 'number' }).generatedByDefaultAsIdentity().primaryKey(),
+    title: text('title').notNull(),
+    body: text('body').notNull(),
+    embedding: vector('embedding', { dimensions: 1024 }),
+    bodyTsv: tsvector('body_tsv').generatedAlwaysAs(sql`to_tsvector('english', "body")`),
   },
   (table) => [
-    index("documents_embedding_ann").using(
-      "lakebase_ann",
-      table.embedding.op("vector_cosine_ops"),
-    ),
+    index('documents_embedding_ann').using('lakebase_ann', table.embedding.op('vector_cosine_ops')),
   ],
 );
 ```
@@ -125,15 +111,15 @@ CREATE INDEX documents_body_bm25 ON documents USING lakebase_bm25 (body_tsv);
 Use the [Vercel AI SDK](https://ai-sdk.dev) (`ai`, 6+) with Neon's `@neon/ai-sdk-provider` 1.0.0+. Follow the [gateway setup](vector-search.md#prepare-embeddings), then install the packages with `npm install @neon/ai-sdk-provider ai dotenv`:
 
 ```typescript
-import "dotenv/config";
-import { neon } from "@neon/ai-sdk-provider";
-import { embed, embedMany } from "ai";
+import 'dotenv/config';
+import { neon } from '@neon/ai-sdk-provider';
+import { embed, embedMany } from 'ai';
 
-const embeddingModel = neon.embeddingModel("qwen3-embedding-0-6b");
+const embeddingModel = neon.embeddingModel('qwen3-embedding-0-6b');
 const providerOptions = { neon: { dimensions: 1024 } };
 // Qwen3 query prompt adapted for Neon documentation search; documents stay unprefixed.
 const queryPrompt =
-  "Instruct: Given a question about Neon, retrieve documentation passages that answer the question\nQuery: ";
+  'Instruct: Given a question about Neon, retrieve documentation passages that answer the question\nQuery: ';
 ```
 
 Generate a document vector, then insert it with Drizzle:
@@ -168,8 +154,7 @@ for (let offset = 0; offset < nonBlankRows.length; offset += batchSize) {
   await db.insert(documents).values(
     batch.map((row, index) => {
       const embedding = vectors[index];
-      if (!embedding)
-        throw new Error(`Missing embedding for batch row ${index}`);
+      if (!embedding) throw new Error(`Missing embedding for batch row ${index}`);
       return { ...row, embedding };
     }),
   );
@@ -185,8 +170,8 @@ Apply `queryPrompt` only to queries, keeping the original text for BM25. Use the
 Use the query builder with Drizzle's `cosineDistance` helper for vector search. It emits the `<=>` operator, so keep the index on `vector_cosine_ops`:
 
 ```typescript
-import { cosineDistance } from "drizzle-orm";
-import { documents } from "./schema";
+import { cosineDistance } from 'drizzle-orm';
+import { documents } from './schema';
 
 const { embedding: queryEmbedding } = await embed({
   model: embeddingModel,
@@ -205,7 +190,7 @@ const rows = await db
 BM25 has no Drizzle helper: `<@>` and `to_bm25query` require raw SQL. Reference the generated column by its `body_tsv` name. Bind user input as parameters through the `sql` template:
 
 ```typescript
-import { sql } from "drizzle-orm";
+import { sql } from 'drizzle-orm';
 
 const rows = await db.execute(sql`
   SELECT id, title, score
@@ -232,8 +217,8 @@ Run the [hybrid search](hybrid-search.md) RRF query the same way: raw SQL throug
 Per-query GUCs (`lakebase_ann.probes`, `lakebase_ann.epsilon`, `lakebase_bm25.default_limit`, `lakebase_bm25.prefilter`) must be set with `SET LOCAL` inside a transaction so they apply to the same pooled connection as the query:
 
 ```typescript
-import { cosineDistance, sql } from "drizzle-orm";
-import { documents } from "./schema";
+import { cosineDistance, sql } from 'drizzle-orm';
+import { documents } from './schema';
 
 const distance = cosineDistance(documents.embedding, queryEmbedding);
 

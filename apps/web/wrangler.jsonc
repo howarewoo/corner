@@ -12,13 +12,11 @@
     "binding": "ASSETS",
     "run_worker_first": true,
     "html_handling": "none",
-    "not_found_handling": "none"
+    "not_found_handling": "none",
   },
-  "services": [
-    { "binding": "SERVER", "service": "corner-server" }
-  ],
+  "services": [{ "binding": "SERVER", "service": "corner-server" }],
   "observability": {
     "enabled": true,
-    "logs": { "invocation_logs": false }
-  }
+    "logs": { "invocation_logs": false },
+  },
 }

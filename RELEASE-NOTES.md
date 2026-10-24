@@ -66,11 +66,11 @@ Observed on Node 24.21.0 with disposable PostgreSQL 17 and local HTTPS Auth fixt
 
 Three successful warm-cache runs per profile, on unchanged source and the same local machine:
 
-| Verification body | Median |
-| --- | --- |
-| Docs, including actual local link-target checks | 0.006 s |
-| Web build and uncached existing web suite | 5.481 s |
-| Full qualification | 61.012 s |
+| Verification body                               | Median   |
+| ----------------------------------------------- | -------- |
+| Docs, including actual local link-target checks | 0.006 s  |
+| Web build and uncached existing web suite       | 5.481 s  |
+| Full qualification                              | 61.012 s |
 
 These are local profile timings, not CI latency or changed-file build forecasts. Dependency installation, CLI startup, queueing, and runner cost were not measured; build/typecheck caches were warm and application tests remained uncached. Existing Vite chunk-size advisories remain.
 
@@ -179,18 +179,18 @@ Corner now uses Neon Postgres and managed Neon Auth in project `weathered-tooth-
 
 Executed with Node **24.21.0**. This entry supersedes the historical verification sections below.
 
-| Check | Observed result |
-| --- | --- |
-| `npm run check` | 4/4 Turbo tasks passed |
-| `npm run build` | 3/3 Turbo tasks passed; existing Vite chunk-size advisory remains |
-| `npm run db:migrate` | `001_corner.sql` applied to live Neon; repeat reports “Corner PostgreSQL schema is current.” |
-| `npm test` | 9/9 server files and 3/3 web files passed; 78 server and 23 web tests reported |
-| `npm run smoke` | Hosted and local production HTTP, proxy, health, account/session, and shutdown checks passed against disposable PostgreSQL and local HTTPS Auth fixtures |
-| `npm run smoke:dev` | All three real development tasks, catalog serving, filesystem isolation, API proxy, callback authentication, sessions, and owned-process cleanup passed in a credential-free temporary source snapshot |
-| Live managed Auth | Signup, HTTP/browser sign-in, session restoration, two-account isolation, sign-out, and revoked-session 401 confirmed against the requested Neon branch |
-| Live Postgres | Authenticated mutation persisted, duplicate request did not advance revision, browser-saved profile survived app restart, and direct Neon SQL confirmed the final owner workspace at revision 3 |
-| Browser | Desktop and phone account/workspace inspected; OTP form and invalid-code state inspected with isolated simulated responses, without sending mail |
-| Production dependency audit | `npm audit --omit=dev`: zero vulnerabilities |
+| Check                       | Observed result                                                                                                                                                                                        |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `npm run check`             | 4/4 Turbo tasks passed                                                                                                                                                                                 |
+| `npm run build`             | 3/3 Turbo tasks passed; existing Vite chunk-size advisory remains                                                                                                                                      |
+| `npm run db:migrate`        | `001_corner.sql` applied to live Neon; repeat reports “Corner PostgreSQL schema is current.”                                                                                                           |
+| `npm test`                  | 9/9 server files and 3/3 web files passed; 78 server and 23 web tests reported                                                                                                                         |
+| `npm run smoke`             | Hosted and local production HTTP, proxy, health, account/session, and shutdown checks passed against disposable PostgreSQL and local HTTPS Auth fixtures                                               |
+| `npm run smoke:dev`         | All three real development tasks, catalog serving, filesystem isolation, API proxy, callback authentication, sessions, and owned-process cleanup passed in a credential-free temporary source snapshot |
+| Live managed Auth           | Signup, HTTP/browser sign-in, session restoration, two-account isolation, sign-out, and revoked-session 401 confirmed against the requested Neon branch                                                |
+| Live Postgres               | Authenticated mutation persisted, duplicate request did not advance revision, browser-saved profile survived app restart, and direct Neon SQL confirmed the final owner workspace at revision 3        |
+| Browser                     | Desktop and phone account/workspace inspected; OTP form and invalid-code state inspected with isolated simulated responses, without sending mail                                                       |
+| Production dependency audit | `npm audit --omit=dev`: zero vulnerabilities                                                                                                                                                           |
 
 Final compiled startup reported `Mode: local. Records: Neon Postgres. Accounts: Neon Auth.` Port 3000 was occupied, so live checks used 43201 without disturbing its listener. The local application origin was registered with Neon; temporary live-test accounts, their application records, and the temporary origin were removed after verification.
 
@@ -248,17 +248,17 @@ An owner can preview and import a Corner JSON export into an empty account, expo
 
 ## Verification performed
 
-| Check | Result |
-| --- | --- |
-| Node runtime | 24.19.0 |
-| TypeScript check and Vite production build | Passed |
-| Automated suite | Passed: 13 server and web test files, reporting 112 tests |
-| Real account backend | Verified signup gating, confirmation, generic reset/resend behavior, token expiry and one-time use, session revocation, and preserved workspace records with simulated mail delivery |
-| Rendered account interface | Policy loading/retry, verification, resend, forgotten-password, reset validation, callback errors, stale responses, and local no-mail behavior passed |
-| Production HTTP smoke | Local and hosted configurations passed canonical-host/proxy checks, static/private-file checks, the actual health script, account/session checks, and shutdown during an accepted account request |
-| Development integration smoke | All three Turbo tasks passed: separate web/API startup, shared catalog modules and JSON, private-file boundaries, proxied account sessions, callback authentication, origin rejection, and owned-process cleanup |
-| Deployment initializer | Private configuration, independent key sizes, no secret output, overwrite refusal, and invalid-hostname rejection checked |
-| Source packaging | Allowlisted application source and documentation; private runtime data and credentials excluded |
+| Check                                      | Result                                                                                                                                                                                                           |
+| ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Node runtime                               | 24.19.0                                                                                                                                                                                                          |
+| TypeScript check and Vite production build | Passed                                                                                                                                                                                                           |
+| Automated suite                            | Passed: 13 server and web test files, reporting 112 tests                                                                                                                                                        |
+| Real account backend                       | Verified signup gating, confirmation, generic reset/resend behavior, token expiry and one-time use, session revocation, and preserved workspace records with simulated mail delivery                             |
+| Rendered account interface                 | Policy loading/retry, verification, resend, forgotten-password, reset validation, callback errors, stale responses, and local no-mail behavior passed                                                            |
+| Production HTTP smoke                      | Local and hosted configurations passed canonical-host/proxy checks, static/private-file checks, the actual health script, account/session checks, and shutdown during an accepted account request                |
+| Development integration smoke              | All three Turbo tasks passed: separate web/API startup, shared catalog modules and JSON, private-file boundaries, proxied account sessions, callback authentication, origin rejection, and owned-process cleanup |
+| Deployment initializer                     | Private configuration, independent key sizes, no secret output, overwrite refusal, and invalid-hostname rejection checked                                                                                        |
+| Source packaging                           | Allowlisted application source and documentation; private runtime data and credentials excluded                                                                                                                  |
 
 Provider and mail tests use simulated responses. The production HTTP smoke sends no real emails or model requests. The exercise catalog remains a separate browser chunk; Vite reports a nonfatal chunk-size advisory.
 

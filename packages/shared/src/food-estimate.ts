@@ -2,7 +2,9 @@ import { z } from 'zod';
 import type { Macros } from './types.js';
 
 export const FOOD_DESCRIPTION_MAX_LENGTH = 2000;
-export const FoodDescriptionSchema = z.string().trim()
+export const FoodDescriptionSchema = z
+  .string()
+  .trim()
   .min(3, 'Describe the food and how much you had.')
   .max(FOOD_DESCRIPTION_MAX_LENGTH, 'Keep the food description under 2,000 characters.');
 
@@ -11,31 +13,44 @@ const amount = (max: number) => z.number().finite().min(0).max(max);
 
 // These are the food-log domain limits, not a minimum meal size. Water, plain
 // coffee, and small condiment portions can legitimately be zero or near zero.
-const EstimatedMacrosSchema = z.object({
-  calories: amount(10000), protein: amount(1500), carbs: amount(2500), fat: amount(1500),
-}).strict();
+const EstimatedMacrosSchema = z
+  .object({
+    calories: amount(10000),
+    protein: amount(1500),
+    carbs: amount(2500),
+    fat: amount(1500),
+  })
+  .strict();
 
-export const EstimatedFoodSchema = z.object({
-  status: z.literal('estimated'),
-  name: detail(180),
-  amountSummary: detail(400),
-  nutrition: EstimatedMacrosSchema,
-  assumptions: z.array(detail(400)).max(5),
-}).strict();
+export const EstimatedFoodSchema = z
+  .object({
+    status: z.literal('estimated'),
+    name: detail(180),
+    amountSummary: detail(400),
+    nutrition: EstimatedMacrosSchema,
+    assumptions: z.array(detail(400)).max(5),
+  })
+  .strict();
 
 export const FoodEstimateResultSchema = z.discriminatedUnion('status', [
   EstimatedFoodSchema,
-  z.object({
-    status: z.literal('needs_details'),
-    questions: z.array(detail(400)).min(1).max(3),
-  }).strict(),
+  z
+    .object({
+      status: z.literal('needs_details'),
+      questions: z.array(detail(400)).min(1).max(3),
+    })
+    .strict(),
 ]);
 
 export type EstimatedFood = z.infer<typeof EstimatedFoodSchema>;
 export type FoodEstimateResult = z.infer<typeof FoodEstimateResultSchema>;
 
 /** Nutrition covers the complete description, so accepting it starts at 1x. */
-export function foodEstimateToDraft(estimate: EstimatedFood): { name: string; nutrition: Macros; servings: 1 } {
+export function foodEstimateToDraft(estimate: EstimatedFood): {
+  name: string;
+  nutrition: Macros;
+  servings: 1;
+} {
   const accepted = EstimatedFoodSchema.parse(estimate);
   return { name: accepted.name, nutrition: { ...accepted.nutrition }, servings: 1 };
 }
@@ -47,19 +62,28 @@ export function foodEstimateRequestKey(requestId: string): string {
 // Strict Responses schemas require an object at the root. The discriminated
 // result is nested so a request for more detail never contains made-up macros.
 export const foodEstimateOutputSchema = {
-  type: 'object', additionalProperties: false, required: ['result'],
+  type: 'object',
+  additionalProperties: false,
+  required: ['result'],
   properties: {
     result: {
       anyOf: [
         {
-          type: 'object', additionalProperties: false,
+          type: 'object',
+          additionalProperties: false,
           required: ['status', 'name', 'amountSummary', 'nutrition', 'assumptions'],
           properties: {
             status: { type: 'string', enum: ['estimated'] },
             name: { type: 'string' },
-            amountSummary: { type: 'string', description: 'The entire food and drink quantity covered by these totals, with units and preparation where relevant.' },
+            amountSummary: {
+              type: 'string',
+              description:
+                'The entire food and drink quantity covered by these totals, with units and preparation where relevant.',
+            },
             nutrition: {
-              type: 'object', additionalProperties: false, required: ['calories', 'protein', 'carbs', 'fat'],
+              type: 'object',
+              additionalProperties: false,
+              required: ['calories', 'protein', 'carbs', 'fat'],
               properties: {
                 calories: { type: 'number', minimum: 0, maximum: 10000 },
                 protein: { type: 'number', minimum: 0, maximum: 1500 },
@@ -71,7 +95,9 @@ export const foodEstimateOutputSchema = {
           },
         },
         {
-          type: 'object', additionalProperties: false, required: ['status', 'questions'],
+          type: 'object',
+          additionalProperties: false,
+          required: ['status', 'questions'],
           properties: {
             status: { type: 'string', enum: ['needs_details'] },
             questions: { type: 'array', minItems: 1, maxItems: 3, items: { type: 'string' } },
@@ -110,24 +136,50 @@ export class FoodEstimateOutputError extends Error {
 
 /** Validate the provider envelope as well as its structured answer. */
 export function parseFoodEstimateResponse(payload: unknown): FoodEstimateResult {
-  const envelope = z.object({
-    status: z.string(),
-    output: z.array(z.object({
-      type: z.string(),
-      content: z.array(z.object({ type: z.string(), text: z.string().optional() }).passthrough()).optional(),
-    }).passthrough()),
-  }).passthrough().safeParse(payload);
+  const envelope = z
+    .object({
+      status: z.string(),
+      output: z.array(
+        z
+          .object({
+            type: z.string(),
+            content: z
+              .array(z.object({ type: z.string(), text: z.string().optional() }).passthrough())
+              .optional(),
+          })
+          .passthrough(),
+      ),
+    })
+    .passthrough()
+    .safeParse(payload);
   if (!envelope.success || envelope.data.status !== 'completed') {
-    throw new FoodEstimateOutputError('ESTIMATION_INCOMPLETE', 502, 'The estimate could not be completed. Try a shorter, more specific description.');
+    throw new FoodEstimateOutputError(
+      'ESTIMATION_INCOMPLETE',
+      502,
+      'The estimate could not be completed. Try a shorter, more specific description.',
+    );
   }
-  const content = envelope.data.output.flatMap(item => item.type === 'message' ? item.content ?? [] : []);
-  if (content.some(item => item.type === 'refusal')) {
-    throw new FoodEstimateOutputError('FOOD_DESCRIPTION_UNSUPPORTED', 422, 'Describe an ordinary food or drink and how much you had.');
+  const content = envelope.data.output.flatMap((item) =>
+    item.type === 'message' ? (item.content ?? []) : [],
+  );
+  if (content.some((item) => item.type === 'refusal')) {
+    throw new FoodEstimateOutputError(
+      'FOOD_DESCRIPTION_UNSUPPORTED',
+      422,
+      'Describe an ordinary food or drink and how much you had.',
+    );
   }
-  const output = content.filter(item => item.type === 'output_text' && typeof item.text === 'string').map(item => item.text).join('');
+  const output = content
+    .filter((item) => item.type === 'output_text' && typeof item.text === 'string')
+    .map((item) => item.text)
+    .join('');
   try {
     return z.object({ result: FoodEstimateResultSchema }).strict().parse(JSON.parse(output)).result;
   } catch {
-    throw new FoodEstimateOutputError('ESTIMATION_INVALID', 502, 'The estimate did not pass our checks. Add more detail and try again.');
+    throw new FoodEstimateOutputError(
+      'ESTIMATION_INVALID',
+      502,
+      'The estimate did not pass our checks. Add more detail and try again.',
+    );
   }
 }

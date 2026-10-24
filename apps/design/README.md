@@ -37,17 +37,17 @@ Semantic names include `--background`, `--foreground`, `--primary`, `--primary-f
 
 The exact upstream IDs, source URLs, retrieved source-file SHA-256 digests, implementation owners, specimen locations, extensions, and limits are recorded in `../../packages/ui/provenance.json`. The table below is the complete navigation inventory. Every ID has a live specimen; stable links use `?component=<id>`.
 
-| Group | Identifiers |
-| --- | --- |
-| Foundations | `colors`, `spacing`, `typography` |
-| Actions | `button`, `button-group`, `toggle`, `toggle-group` |
-| Forms | `checkbox`, `combobox`, `date-picker`, `field`, `form`, `input`, `input-group`, `input-otp`, `label`, `native-select`, `radio-group`, `select`, `slider`, `switch`, `textarea` |
-| Structure | `accordion`, `aspect-ratio`, `avatar`, `card`, `carousel`, `collapsible`, `direction`, `item`, `kbd`, `resizable`, `scroll-area`, `separator`, `table`, `tabs` |
-| Navigation | `breadcrumb`, `command`, `menubar`, `navigation-menu`, `pagination`, `sidebar` |
-| Data | `calendar`, `chart`, `data-table` |
-| Feedback | `alert`, `badge`, `empty`, `progress`, `skeleton`, `sonner`, `spinner`, `toast` |
-| Overlays | `alert-dialog`, `context-menu`, `dialog`, `drawer`, `dropdown-menu`, `hover-card`, `popover`, `sheet`, `tooltip` |
-| Conversation | `attachment`, `bubble`, `code-block`, `marker`, `message`, `message-scroller`, `questionnaire`, `trace` |
+| Group        | Identifiers                                                                                                                                                                    |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Foundations  | `colors`, `spacing`, `typography`                                                                                                                                              |
+| Actions      | `button`, `button-group`, `toggle`, `toggle-group`                                                                                                                             |
+| Forms        | `checkbox`, `combobox`, `date-picker`, `field`, `form`, `input`, `input-group`, `input-otp`, `label`, `native-select`, `radio-group`, `select`, `slider`, `switch`, `textarea` |
+| Structure    | `accordion`, `aspect-ratio`, `avatar`, `card`, `carousel`, `collapsible`, `direction`, `item`, `kbd`, `resizable`, `scroll-area`, `separator`, `table`, `tabs`                 |
+| Navigation   | `breadcrumb`, `command`, `menubar`, `navigation-menu`, `pagination`, `sidebar`                                                                                                 |
+| Data         | `calendar`, `chart`, `data-table`                                                                                                                                              |
+| Feedback     | `alert`, `badge`, `empty`, `progress`, `skeleton`, `sonner`, `spinner`, `toast`                                                                                                |
+| Overlays     | `alert-dialog`, `context-menu`, `dialog`, `drawer`, `dropdown-menu`, `hover-card`, `popover`, `sheet`, `tooltip`                                                               |
+| Conversation | `attachment`, `bubble`, `code-block`, `marker`, `message`, `message-scroller`, `questionnaire`, `trace`                                                                        |
 
 ### Composition and source distinctions
 

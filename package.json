@@ -17,6 +17,8 @@
     "build": "turbo run build",
     "check": "turbo run check",
     "lint": "oxlint .",
+    "format": "oxfmt --write",
+    "format:check": "oxfmt --check",
     "test": "turbo run test",
     "verify": "node scripts/verify.mjs",
     "test:ci": "node --test scripts/__tests__/*.test.mjs",
@@ -37,6 +39,7 @@
   },
   "devDependencies": {
     "@shadcn/lint": "0.2.3",
+    "oxfmt": "0.74.0",
     "oxlint": "1.89.0",
     "turbo": "2.11.10"
   },

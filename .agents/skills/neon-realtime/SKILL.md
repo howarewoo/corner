@@ -34,105 +34,141 @@ Realtime's layers compose: a live query engine inside Postgres, the Live SQL API
 The guides' chat app, with `messages` authorized through `channel_members`. The backend seals the query and returns each write's `txid`:
 
 ```ts
-import { createRealtime, rawSql } from "@neon/realtime/server"
-import { drizzleAdapter } from "@neon/realtime-drizzle"
-import { and, desc, eq, getTableColumns, sql } from "drizzle-orm"
-import { Hono } from "hono"
-import { HTTPException } from "hono/http-exception"
-import { requireUser } from "./auth"
-import { db } from "./db"
-import { channelMembers, messages, type Message } from "./schema"
+import { createRealtime, rawSql } from '@neon/realtime/server';
+import { drizzleAdapter } from '@neon/realtime-drizzle';
+import { and, desc, eq, getTableColumns, sql } from 'drizzle-orm';
+import { Hono } from 'hono';
+import { HTTPException } from 'hono/http-exception';
+import { requireUser } from './auth';
+import { db } from './db';
+import { channelMembers, messages, type Message } from './schema';
 
-export const realtime = createRealtime({ secret: process.env.NEON_REALTIME_SECRET!, db: "neondb", adapter: drizzleAdapter() })
+export const realtime = createRealtime({
+  secret: process.env.NEON_REALTIME_SECRET!,
+  db: 'neondb',
+  adapter: drizzleAdapter(),
+});
 
 // Each selected key must match its column name
 export function messagesQuery(userId: string, channelId: number) {
   return db
-    .select(getTableColumns(messages)).from(messages)
+    .select(getTableColumns(messages))
+    .from(messages)
     .innerJoin(channelMembers, eq(channelMembers.channel_id, messages.channel_id))
     .where(and(eq(channelMembers.user_id, userId), eq(messages.channel_id, channelId)))
     .orderBy(desc(messages.created_at))
-    .limit(50)
+    .limit(50);
 }
 
 // Or raw SQL
-const rawMessagesQuery = (userId: string, channelId: number) => rawSql<Message>(
+const rawMessagesQuery = (userId: string, channelId: number) =>
+  rawSql<Message>(
     `SELECT messages.author_id, messages.body, messages.channel_id, messages.created_at, messages.id FROM messages
      INNER JOIN channel_members ON channel_members.channel_id = messages.channel_id WHERE channel_members.user_id = $1 AND messages.channel_id = $2 ORDER BY messages.created_at DESC LIMIT 50`,
-    [userId, channelId]
-  )
+    [userId, channelId],
+  );
 
 // The id of the transaction that made the change, read in the write's own RETURNING
-const txid = sql<string>`pg_current_xact_id()::text`
+const txid = sql<string>`pg_current_xact_id()::text`;
 
 const app = new Hono()
-  .post("/api/v1/messages/live", async (c) => {
-    const user = await requireUser(c)
-    const { channelId } = await c.req.json<{ channelId: number }>() // validate input
-    return c.json(await realtime.seal({ query: messagesQuery(user.id, channelId) }))
+  .post('/api/v1/messages/live', async (c) => {
+    const user = await requireUser(c);
+    const { channelId } = await c.req.json<{ channelId: number }>(); // validate input
+    return c.json(await realtime.seal({ query: messagesQuery(user.id, channelId) }));
   })
-  .post("/api/v1/messages", async (c) => {
-    const user = await requireUser(c)
-    const { id, channelId, body } = await c.req.json<{ id: string; channelId: number; body: string }>() // validate input
+  .post('/api/v1/messages', async (c) => {
+    const user = await requireUser(c);
+    const { id, channelId, body } = await c.req.json<{
+      id: string;
+      channelId: number;
+      body: string;
+    }>(); // validate input
     // One statement. The membership row supplies channel_id and author_id, so only a member's message is inserted.
     // List every column in table order, alias each sql field, and cast untyped params (they resolve to text)
-    const [sent] = await db.insert(messages).select(
-      db.select({
-          id: sql`${id}::uuid`.as("id"), channel_id: channelMembers.channel_id, author_id: channelMembers.user_id,
-          body: sql`${body}`.as("body"), created_at: sql`now()`.as("created_at"),
-        })
-        .from(channelMembers)
-        .where(and(eq(channelMembers.channel_id, channelId), eq(channelMembers.user_id, user.id)))
-    ).returning({ txid })
-    if (!sent) throw new HTTPException(403, { message: "Not a member of this channel" })
-    return c.json({ kind: "committed", txid: sent.txid })
-  })
+    const [sent] = await db
+      .insert(messages)
+      .select(
+        db
+          .select({
+            id: sql`${id}::uuid`.as('id'),
+            channel_id: channelMembers.channel_id,
+            author_id: channelMembers.user_id,
+            body: sql`${body}`.as('body'),
+            created_at: sql`now()`.as('created_at'),
+          })
+          .from(channelMembers)
+          .where(
+            and(eq(channelMembers.channel_id, channelId), eq(channelMembers.user_id, user.id)),
+          ),
+      )
+      .returning({ txid });
+    if (!sent) throw new HTTPException(403, { message: 'Not a member of this channel' });
+    return c.json({ kind: 'committed', txid: sent.txid });
+  });
 ```
 
 The React frontend subscribes and sends optimistic messages:
 
 ```tsx
-import { createRealtimeClient, type SealedLiveQuery } from "@neon/realtime/client"
-import { drizzleParsers } from "@neon/realtime-drizzle/client"
-import { useLiveQuery } from "@neon/realtime-react"
-import { startTransition, useCallback, useOptimistic } from "react"
-import type { Message } from "../backend/schema"
-import { fetchSealedMessages, sendMessage } from "./api"
+import { createRealtimeClient, type SealedLiveQuery } from '@neon/realtime/client';
+import { drizzleParsers } from '@neon/realtime-drizzle/client';
+import { useLiveQuery } from '@neon/realtime-react';
+import { startTransition, useCallback, useOptimistic } from 'react';
+import type { Message } from '../backend/schema';
+import { fetchSealedMessages, sendMessage } from './api';
 
 // One client per app, because subscriptions share its connection. Wrap the app in <RealtimeProvider client={client}>
-export const client = createRealtimeClient({ url: import.meta.env.VITE_NEON_REALTIME_URL, parsers: { ...drizzleParsers } })
+export const client = createRealtimeClient({
+  url: import.meta.env.VITE_NEON_REALTIME_URL,
+  parsers: { ...drizzleParsers },
+});
 
-const NO_MESSAGES: readonly Message[] = []
-type Props = { sealedQuery: SealedLiveQuery<Message>; channelId: number; userId: string }
+const NO_MESSAGES: readonly Message[] = [];
+type Props = { sealedQuery: SealedLiveQuery<Message>; channelId: number; userId: string };
 
 export function Messages({ sealedQuery, channelId, userId }: Props) {
-  const refreshQuery = useCallback(() => fetchSealedMessages(channelId), [channelId])
-  const { data, status, error, utils } = useLiveQuery(sealedQuery, { refreshQuery })
+  const refreshQuery = useCallback(() => fetchSealedMessages(channelId), [channelId]);
+  const { data, status, error, utils } = useLiveQuery(sealedQuery, { refreshQuery });
   // Once the sent message syncs, show only the synced row
-  const [messages, addOptimistic] = useOptimistic(data ?? NO_MESSAGES, (current, message: Message) =>
-    current.some(({ id }) => id === message.id) ? current : [message, ...current]
-  )
+  const [messages, addOptimistic] = useOptimistic(
+    data ?? NO_MESSAGES,
+    (current, message: Message) =>
+      current.some(({ id }) => id === message.id) ? current : [message, ...current],
+  );
 
   function send(body: string) {
     // The server sets author and timestamp but keeps this id
-    const message = { id: crypto.randomUUID(), channel_id: channelId, author_id: userId, body, created_at: new Date() }
+    const message = {
+      id: crypto.randomUUID(),
+      channel_id: channelId,
+      author_id: userId,
+      body,
+      created_at: new Date(),
+    };
     startTransition(async () => {
-      addOptimistic(message)
+      addOptimistic(message);
       try {
-        const result = await sendMessage(message) // maps channel_id to channelId
-        if (result.kind === "committed") await utils.awaitTxId(result.txid, 10_000)
-      } catch { /* show "Couldn't confirm the change" */ }
-    })
+        const result = await sendMessage(message); // maps channel_id to channelId
+        if (result.kind === 'committed') await utils.awaitTxId(result.txid, 10_000);
+      } catch {
+        /* show "Couldn't confirm the change" */
+      }
+    });
   }
 
-  if (status === "error") return <p role="alert">Live updates stopped: {error.message}</p>
-  if (data === undefined) return <p>Loading messages</p>
+  if (status === 'error') return <p role="alert">Live updates stopped: {error.message}</p>;
+  if (data === undefined) return <p>Loading messages</p>;
   return (
-    <form action={(form) => send(String(form.get("body")))}>
+    <form action={(form) => send(String(form.get('body')))}>
       <input name="body" required />
-      <ul>{messages.map((message) => <li key={message.id}>{message.body}</li>)}</ul>
+      <ul>
+        {messages.map((message) => (
+          <li key={message.id}>{message.body}</li>
+        ))}
+      </ul>
     </form>
-  )
+  );
 }
 ```
 
@@ -140,14 +176,14 @@ export function Messages({ sealedQuery, channelId, userId }: Props) {
 
 A live query replaces fetching app data from an API or another sync system. Reuse existing query code, and use the highest layer that fits rather than wiring changes into app state by hand.
 
-| Use | For |
-| --- | --- |
-| `drizzleAdapter()` from `@neon/realtime-drizzle`, or `kyselyAdapter()` from `@neon/realtime-kysely` | Queries written in Drizzle or Kysely |
-| `rawSql` from `@neon/realtime/server` | Any other ORM, or none |
-| `useLiveQuery` from `@neon/realtime-react` | React. Binds one sealed query to a component's state |
-| `realtimeCollectionOptions` from `@neon/realtime-tanstack` | Many views over the same data, or an app on TanStack DB. Oversync one broader query into a collection, then derive local live queries from it |
-| `client.subscribe()` from `@neon/realtime/client` | Other frameworks |
-| `realtime.subscribe()` from `@neon/realtime/server` | Agents and workers, in trusted backend code |
+| Use                                                                                                 | For                                                                                                                                           |
+| --------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `drizzleAdapter()` from `@neon/realtime-drizzle`, or `kyselyAdapter()` from `@neon/realtime-kysely` | Queries written in Drizzle or Kysely                                                                                                          |
+| `rawSql` from `@neon/realtime/server`                                                               | Any other ORM, or none                                                                                                                        |
+| `useLiveQuery` from `@neon/realtime-react`                                                          | React. Binds one sealed query to a component's state                                                                                          |
+| `realtimeCollectionOptions` from `@neon/realtime-tanstack`                                          | Many views over the same data, or an app on TanStack DB. Oversync one broader query into a collection, then derive local live queries from it |
+| `client.subscribe()` from `@neon/realtime/client`                                                   | Other frameworks                                                                                                                              |
+| `realtime.subscribe()` from `@neon/realtime/server`                                                 | Agents and workers, in trusted backend code                                                                                                   |
 
 Migrating from Electric: Realtime is a drop-in replacement for Electric's role in your stack. Live SQL queries replace shapes, and `realtimeCollectionOptions()` replaces `electricCollectionOptions()`.
 
@@ -182,7 +218,7 @@ Read [references/reactivity.md](references/reactivity.md) before writing React o
 
 Realtime has no write path, so writes keep your backend's usual auth. Read [references/mutations.md](references/mutations.md) before writing mutations, for each layer.
 
-- [Return the txid from the write itself](references/mutations.md#returning-the-txid-from-your-backend): `` .returning({ txid: sql<string>`pg_current_xact_id()::text` }) ``, in one round trip on any Postgres driver. Write a batch in one statement, so there's one txid. Never open `db.transaction()` just to `select pg_current_xact_id()`: that's four round trips holding a pooled connection. When a write genuinely needs several statements, put the txid in the `RETURNING` of a write that always changes a row.
+- [Return the txid from the write itself](references/mutations.md#returning-the-txid-from-your-backend): ``.returning({ txid: sql<string>`pg_current_xact_id()::text` })``, in one round trip on any Postgres driver. Write a batch in one statement, so there's one txid. Never open `db.transaction()` just to `select pg_current_xact_id()`: that's four round trips holding a pooled connection. When a write genuinely needs several statements, put the txid in the `RETURNING` of a write that always changes a row.
 - Always pass `awaitTxId()` a timeout: it keeps waiting through reconnects and renewals, and never settles if the txid doesn't reach the query.
 - A write that changes no rows has no txid, so skip `awaitTxId()` and let the optimistic state drop.
 
@@ -195,12 +231,12 @@ Read [references/ssr.md](references/ssr.md) before rendering live queries on the
 
 ## More Docs
 
-| Task | Page |
-| --- | --- |
-| Beta scope, regions, pricing, FAQ, other systems | [Overview](https://neon.com/docs/realtime/overview.md) |
-| Architecture and consistency | [How it works](https://neon.com/docs/realtime/how-it-works.md) |
-| A first live query | [Quickstart](https://neon.com/docs/realtime/quickstart.md) |
-| Every SDK export | [TypeScript SDK reference](https://neon.com/docs/realtime/sdks/typescript.md) |
-| Full-stack apps with auth and SSR | [Next.js](https://neon.com/docs/realtime/examples/nextjs.md), [TanStack](https://neon.com/docs/realtime/examples/tanstack.md) |
-| Live agent workflows | [Mastra](https://neon.com/docs/realtime/examples/mastra.md) |
-| ORM adapters | [Drizzle](https://neon.com/docs/realtime/examples/drizzle.md), [Kysely](https://neon.com/docs/realtime/examples/kysely.md) |
+| Task                                             | Page                                                                                                                          |
+| ------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------- |
+| Beta scope, regions, pricing, FAQ, other systems | [Overview](https://neon.com/docs/realtime/overview.md)                                                                        |
+| Architecture and consistency                     | [How it works](https://neon.com/docs/realtime/how-it-works.md)                                                                |
+| A first live query                               | [Quickstart](https://neon.com/docs/realtime/quickstart.md)                                                                    |
+| Every SDK export                                 | [TypeScript SDK reference](https://neon.com/docs/realtime/sdks/typescript.md)                                                 |
+| Full-stack apps with auth and SSR                | [Next.js](https://neon.com/docs/realtime/examples/nextjs.md), [TanStack](https://neon.com/docs/realtime/examples/tanstack.md) |
+| Live agent workflows                             | [Mastra](https://neon.com/docs/realtime/examples/mastra.md)                                                                   |
+| ORM adapters                                     | [Drizzle](https://neon.com/docs/realtime/examples/drizzle.md), [Kysely](https://neon.com/docs/realtime/examples/kysely.md)    |

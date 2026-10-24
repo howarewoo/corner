@@ -1,4 +1,4 @@
-"use client";
+'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { BookOpen, Check, ChevronDown, Dumbbell, Loader2, Plus, Search, X } from 'lucide-react';
@@ -25,7 +25,7 @@ import {
 import './exercise-picker.css';
 
 type Catalog = typeof ExerciseCatalog;
-const label = (value: string) => value ? value.charAt(0).toUpperCase() + value.slice(1) : value;
+const label = (value: string) => (value ? value.charAt(0).toUpperCase() + value.slice(1) : value);
 
 function useCatalog() {
   const [catalog, setCatalog] = useState<Catalog | null>(null);
@@ -34,21 +34,45 @@ function useCatalog() {
   useEffect(() => {
     let active = true;
     setError(false);
-    import('@packages/shared/exercise-catalog').then(value => { if (active) setCatalog(value); }).catch(() => { if (active) setError(true); });
-    return () => { active = false; };
+    import('@packages/shared/exercise-catalog')
+      .then((value) => {
+        if (active) setCatalog(value);
+      })
+      .catch(() => {
+        if (active) setError(true);
+      });
+    return () => {
+      active = false;
+    };
   }, [attempt]);
-  return { catalog, error, retry: () => setAttempt(value => value + 1) };
+  return { catalog, error, retry: () => setAttempt((value) => value + 1) };
 }
 
-export default function ExercisePicker({ onSelect, onCustom, onClose, replacing = false }: { onSelect: (exercise: ExerciseCatalogEntry) => void; onCustom: () => void; onClose: () => void; replacing?: boolean }) {
+export default function ExercisePicker({
+  onSelect,
+  onCustom,
+  onClose,
+  replacing = false,
+}: {
+  onSelect: (exercise: ExerciseCatalogEntry) => void;
+  onCustom: () => void;
+  onClose: () => void;
+  replacing?: boolean;
+}) {
   const { catalog, error, retry } = useCatalog();
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState('');
   const [equipment, setEquipment] = useState('');
   const [limit, setLimit] = useState(12);
   const searchRef = useRef<HTMLInputElement>(null);
-  const results = useMemo(() => catalog?.searchExerciseCatalog({ query, category, equipment, limit }), [catalog, query, category, equipment, limit]);
-  useEffect(() => { searchRef.current?.focus(); searchRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }, []);
+  const results = useMemo(
+    () => catalog?.searchExerciseCatalog({ query, category, equipment, limit }),
+    [catalog, query, category, equipment, limit],
+  );
+  useEffect(() => {
+    searchRef.current?.focus();
+    searchRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }, []);
 
   return (
     <section className="exercise-picker corner-ui" aria-label="Exercise database">
@@ -79,9 +103,14 @@ export default function ExercisePicker({ onSelect, onCustom, onClose, replacing 
             ref={searchRef}
             type="search"
             aria-label="Search exercises"
-            onKeyDown={event => { if (event.key === 'Enter') event.preventDefault(); }}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') event.preventDefault();
+            }}
             value={query}
-            onChange={event => { setQuery(event.target.value); setLimit(12); }}
+            onChange={(event) => {
+              setQuery(event.target.value);
+              setLimit(12);
+            }}
             placeholder="Try dumbbell bench press…"
             maxLength={160}
           />
@@ -92,18 +121,42 @@ export default function ExercisePicker({ onSelect, onCustom, onClose, replacing 
         <Field>
           <FieldLabel className="field w-full">
             <span>Body part</span>
-            <NativeSelect aria-label="Body part" className="w-full" value={category} onChange={event => { setCategory(event.target.value); setLimit(12); }}>
+            <NativeSelect
+              aria-label="Body part"
+              className="w-full"
+              value={category}
+              onChange={(event) => {
+                setCategory(event.target.value);
+                setLimit(12);
+              }}
+            >
               <NativeSelectOption value="">All body parts</NativeSelectOption>
-              {catalog?.EXERCISE_CATEGORIES.map(value => <NativeSelectOption key={value} value={value}>{label(value)}</NativeSelectOption>)}
+              {catalog?.EXERCISE_CATEGORIES.map((value) => (
+                <NativeSelectOption key={value} value={value}>
+                  {label(value)}
+                </NativeSelectOption>
+              ))}
             </NativeSelect>
           </FieldLabel>
         </Field>
         <Field>
           <FieldLabel className="field w-full">
             <span>Equipment</span>
-            <NativeSelect aria-label="Equipment" className="w-full" value={equipment} onChange={event => { setEquipment(event.target.value); setLimit(12); }}>
+            <NativeSelect
+              aria-label="Equipment"
+              className="w-full"
+              value={equipment}
+              onChange={(event) => {
+                setEquipment(event.target.value);
+                setLimit(12);
+              }}
+            >
               <NativeSelectOption value="">All equipment</NativeSelectOption>
-              {catalog?.EXERCISE_EQUIPMENT.map(value => <NativeSelectOption key={value} value={value}>{label(value)}</NativeSelectOption>)}
+              {catalog?.EXERCISE_EQUIPMENT.map((value) => (
+                <NativeSelectOption key={value} value={value}>
+                  {label(value)}
+                </NativeSelectOption>
+              ))}
             </NativeSelect>
           </FieldLabel>
         </Field>
@@ -113,7 +166,13 @@ export default function ExercisePicker({ onSelect, onCustom, onClose, replacing 
         {error ? (
           <span>
             Couldn’t load the library.{' '}
-            <Button type="button" variant="link" size="sm" className="p-0 h-auto font-medium" onClick={retry}>
+            <Button
+              type="button"
+              variant="link"
+              size="sm"
+              className="p-0 h-auto font-medium"
+              onClick={retry}
+            >
               Try again
             </Button>
           </span>
@@ -131,13 +190,15 @@ export default function ExercisePicker({ onSelect, onCustom, onClose, replacing 
       </div>
 
       <div className="exercise-results">
-        {results?.exercises.map(exercise => (
+        {results?.exercises.map((exercise) => (
           <article className="exercise-result" key={exercise.id}>
             <div className="exercise-result-main">
               <Dumbbell size={19} />
               <div>
                 <h4>{label(exercise.name)}</h4>
-                <p>{label(exercise.equipment)} · {label(exercise.target)}</p>
+                <p>
+                  {label(exercise.equipment)} · {label(exercise.target)}
+                </p>
               </div>
               <Button
                 type="button"
@@ -158,9 +219,13 @@ export default function ExercisePicker({ onSelect, onCustom, onClose, replacing 
               </CollapsibleTrigger>
               <CollapsibleContent>
                 <ol>
-                  {exercise.instructions.map((instruction, index) => <li key={index}>{instruction}</li>)}
+                  {exercise.instructions.map((instruction, index) => (
+                    <li key={index}>{instruction}</li>
+                  ))}
                 </ol>
-                {exercise.secondaryMuscles.length > 0 && <p>Also works: {exercise.secondaryMuscles.join(', ')}.</p>}
+                {exercise.secondaryMuscles.length > 0 && (
+                  <p>Also works: {exercise.secondaryMuscles.join(', ')}.</p>
+                )}
               </CollapsibleContent>
             </Collapsible>
           </article>
@@ -182,7 +247,12 @@ export default function ExercisePicker({ onSelect, onCustom, onClose, replacing 
               type="button"
               variant="ghost"
               size="sm"
-              onClick={() => { setQuery(''); setCategory(''); setEquipment(''); setLimit(12); }}
+              onClick={() => {
+                setQuery('');
+                setCategory('');
+                setEquipment('');
+                setLimit(12);
+              }}
             >
               Clear search
             </Button>
@@ -195,7 +265,7 @@ export default function ExercisePicker({ onSelect, onCustom, onClose, replacing 
           type="button"
           variant="outline"
           className="w-full"
-          onClick={() => setLimit(value => Math.min(100, value + 12))}
+          onClick={() => setLimit((value) => Math.min(100, value + 12))}
           disabled={limit >= 100}
         >
           {limit >= 100 ? 'Narrow your search to see more' : 'Show more exercises'}
@@ -214,7 +284,18 @@ export default function ExercisePicker({ onSelect, onCustom, onClose, replacing 
           Use a custom exercise
         </Button>
         <span>
-          Data: <a href="https://github.com/hasaneyldrm/exercises-dataset" target="_blank" rel="noreferrer">exercises-dataset</a> · <a href="/licenses/exercises-dataset-LICENSE.txt" target="_blank" rel="noreferrer">MIT license</a>
+          Data:{' '}
+          <a
+            href="https://github.com/hasaneyldrm/exercises-dataset"
+            target="_blank"
+            rel="noreferrer"
+          >
+            exercises-dataset
+          </a>{' '}
+          ·{' '}
+          <a href="/licenses/exercises-dataset-LICENSE.txt" target="_blank" rel="noreferrer">
+            MIT license
+          </a>
         </span>
       </div>
     </section>
@@ -224,21 +305,50 @@ export default function ExercisePicker({ onSelect, onCustom, onClose, replacing 
 function CatalogDetails({ id }: { id: string }) {
   const { catalog, error, retry } = useCatalog();
   const exercise = catalog?.getCatalogExercise(id);
-  if (error) return (
-    <p className="training-help">
-      Couldn’t load the exercise.{' '}
-      <Button type="button" variant="link" size="sm" className="p-0 h-auto font-medium" onClick={retry}>
-        Try again
-      </Button>
-    </p>
-  );
-  if (!catalog) return <p className="training-help" role="status">Loading instructions…</p>;
-  if (!exercise) return <p className="training-help">This exercise is no longer in the current catalog. Your saved exercise and workout history are still available.</p>;
+  if (error)
+    return (
+      <p className="training-help">
+        Couldn’t load the exercise.{' '}
+        <Button
+          type="button"
+          variant="link"
+          size="sm"
+          className="p-0 h-auto font-medium"
+          onClick={retry}
+        >
+          Try again
+        </Button>
+      </p>
+    );
+  if (!catalog)
+    return (
+      <p className="training-help" role="status">
+        Loading instructions…
+      </p>
+    );
+  if (!exercise)
+    return (
+      <p className="training-help">
+        This exercise is no longer in the current catalog. Your saved exercise and workout history
+        are still available.
+      </p>
+    );
   return (
     <div className="exercise-reference-content">
-      <p><b>{label(exercise.target)}</b> · {label(exercise.equipment)}{exercise.secondaryMuscles.length > 0 ? ` · Also works ${exercise.secondaryMuscles.join(', ')}` : ''}</p>
-      <ol>{exercise.instructions.map((step, index) => <li key={index}>{step}</li>)}</ol>
-      <a href="https://github.com/hasaneyldrm/exercises-dataset" target="_blank" rel="noreferrer">Exercise instructions from exercises-dataset</a>
+      <p>
+        <b>{label(exercise.target)}</b> · {label(exercise.equipment)}
+        {exercise.secondaryMuscles.length > 0
+          ? ` · Also works ${exercise.secondaryMuscles.join(', ')}`
+          : ''}
+      </p>
+      <ol>
+        {exercise.instructions.map((step, index) => (
+          <li key={index}>{step}</li>
+        ))}
+      </ol>
+      <a href="https://github.com/hasaneyldrm/exercises-dataset" target="_blank" rel="noreferrer">
+        Exercise instructions from exercises-dataset
+      </a>
     </div>
   );
 }

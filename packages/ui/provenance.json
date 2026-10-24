@@ -1153,14 +1153,8 @@
       "trace",
       "typography"
     ],
-    "registryExtras": [
-      "form",
-      "sonner"
-    ],
-    "projectFoundations": [
-      "colors",
-      "spacing"
-    ],
+    "registryExtras": ["form", "sonner"],
+    "projectFoundations": ["colors", "spacing"],
     "navigationEntries": 70,
     "gaps": [],
     "limits": [

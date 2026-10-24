@@ -7,7 +7,13 @@ export function verifiedProxyIP(headers: IncomingHttpHeaders, proxySecret?: stri
   if (!proxySecret) return null;
   const proof = headers['x-corner-proxy-token'];
   const address = headers['x-corner-proxy-ip'];
-  if (typeof proof !== 'string' || typeof address !== 'string' || proof.length > 512 || address.length > 64) return null;
+  if (
+    typeof proof !== 'string' ||
+    typeof address !== 'string' ||
+    proof.length > 512 ||
+    address.length > 64
+  )
+    return null;
   const actual = Buffer.from(proof);
   const expected = Buffer.from(proxySecret);
   if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) return null;
@@ -17,6 +23,10 @@ export function verifiedProxyIP(headers: IncomingHttpHeaders, proxySecret?: stri
   return address;
 }
 
-export function requestClientIP(headers: IncomingHttpHeaders, socketAddress: string | undefined, proxySecret?: string): string {
+export function requestClientIP(
+  headers: IncomingHttpHeaders,
+  socketAddress: string | undefined,
+  proxySecret?: string,
+): string {
   return verifiedProxyIP(headers, proxySecret) || socketAddress || 'unknown';
 }

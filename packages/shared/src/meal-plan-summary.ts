@@ -36,14 +36,14 @@ const average = (value: Macros, dayCount: number): Macros => ({
 /** Keep precision through aggregation; formatting is the only rounding step. */
 export function getMealPlanSummary(state: AppState, selectedDate: string): MealPlanSummary {
   const dates = weekDates(selectedDate);
-  const recipes = new Map(state.recipes.map(recipe => [recipe.id, recipe]));
-  const days: MealPlanDaySummary[] = dates.map(date => ({
+  const recipes = new Map(state.recipes.map((recipe) => [recipe.id, recipe]));
+  const days: MealPlanDaySummary[] = dates.map((date) => ({
     date,
     planned: emptyMacros(),
     target: { ...targetForStateDate(state, date) },
     plannedMealCount: 0,
   }));
-  const byDate = new Map(days.map(day => [day.date, day]));
+  const byDate = new Map(days.map((day) => [day.date, day]));
   for (const entry of state.plan) {
     const day = byDate.get(entry.date);
     const recipe = recipes.get(entry.recipeId);
@@ -62,6 +62,6 @@ export function getMealPlanSummary(state: AppState, selectedDate: string): MealP
     averagePlanned: average(planned, dates.length),
     averageTarget: average(target, dates.length),
     plannedMealCount: days.reduce((total, day) => total + day.plannedMealCount, 0),
-    plannedDayCount: days.filter(day => day.plannedMealCount > 0).length,
+    plannedDayCount: days.filter((day) => day.plannedMealCount > 0).length,
   };
 }

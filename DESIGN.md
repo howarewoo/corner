@@ -12,17 +12,17 @@ Canonical light tokens live in [packages/ui/src/tokens.css](packages/ui/src/toke
 
 Use the existing CSS custom properties by purpose:
 
-| Tokens | Role |
-| --- | --- |
-| `--backdrop`, `--paper` | Sage-gray canvas and white primary shells |
-| `--surface-secondary`, `--surface-inset` | Sections and nested content, separated primarily by fill and spacing |
-| `--surface-hover`, `--surface-accent` | Hover feedback and selected/accent surfaces |
-| `--ink`, `--text`, `--muted` | Headings, body copy, and secondary information |
-| `--forest`, `--forest-hover`, `--on-accent` | Primary actions and their foreground |
-| `--input`, `--input-hover`, `--input-text` | Dark green-gray editable fields and light text |
-| `--progress`, `--progress-track` | Filled and remaining progress |
-| `--success-*`, `--warning-*`, `--danger-*` | Semantic surface/text pairs |
-| `--scrim` | Overlay behind modal navigation |
+| Tokens                                      | Role                                                                 |
+| ------------------------------------------- | -------------------------------------------------------------------- |
+| `--backdrop`, `--paper`                     | Sage-gray canvas and white primary shells                            |
+| `--surface-secondary`, `--surface-inset`    | Sections and nested content, separated primarily by fill and spacing |
+| `--surface-hover`, `--surface-accent`       | Hover feedback and selected/accent surfaces                          |
+| `--ink`, `--text`, `--muted`                | Headings, body copy, and secondary information                       |
+| `--forest`, `--forest-hover`, `--on-accent` | Primary actions and their foreground                                 |
+| `--input`, `--input-hover`, `--input-text`  | Dark green-gray editable fields and light text                       |
+| `--progress`, `--progress-track`            | Filled and remaining progress                                        |
+| `--success-*`, `--warning-*`, `--danger-*`  | Semantic surface/text pairs                                          |
+| `--scrim`                                   | Overlay behind modal navigation                                      |
 
 Editable inputs currently use the dark treatment; read-only and disabled fields use pale surfaces and a light color scheme. Preserve the distinction rather than normalizing individual forms ad hoc.
 
@@ -67,14 +67,14 @@ Workspace load and refresh errors use a persistent error toast with a Retry acti
 
 ## Components
 
-| Surface | Existing implementation and usage |
-| --- | --- |
-| Buttons, fields, navigation, empty states, recipe/food dialogs | Shared `@packages/ui` primitives; [corner-app.tsx](apps/web/src/components/corner-app.tsx) retains domain forms and layouts, not parallel primitive implementations |
-| Accounts and workspace entry | [account-access.tsx](apps/web/src/account-access.tsx), [main.tsx](apps/web/src/main.tsx), and standalone styles; preserve policy loading, verification/recovery states, and visible errors. Authenticated accounts open the workspace directly; profile editing and [workspace import](apps/web/src/import-workspace.tsx) live in Settings, not onboarding. |
-| Profile and targets | [profile-form.tsx](apps/web/src/profile-form.tsx); keep unset nutrition targets distinct from zero recommendations |
-| Workout logging and progress | [training-panel.tsx](apps/web/src/components/training-panel.tsx) and [training.css](apps/web/src/components/training.css); distinguish targets, editable prefills, and recorded sets |
-| AI connection and proposal review | [agent-panel.tsx](apps/web/src/agent-panel.tsx) and agent styles; retain current/proposed comparisons, explicit Apply, and stale-proposal feedback |
-| Food estimates | [food-estimator.tsx](apps/web/src/components/food-estimator.tsx); show clarification and assumptions, then an editable draft before saving |
+| Surface                                                        | Existing implementation and usage                                                                                                                                                                                                                                                                                                                           |
+| -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Buttons, fields, navigation, empty states, recipe/food dialogs | Shared `@packages/ui` primitives; [corner-app.tsx](apps/web/src/components/corner-app.tsx) retains domain forms and layouts, not parallel primitive implementations                                                                                                                                                                                         |
+| Accounts and workspace entry                                   | [account-access.tsx](apps/web/src/account-access.tsx), [main.tsx](apps/web/src/main.tsx), and standalone styles; preserve policy loading, verification/recovery states, and visible errors. Authenticated accounts open the workspace directly; profile editing and [workspace import](apps/web/src/import-workspace.tsx) live in Settings, not onboarding. |
+| Profile and targets                                            | [profile-form.tsx](apps/web/src/profile-form.tsx); keep unset nutrition targets distinct from zero recommendations                                                                                                                                                                                                                                          |
+| Workout logging and progress                                   | [training-panel.tsx](apps/web/src/components/training-panel.tsx) and [training.css](apps/web/src/components/training.css); distinguish targets, editable prefills, and recorded sets                                                                                                                                                                        |
+| AI connection and proposal review                              | [agent-panel.tsx](apps/web/src/agent-panel.tsx) and agent styles; retain current/proposed comparisons, explicit Apply, and stale-proposal feedback                                                                                                                                                                                                          |
+| Food estimates                                                 | [food-estimator.tsx](apps/web/src/components/food-estimator.tsx); show clarification and assumptions, then an editable draft before saving                                                                                                                                                                                                                  |
 
 Always start with the [shared shadcn/Base UI primitives](packages/ui/) and their shipped styling, not new app-local component markup or CSS. The [design app](apps/design/) presents live specimens; its [coverage record](apps/design/README.md) identifies APIs, provenance, and limits. Product account, profile, nutrition, training, and agent controls use shared Button, Input, Textarea, NativeSelect, Checkbox, ToggleGroup, Tabs, Collapsible, Dialog, AlertDialog, Alert, Badge, Empty, Progress, and Table components as applicable. Domain visualizations and feature layouts remain app-owned. Extend shared primitives for missing capabilities. Notifications use the shared Base UI `Toaster` and manager.
 

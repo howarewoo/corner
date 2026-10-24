@@ -10,5 +10,14 @@
   "licenseUrl": "/licenses/exercises-dataset-LICENSE.txt",
   "copyright": "Copyright (c) 2026 Hasan Emir Yıldırım",
   "scope": "Non-media exercise metadata and English instruction steps only. Images, GIFs, media IDs, and media URLs are excluded. The upstream media has separate licensing terms.",
-  "fields": ["id", "name", "category", "equipment", "target", "muscleGroup", "secondaryMuscles", "instructions"]
+  "fields": [
+    "id",
+    "name",
+    "category",
+    "equipment",
+    "target",
+    "muscleGroup",
+    "secondaryMuscles",
+    "instructions"
+  ]
 }

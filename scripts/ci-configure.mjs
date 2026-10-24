@@ -5,24 +5,46 @@ import { githubClient, pages } from './github.mjs';
 
 const fullContext = 'Test, build, and smoke check workspaces';
 const branches = ['main', 'staging'];
-const environmentBranches = { staging: 'staging', production: 'main', 'production-validation': 'main' };
+const environmentBranches = {
+  staging: 'staging',
+  production: 'main',
+  'production-validation': 'main',
+};
 
 export function protectionBody(current, required, appId) {
-  const existing = current?.required_status_checks?.checks ?? (current?.required_status_checks?.contexts ?? []).map(context => ({ context, app_id: -1 }));
-  const checks = existing.filter(check => check.context !== required).map(({ context, app_id }) => ({ context, app_id }));
+  const existing =
+    current?.required_status_checks?.checks ??
+    (current?.required_status_checks?.contexts ?? []).map((context) => ({ context, app_id: -1 }));
+  const checks = existing
+    .filter((check) => check.context !== required)
+    .map(({ context, app_id }) => ({ context, app_id }));
   checks.push({ context: required, app_id: appId });
   const reviews = current?.required_pull_request_reviews;
   return {
-    required_status_checks: { strict: true, checks }, enforce_admins: true,
+    required_status_checks: { strict: true, checks },
+    enforce_admins: true,
     required_pull_request_reviews: {
       dismiss_stale_reviews: reviews?.dismiss_stale_reviews ?? false,
       require_code_owner_reviews: reviews?.require_code_owner_reviews ?? false,
       required_approving_review_count: reviews?.required_approving_review_count ?? 0,
       require_last_push_approval: reviews?.require_last_push_approval ?? false,
-      ...(reviews?.dismissal_restrictions ? { dismissal_restrictions: { users: reviews.dismissal_restrictions.users.map(user => user.login), teams: reviews.dismissal_restrictions.teams.map(team => team.slug) } } : {}),
+      ...(reviews?.dismissal_restrictions
+        ? {
+            dismissal_restrictions: {
+              users: reviews.dismissal_restrictions.users.map((user) => user.login),
+              teams: reviews.dismissal_restrictions.teams.map((team) => team.slug),
+            },
+          }
+        : {}),
       bypass_pull_request_allowances: { users: [], teams: [], apps: [] },
     },
-    restrictions: current?.restrictions ? { users: current.restrictions.users.map(user => user.login), teams: current.restrictions.teams.map(team => team.slug), apps: current.restrictions.apps.map(app => app.slug) } : null,
+    restrictions: current?.restrictions
+      ? {
+          users: current.restrictions.users.map((user) => user.login),
+          teams: current.restrictions.teams.map((team) => team.slug),
+          apps: current.restrictions.apps.map((app) => app.slug),
+        }
+      : null,
     required_linear_history: current?.required_linear_history?.enabled ?? false,
     allow_force_pushes: false,
     allow_deletions: false,
@@ -36,11 +58,18 @@ export function protectionBody(current, required, appId) {
 function verifyProtection(observed, body, appId, branch) {
   const reviews = observed?.required_pull_request_reviews;
   const bypass = reviews?.bypass_pull_request_allowances;
-  if (!observed?.required_status_checks?.strict || !observed.enforce_admins?.enabled ||
-      observed.allow_force_pushes?.enabled !== false || observed.allow_deletions?.enabled !== false || !reviews ||
-      (bypass && ['users', 'teams', 'apps'].some(key => bypass[key]?.length)) ||
-      !isDeepStrictEqual(protectionBody(observed, fullContext, appId), body) ||
-      !observed.required_status_checks.checks?.some(check => check.context === fullContext && check.app_id === appId)) {
+  if (
+    !observed?.required_status_checks?.strict ||
+    !observed.enforce_admins?.enabled ||
+    observed.allow_force_pushes?.enabled !== false ||
+    observed.allow_deletions?.enabled !== false ||
+    !reviews ||
+    (bypass && ['users', 'teams', 'apps'].some((key) => bypass[key]?.length)) ||
+    !isDeepStrictEqual(protectionBody(observed, fullContext, appId), body) ||
+    !observed.required_status_checks.checks?.some(
+      (check) => check.context === fullContext && check.app_id === appId,
+    )
+  ) {
     throw new Error(`Branch ${branch} protection read-back failed.`);
   }
 }
@@ -48,77 +77,176 @@ function verifyProtection(observed, body, appId, branch) {
 async function verifyEnvironment(api, environment, branch, reviewerId) {
   const observed = await api(`/environments/${environment}`);
   const rules = observed.protection_rules ?? [];
-  const reviewerRules = rules.filter(rule => rule.type === 'required_reviewers');
-  const policies = await pages(api, `/environments/${environment}/deployment-branch-policies`, 'branch_policies');
+  const reviewerRules = rules.filter((rule) => rule.type === 'required_reviewers');
+  const policies = await pages(
+    api,
+    `/environments/${environment}/deployment-branch-policies`,
+    'branch_policies',
+  );
   const humanApproval = environment !== 'staging';
-  if (observed.can_admins_bypass !== false || observed.deployment_branch_policy?.protected_branches !== false ||
-      observed.deployment_branch_policy?.custom_branch_policies !== true ||
-      rules.some(rule => rule.type === 'wait_timer' && rule.wait_timer !== 0) ||
-      (humanApproval ? reviewerRules.length !== 1 || reviewerRules[0].prevent_self_review !== false ||
-        !reviewerRules[0].reviewers?.some(value => value.type === 'User' && value.reviewer?.id === reviewerId) : reviewerRules.length !== 0) ||
-      policies.length !== 1 || policies[0].name !== branch || policies[0].type !== 'branch') {
+  if (
+    observed.can_admins_bypass !== false ||
+    observed.deployment_branch_policy?.protected_branches !== false ||
+    observed.deployment_branch_policy?.custom_branch_policies !== true ||
+    rules.some((rule) => rule.type === 'wait_timer' && rule.wait_timer !== 0) ||
+    (humanApproval
+      ? reviewerRules.length !== 1 ||
+        reviewerRules[0].prevent_self_review !== false ||
+        !reviewerRules[0].reviewers?.some(
+          (value) => value.type === 'User' && value.reviewer?.id === reviewerId,
+        )
+      : reviewerRules.length !== 0) ||
+    policies.length !== 1 ||
+    policies[0].name !== branch ||
+    policies[0].type !== 'branch'
+  ) {
     throw new Error(`Environment ${environment} protection read-back failed.`);
   }
 }
 
 export async function configure({ api, reviewer, apply = false }) {
-  if (!/^[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?$/.test(reviewer ?? '')) throw new Error('Supply an eligible --reviewer login; owner approval is explicitly allowed.');
+  if (!/^[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?$/.test(reviewer ?? ''))
+    throw new Error('Supply an eligible --reviewer login; owner approval is explicitly allowed.');
   const repo = await api('');
-  if (!repo.permissions?.admin) throw new Error('Repository administration permission is required.');
+  if (!repo.permissions?.admin)
+    throw new Error('Repository administration permission is required.');
   const collaborator = await api(`/collaborators/${encodeURIComponent(reviewer)}/permission`);
-  if (!['admin', 'maintain', 'write', 'read'].includes(collaborator.permission) || !Number.isSafeInteger(collaborator.user?.id)) throw new Error('Reviewer is not an eligible repository collaborator.');
+  if (
+    !['admin', 'maintain', 'write', 'read'].includes(collaborator.permission) ||
+    !Number.isSafeInteger(collaborator.user?.id)
+  )
+    throw new Error('Reviewer is not an eligible repository collaborator.');
   const branchPlans = [];
   for (const branch of branches) {
     const ref = await api(`/git/ref/heads/${branch}`, { missing: true });
-    if (!ref) throw new Error(`Required branch ${branch} is missing. Create the persistent ${branch} branch explicitly before configuration; this helper never creates branches.`);
+    if (!ref)
+      throw new Error(
+        `Required branch ${branch} is missing. Create the persistent ${branch} branch explicitly before configuration; this helper never creates branches.`,
+      );
     for (const path of ['ci.yml', 'staging.yml', 'release.yml', 'release-validate.yml']) {
-      const content = await api(`/contents/.github/workflows/${path}?ref=${ref.object.sha}`, { missing: true });
-      if (!content) throw new Error(`Merge the complete reviewed workflows to ${branch} before configuration (${path} is missing).`);
+      const content = await api(`/contents/.github/workflows/${path}?ref=${ref.object.sha}`, {
+        missing: true,
+      });
+      if (!content)
+        throw new Error(
+          `Merge the complete reviewed workflows to ${branch} before configuration (${path} is missing).`,
+        );
     }
-    const runs = await pages(api, `/actions/workflows/ci.yml/runs?event=push&branch=${branch}&status=completed`, 'workflow_runs');
-    const full = runs.find(run => run.head_sha === ref.object.sha && run.conclusion === 'success' && run.event === 'push' && run.head_branch === branch && run.head_repository?.full_name === repo.full_name && run.path?.split('@')[0] === '.github/workflows/ci.yml');
+    const runs = await pages(
+      api,
+      `/actions/workflows/ci.yml/runs?event=push&branch=${branch}&status=completed`,
+      'workflow_runs',
+    );
+    const full = runs.find(
+      (run) =>
+        run.head_sha === ref.object.sha &&
+        run.conclusion === 'success' &&
+        run.event === 'push' &&
+        run.head_branch === branch &&
+        run.head_repository?.full_name === repo.full_name &&
+        run.path?.split('@')[0] === '.github/workflows/ci.yml',
+    );
     if (!full) throw new Error(`The exact current ${branch} revision must pass full CI first.`);
     const jobs = await pages(api, `/actions/runs/${full.id}/jobs?filter=latest`, 'jobs');
-    if (jobs.filter(job => job.name === fullContext).length !== 1 || !jobs.some(job => job.name === fullContext && job.conclusion === 'success')) throw new Error(`The required full CI job on ${branch} must have actually succeeded, not skipped.`);
+    if (
+      jobs.filter((job) => job.name === fullContext).length !== 1 ||
+      !jobs.some((job) => job.name === fullContext && job.conclusion === 'success')
+    )
+      throw new Error(
+        `The required full CI job on ${branch} must have actually succeeded, not skipped.`,
+      );
     const suite = await api(`/check-suites/${full.check_suite_id}`);
-    if (suite.app?.slug !== 'github-actions' || !Number.isSafeInteger(suite.app.id)) throw new Error('Cannot establish the required check source.');
+    if (suite.app?.slug !== 'github-actions' || !Number.isSafeInteger(suite.app.id))
+      throw new Error('Cannot establish the required check source.');
     const current = await api(`/branches/${branch}/protection`, { missing: true });
-    if (current?.required_linear_history?.enabled) throw new Error(`Branch ${branch} requires linear history, conflicting with long-lived merge-commit promotion. Resolve that policy explicitly before configuration.`);
-    branchPlans.push({ branch, sourceSha: ref.object.sha, appId: suite.app.id, protection: protectionBody(current, fullContext, suite.app.id) });
+    if (current?.required_linear_history?.enabled)
+      throw new Error(
+        `Branch ${branch} requires linear history, conflicting with long-lived merge-commit promotion. Resolve that policy explicitly before configuration.`,
+      );
+    branchPlans.push({
+      branch,
+      sourceSha: ref.object.sha,
+      appId: suite.app.id,
+      protection: protectionBody(current, fullContext, suite.app.id),
+    });
   }
-  const mutations = branchPlans.map(value => ({ path: `/branches/${value.branch}/protection`, method: 'PUT', body: value.protection }));
+  const mutations = branchPlans.map((value) => ({
+    path: `/branches/${value.branch}/protection`,
+    method: 'PUT',
+    body: value.protection,
+  }));
   for (const [environment, branch] of Object.entries(environmentBranches)) {
-    mutations.push({ path: `/environments/${environment}`, method: 'PUT', body: {
-      wait_timer: 0, prevent_self_review: false, can_admins_bypass: false,
-      reviewers: environment === 'staging' ? [] : [{ type: 'User', id: collaborator.user.id }],
-      deployment_branch_policy: { protected_branches: false, custom_branch_policies: true },
-    } });
+    mutations.push({
+      path: `/environments/${environment}`,
+      method: 'PUT',
+      body: {
+        wait_timer: 0,
+        prevent_self_review: false,
+        can_admins_bypass: false,
+        reviewers: environment === 'staging' ? [] : [{ type: 'User', id: collaborator.user.id }],
+        deployment_branch_policy: { protected_branches: false, custom_branch_policies: true },
+      },
+    });
     const existing = await api(`/environments/${environment}`, { missing: true });
-    const policies = existing ? await pages(api, `/environments/${environment}/deployment-branch-policies`, 'branch_policies') : [];
-    for (const policy of policies.filter(value => value.name !== branch || value.type !== 'branch')) {
-      mutations.push({ path: `/environments/${environment}/deployment-branch-policies/${policy.id}`, method: 'DELETE' });
+    const policies = existing
+      ? await pages(
+          api,
+          `/environments/${environment}/deployment-branch-policies`,
+          'branch_policies',
+        )
+      : [];
+    for (const policy of policies.filter(
+      (value) => value.name !== branch || value.type !== 'branch',
+    )) {
+      mutations.push({
+        path: `/environments/${environment}/deployment-branch-policies/${policy.id}`,
+        method: 'DELETE',
+      });
     }
-    if (!policies.some(policy => policy.name === branch && policy.type === 'branch')) mutations.push({ path: `/environments/${environment}/deployment-branch-policies`, method: 'POST', body: { name: branch, type: 'branch' } });
+    if (!policies.some((policy) => policy.name === branch && policy.type === 'branch'))
+      mutations.push({
+        path: `/environments/${environment}/deployment-branch-policies`,
+        method: 'POST',
+        body: { name: branch, type: 'branch' },
+      });
   }
   const repositorySettings = { default_branch: 'staging', delete_branch_on_merge: false };
-  const plan = { branches: branchPlans, requiredContext: fullContext, reviewer, environments: environmentBranches, mutations, repositorySettings };
+  const plan = {
+    branches: branchPlans,
+    requiredContext: fullContext,
+    reviewer,
+    environments: environmentBranches,
+    mutations,
+    repositorySettings,
+  };
   process.stdout.write(JSON.stringify(plan, null, 2) + '\n');
   if (!apply) return plan;
   for (const { branch, sourceSha } of branchPlans) {
-    if ((await api(`/git/ref/heads/${branch}`)).object.sha !== sourceSha) throw new Error(`Branch ${branch} moved after CI qualification; rerun configuration.`);
+    if ((await api(`/git/ref/heads/${branch}`)).object.sha !== sourceSha)
+      throw new Error(`Branch ${branch} moved after CI qualification; rerun configuration.`);
   }
   for (const { path, ...options } of mutations) await api(path, options);
-  for (const { branch, protection, appId } of branchPlans) verifyProtection(await api(`/branches/${branch}/protection`), protection, appId, branch);
-  for (const [environment, branch] of Object.entries(environmentBranches)) await verifyEnvironment(api, environment, branch, collaborator.user.id);
+  for (const { branch, protection, appId } of branchPlans)
+    verifyProtection(await api(`/branches/${branch}/protection`), protection, appId, branch);
+  for (const [environment, branch] of Object.entries(environmentBranches))
+    await verifyEnvironment(api, environment, branch, collaborator.user.id);
   await api('', { method: 'PATCH', body: repositorySettings });
   const observed = await api('');
-  if (observed.default_branch !== 'staging' || observed.delete_branch_on_merge !== false) throw new Error('Repository settings read-back failed.');
+  if (observed.default_branch !== 'staging' || observed.delete_branch_on_merge !== false)
+    throw new Error('Repository settings read-back failed.');
   return plan;
 }
 
 async function main() {
   const args = process.argv.slice(2);
-  const { values } = parseArgs({ args: args[0] === '--' ? args.slice(1) : args, options: { reviewer: { type: 'string' }, apply: { type: 'boolean' } } });
+  const { values } = parseArgs({
+    args: args[0] === '--' ? args.slice(1) : args,
+    options: { reviewer: { type: 'string' }, apply: { type: 'boolean' } },
+  });
   await configure({ api: githubClient(), reviewer: values.reviewer, apply: values.apply });
 }
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main().catch(error => { process.stderr.write(error.message + '\n'); process.exitCode = 1; });
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url))
+  main().catch((error) => {
+    process.stderr.write(error.message + '\n');
+    process.exitCode = 1;
+  });
