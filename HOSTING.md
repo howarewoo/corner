@@ -25,7 +25,8 @@ In **Workers & Pages → corner-web → Settings → Builds**, use:
 | Production branch | `main` |
 | Root directory | `/` (repository root, not `apps/web`) |
 | Build command | `pnpm run build:web:worker` |
-| Deploy command | `pnpm run deploy:web` |
+| Production deploy command | `pnpm run deploy:web` |
+| Preview deploy command | `pnpm run preview:web` |
 | Build environment | `NODE_VERSION=24.21.0`, `PNPM_VERSION=10.33.2` |
 | Dependency installation | Root `pnpm install --frozen-lockfile`; preserve the workspace lockfile |
 | Runtime service binding | `SERVER` → `corner-server`, supplied by `apps/web/wrangler.jsonc` |
@@ -33,9 +34,31 @@ In **Workers & Pages → corner-web → Settings → Builds**, use:
 
 The build/deploy commands select `apps/web/wrangler.jsonc` explicitly and use the repository's pinned Wrangler from the server workspace; the frontend build does not start or deploy the backend or apply migrations. `pnpm run build:web:worker` only builds/dry-runs. Keep the dashboard root at `/` for the shared workspace lockfile and dependencies; the configuration itself belongs to the web app. Do not use bare root `npx wrangler deploy`, which neither selects an app configuration nor guarantees the pinned tool version.
 
-Attach the frontend's exact HTTPS custom domain to **`corner-web`** in Cloudflare. Set backend `CORNER_ORIGIN` to that **frontend origin** and register the same origin with Neon Auth. Service-binding requests preserve the original URL, Origin, cookies, and response cookies. Keep `workers.dev` and preview URLs disabled; arbitrary preview origins are not authenticated application origins.
+Attach the frontend's exact HTTPS custom domain to **`corner-web`** in Cloudflare. Set production backend `CORNER_ORIGIN` to that **frontend origin** and register the same origin with production Neon Auth. Service-binding requests preserve the original URL, Origin, cookies, and response cookies. Production `workers.dev` and version URLs stay disabled. Branch Previews use their separately configured nonproduction backend below.
 
 Keep automatic Cloudflare Git builds **disabled on `corner-server`**: its protected release workflow below owns database migrations and backend promotion. An existing backend Worker without a Corner production ledger is not a completed bootstrap; the release workflow refuses to overwrite it. Reconcile its ownership/history under operator control before first release. This restriction applies to the backend, not the independently built frontend.
+
+### Isolated branch Previews
+
+Cloudflare Worker Previews require the `previews` block in `apps/web/wrangler.jsonc`. Production binds `SERVER` to `corner-server`; Previews explicitly bind it to **`corner-server-preview`**. Assets and compatibility settings stay at the top level. `preview_urls: false` controls production version URLs, not the separate Worker Previews feature. Use `pnpm run preview:web` for branch builds, not the production deploy command.
+
+Cloudflare Preview service bindings call the target Worker's production deployment; they do **not** select a matching backend branch Preview. Therefore `corner-server-preview` is a dedicated nonproduction Worker, selected by `--env preview` in `apps/server/wrangler.jsonc`. Frontend branches share its test accounts/data, but never intentionally share production accounts/data. There is no production-backend fallback.
+
+One-time setup, separate from the protected production release workflow:
+
+1. Provision an **empty nonproduction Neon database with its own managed Auth service**, preferably a separate project. Do not clone production accounts, sessions, or health records. The existing schema-only PR database workflow does not configure an application/Auth preview and is not a substitute. If starting from a schema-only copy, resolve migration-history baselining explicitly rather than blindly applying bootstrap migrations.
+2. Run `pnpm run build:server:preview`. In a controlled job with **only the nonproduction direct URL** injected as `DATABASE_URL_UNPOOLED`, run `node apps/server/dist/migrate.js --apply`. This direct command does not load root `.env` files. Never run a preview migration against production.
+3. Run `pnpm run deploy:server:preview` to create/update only `corner-server-preview`. Keep its public `workers.dev`/version URLs disabled; the frontend reaches it through the service binding. Before configuration is complete, it fails closed.
+4. Supply the nonproduction pooled `DATABASE_URL`, nonproduction `NEON_AUTH_BASE_URL`, and fresh independent `BETTER_AUTH_SECRET` / `CORNER_TOKEN_ENCRYPTION_KEY` with `pnpm --filter server exec wrangler secret put <SECRET_NAME> --env preview`. These are five separate settings including the origin list below; never copy production keys or upload `DATABASE_URL_UNPOOLED`.
+5. Build the frontend with `pnpm run build:web:worker`, then create its branch Preview with `pnpm run preview:web`. Register the returned **exact HTTPS Preview origin** with the **nonproduction** Neon Auth service. Store approved origins as a comma-separated `CORNER_PREVIEW_ORIGINS` secret using `pnpm --filter server exec wrangler secret put CORNER_PREVIEW_ORIGINS --env preview`. This list is not sensitive, but using a secret preserves account-specific hostnames across code deployments. Include no paths, trailing slashes, wildcards, or production origin. Register and allow each additional branch/deployment URL separately; remove it from both places when retired.
+6. Align `NEON_AUTH_REQUIRE_EMAIL_VERIFICATION` with the nonproduction Auth policy (checked in as `true`), configure its test email sender, and verify signup, verification, save/reload, sign-out, and password recovery on the Preview URL.
+
+The preview-only backend entrypoint accepts only explicitly listed HTTPS request origins and passes the matched origin to the unchanged hosted runtime. A missing list returns `503`; an unapproved origin returns `400`. An allowed origin cannot submit cross-origin writes to another allowed Preview. Production retains its single canonical-origin boundary. Protect public Preview URLs with Cloudflare Access when needed, and use synthetic test data.
+
+`pnpm run build:workers` dry-runs production and nonproduction backend bundles plus the frontend. `pnpm run smoke:workers` exercises both topologies locally with separate disposable schemas and local Auth fixtures. It does not deploy resources, configure live secrets/domains, or prove real inbox delivery.
+
+References: [Worker Previews configuration](https://developers.cloudflare.com/workers/previews/configuration/), [service-binding limitations](https://developers.cloudflare.com/workers/previews/resources/#limitations).
+
 
 ### Configure the origin and secrets
 

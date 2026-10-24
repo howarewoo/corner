@@ -16,6 +16,11 @@
   "services": [
     { "binding": "SERVER", "service": "corner-server" }
   ],
+  "previews": {
+    "services": [
+      { "binding": "SERVER", "service": "corner-server-preview" }
+    ]
+  },
   "observability": {
     "enabled": true,
     "logs": { "invocation_logs": false }

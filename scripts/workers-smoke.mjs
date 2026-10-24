@@ -16,16 +16,20 @@ const { Agent, fetch: fixtureFetch } = await import(require.resolve('undici'));
 const options = {};
 for (let index = 2; index < process.argv.length; index += 2) {
   const flag = process.argv[index];
-  if (!['--config', '--frontend-config', '--migration-entry', '--previous-config', '--previous-migration-entry'].includes(flag) || !process.argv[index + 1] || options[flag]) throw new Error(`Invalid smoke option: ${flag}`);
+  if (!['--config', '--frontend-config', '--frontend-preview-config', '--migration-entry', '--previous-config', '--previous-migration-entry'].includes(flag) || !process.argv[index + 1] || options[flag]) throw new Error(`Invalid smoke option: ${flag}`);
   options[flag] = resolve(process.argv[index + 1]);
 }
 if (Boolean(options['--previous-config']) !== Boolean(options['--previous-migration-entry'])) throw new Error('Previous Worker and migrator must be supplied together.');
-if (options['--frontend-config'] && (options['--config'] || options['--previous-config'])) throw new Error('Frontend smoke uses the current checkout builds only.');
+if (options['--frontend-config'] && options['--frontend-preview-config']) throw new Error('Select production or preview frontend smoke, not both.');
+const frontendConfig = options['--frontend-config'] ?? options['--frontend-preview-config'];
+const preview = Boolean(options['--frontend-preview-config']);
+if (frontendConfig && (options['--config'] || options['--previous-config'])) throw new Error('Frontend smoke uses the current checkout builds only.');
 if (!options['--config']) await access(join(root, 'apps/web/dist/index.html'));
 const candidateMigrator = options['--migration-entry'] ? await import(pathToFileURL(options['--migration-entry']).href) : undefined;
 const previousMigrator = options['--previous-migration-entry'] ? await import(pathToFileURL(options['--previous-migration-entry']).href) : undefined;
 const directory = await mkdtemp(join(tmpdir(), 'corner-workers-smoke-'));
-const origin = 'https://corner.example.test';
+const origin = preview ? 'https://feature-corner-web.example.test' : 'https://corner.example.test';
+const otherPreviewOrigin = 'https://other-corner-web.example.test';
 let backend;
 let worker;
 let dispatcher;
@@ -33,7 +37,8 @@ try {
   backend = await startSmokeServices(directory, origin, previousMigrator?.migrate ?? candidateMigrator?.migrate, candidateMigrator?.createDatabase);
   dispatcher = new Agent({ connect: { ca: await readFile(backend.certificate) } });
   const bindings = {
-    CORNER_ORIGIN: origin,
+    CORNER_ORIGIN: preview ? 'https://production.example.test' : origin,
+    ...(preview ? { CORNER_PREVIEW_ORIGINS: `${origin}, ${otherPreviewOrigin}` } : {}),
     DATABASE_URL: backend.databaseUrl,
     NEON_AUTH_BASE_URL: backend.authUrl,
     NEON_AUTH_REQUIRE_EMAIL_VERIFICATION: 'false',
@@ -90,19 +95,21 @@ try {
     await worker.dispose();
     await candidateMigrator.migrate(backend.database);
   }
-  if (options['--frontend-config']) {
+  if (frontendConfig) {
     const miniflareRequire = createRequire(require.resolve('wrangler'));
     const { Miniflare, convertV4MiniflareOptions } = await import(miniflareRequire.resolve('miniflare'));
     const workers = [];
     for (const [config, bundle, isServer] of [
-      [options['--frontend-config'], join(root, 'apps/web/.wrangler/worker/worker.js'), false],
-      [join(root, 'apps/server/wrangler.jsonc'), join(root, 'apps/server/dist/worker/worker.js'), true],
+      [frontendConfig, join(root, 'apps/web/.wrangler/worker/worker.js'), false],
+      [join(root, 'apps/server/wrangler.jsonc'), join(root, preview ? 'apps/server/dist/worker-preview/worker-preview.js' : 'apps/server/dist/worker/worker.js'), true],
     ]) {
       const original = JSON.parse(await readFile(config, 'utf8'));
-      const name = isServer ? 'corner-server' : original.name;
+      const selected = preview ? (isServer ? original.env?.preview : original.previews) : original;
+      if (!selected) throw new Error(`Missing preview configuration in ${config}.`);
+      const name = isServer ? (preview ? selected.name : 'corner-server') : original.name;
       const localConfig = join(directory, `${name}.json`);
       await writeFile(localConfig, JSON.stringify({
-        ...original, name, main: bundle,
+        ...original, ...selected, name, main: bundle,
         assets: { ...original.assets, directory: resolve(dirname(config), original.assets.directory) },
       }));
       const { workerOptions, externalWorkers } = unstable_getMiniflareWorkerOptions(localConfig);
@@ -125,6 +132,10 @@ try {
   await worker.ready;
   const call = (path, options = {}) => worker.fetch(new URL(path, origin), { ...options, signal: AbortSignal.timeout(20_000) });
   const post = (path, body, headers = {}) => call(path, { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body) });
+  if (preview) {
+    assert.equal((await call(`${otherPreviewOrigin}/api/health`)).status, 200, 'Each explicitly allowed preview origin must work.');
+    assert.equal((await post('/api/auth/sign-up/email', {}, { Origin: otherPreviewOrigin })).status, 403, 'Different allowed previews must still fail cross-origin writes.');
+  }
   if (priorCookie) {
     const response = await call('/api/state', { headers: { Cookie: priorCookie } });
     assert.equal(response.status, 200, await response.clone().text());
@@ -203,7 +214,7 @@ try {
   assert.equal((await post('/api/agent/runs', { requestId: 'workers-plan-request-123', prompt: 'Plan my training', referenceDate: '2026-10-23' }, { Cookie: alice })).status, 503);
   assert.equal((await post('/api/auth/sign-out', {}, { Cookie: alice })).status, 200);
   assert.equal((await call('/api/state', { headers: { Cookie: alice } })).status, 401);
-  process.stdout.write('Passed Workers assets, canonical origin, secure account cookies, isolated PostgreSQL writes/retries, sign-out, and hosted AI gate.\nNo live cloud, account email, or model requests were made.\n');
+  process.stdout.write(`Passed ${preview ? 'isolated preview' : 'production'} Workers assets, canonical origin, secure account cookies, isolated PostgreSQL writes/retries, sign-out, and hosted AI gate.\nNo live cloud, account email, or model requests were made.\n`);
 } finally {
   await worker?.dispose();
   await dispatcher?.close();

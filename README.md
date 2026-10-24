@@ -60,13 +60,16 @@ The build compiles `@packages/shared`, then builds `server` and `web` as separat
 | `pnpm run smoke:dev` | Actual two-app development proxy, session, and shared-catalog checks |
 | `pnpm start` | The compiled production server and built web app |
 | `pnpm run db:migrate` | Apply checked-in PostgreSQL migrations through `DATABASE_URL_UNPOOLED`, after a build |
-| `pnpm run build:workers` | Build all workspaces and dry-run both Cloudflare Worker bundles without deploying |
+| `pnpm run build:workers` | Build all workspaces and dry-run frontend, production backend, and isolated preview backend bundles |
 | `pnpm run build:web:worker` | Build the web workspace and dry-run only the `corner-web` bundle |
 | `pnpm run deploy:web` | Deploy only `corner-web`, binding its API gateway to `corner-server` |
+| `pnpm run preview:web` | Deploy a branch Preview of `corner-web`, bound only to `corner-server-preview` |
+| `pnpm run build:server:preview` | Build the server/web dependencies and dry-run the isolated preview backend |
+| `pnpm run deploy:server:preview` | Deploy only the nonproduction `corner-server-preview` Worker |
 | `pnpm run verify -- --plan` | Show conservative changed-path selection without running checks |
 | `pnpm run verify` | Run selected local checks; `-- --full` forces the complete qualification |
 | `pnpm run test:ci` | Native Node CI, release, and artifact regression tests |
-| `pnpm run smoke:workers` | Both local Workers with a real service binding, PostgreSQL, and HTTPS Auth fixture, after `build:workers` |
+| `pnpm run smoke:workers` | Production and isolated-preview Worker topologies with real service bindings, disposable PostgreSQL, and HTTPS Auth fixtures, after `build:workers` |
 
 For a focused build, use `pnpm run build --filter=server` or `pnpm run build --filter=web`. Turbo also builds their shared dependency. Each app declares its own dependencies; domain models and validation are imported through `@packages/shared/<module>` rather than relative paths into the other app.
 
@@ -184,7 +187,7 @@ Hosted mode requires an HTTPS origin, the Neon Postgres/Auth URLs, and independe
 
 Neon owns password recovery, verification codes, session expiry, and managed service rate limits. Corner retains its code-entry, reset-password, loading, and error screens, and requires a live managed session before every protected request. No real inbox delivery is implied by an enabled policy.
 
-For **Cloudflare Workers**, follow [HOSTING.md → Cloudflare Workers](HOSTING.md#cloudflare-workers). Deploy the frontend as `corner-web` using `apps/web/wrangler.jsonc` and the [dashboard build settings](HOSTING.md#cloudflare-dashboard-setup); it forwards same-origin API requests to the separate `corner-server` Worker through a service binding. `pnpm run build:web:worker` builds/dry-runs the frontend and `pnpm run deploy:web` publishes only that Worker. Backend main CI packages a tested Worker, web assets, and standalone migrator; the approved backend release workflow promotes that exact artifact without rebuilding. Configure the frontend's canonical custom domain and preserve the server's application keys; backend bootstrap and operational validation are explicit. `pnpm run build:workers` builds/dry-runs both Workers without publishing.
+For **Cloudflare Workers**, follow [HOSTING.md → Cloudflare Workers](HOSTING.md#cloudflare-workers). Deploy the frontend as `corner-web` using `apps/web/wrangler.jsonc` and the [dashboard build settings](HOSTING.md#cloudflare-dashboard-setup); it forwards same-origin API requests to the separate `corner-server` Worker through a service binding. `pnpm run build:web:worker` builds/dry-runs the frontend and `pnpm run deploy:web` publishes only that production Worker. Branch builds use `pnpm run preview:web` with the [isolated preview backend](HOSTING.md#isolated-branch-previews), never a production-backend fallback. Backend main CI packages a tested Worker, web assets, and standalone migrator; the approved backend release workflow promotes that exact artifact without rebuilding. Configure the frontend's canonical custom domain and preserve the server's application keys; backend bootstrap and operational validation are explicit. `pnpm run build:workers` builds/dry-runs all Worker bundles without publishing.
 
 For a **server you control**, the same guide covers one Corner container behind Caddy. `scripts/init-hosted.mjs` creates independent private keys without printing or overwriting them; it does not create a cloud server or configure DNS or SMTP.
 

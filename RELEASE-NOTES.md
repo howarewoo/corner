@@ -1,3 +1,15 @@
+# Isolated Cloudflare branch Previews
+
+Added the required frontend `previews` configuration and pinned `preview:web` command. Branch Previews bind `SERVER` only to the dedicated `corner-server-preview` Worker; production continues to target `corner-server`. The backend's named `preview` environment uses a preview-only entrypoint and separately supplied Neon database/Auth/key secrets. An exact HTTPS-origin allowlist selects the existing hosted runtime's origin without weakening production's canonical-origin or write/session checks.
+
+Preview origins must also be registered with the nonproduction managed Auth service. Branch Previews share nonproduction accounts/data, not production resources. Missing origin configuration fails closed; unknown origins, wildcard/suffix/port mismatches, HTTP origins, and writes across different approved Preview origins remain rejected. [HOSTING.md](HOSTING.md#isolated-branch-previews) documents backend setup, isolated migrations/secrets, and separate production/Preview dashboard commands.
+
+Observed on Node 24.21.0: all three Worker bundle dry runs, workspace type checks, lint (48 existing warnings), 11/11 server and 3/3 web test files, and 45 native CI/release regressions passed. Actual local workerd smokes passed for production and isolated-preview topologies with real service bindings, disposable PostgreSQL schemas, and local HTTPS Auth fixtures, including signup/cookies, saved writes/retries, sign-out, hosted AI restrictions, multiple approved Preview origins, and cross-origin rejection.
+
+No live Worker Preview was deployed, nonproduction Neon resources provisioned, cloud secrets/domain registrations changed, real account email sent, or model inference requested. Cloudflare `wrangler preview` has no dry-run option; local bundle/runtime verification does not establish live cloud deployment or inbox delivery.
+
+---
+
 # Branch simplification
 
 Simplified server authentication by removing a pass-through principal helper and letting the account proxy attach its own cookies. Subscription concurrency checks now select only the stored version instead of fetching an entire account row; owner locks, generation checks, atomic commits, and both shutdown drains remain intact.
