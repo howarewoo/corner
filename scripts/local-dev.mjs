@@ -283,7 +283,7 @@ async function serve(config, engine, port) {
     // Compiled server imports do not exist until the build above completes.
     const { startLocalServices } = await import('../apps/server/scripts/local-runtime.mjs');
     if (stopRequested) return;
-    services = await startLocalServices({ config, databaseUrl, origin, directory: stateDirectory, ...certificates });
+    services = await startLocalServices({ config, databaseUrl, origin, apiPort: port + 1, directory: stateDirectory, ...certificates });
     if (stopRequested) return;
     controlServer = createServer(async (req, res) => {
       if (req.method !== 'POST' || req.headers.authorization !== `Bearer ${config.controlSecret}`) {

@@ -9,6 +9,7 @@ import { createServer as createHTTPServer } from 'node:http';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { isolatedEnvironment, localArguments, localCertificate, ownedPostgres, validateLocalConfig } from '../local-dev.mjs';
+import { loadRuntimeConfig } from '../../apps/server/src/runtime-config.ts';
 
 const config = {
   format: 1, workspace: 'test-workspace', instance: 'a'.repeat(32),
@@ -70,6 +71,27 @@ test('CLI permits loopback port selection but requires explicit destructive conf
     ['seed', '--database-url=postgresql://production.invalid/private'], ['up', '--origin=https://staging.invalid'],
     ['down', '--project=production'], ['seed', '--port=45100'],
   ]) assert.throws(() => localArguments(args));
+});
+
+test('browser port 3001 uses API port 3002 in local services and development children', async () => {
+  const { port } = localArguments(['up', '--port=3001']);
+  const controller = await readFile(new URL('../local-dev.mjs', import.meta.url), 'utf8');
+  const runtime = await readFile(new URL('../../apps/server/scripts/local-runtime.mjs', import.meta.url), 'utf8');
+  assert.match(controller, /startLocalServices\(\{[^\n]*apiPort: port \+ 1/);
+  assert.match(controller, /CORNER_DEV_API_PORT: String\(port \+ 1\)/);
+  assert.match(runtime, /startLocalServices\(\{[^\n]*apiPort/);
+  assert.match(runtime, /CORNER_DEV_API_PORT: String\(apiPort\)/);
+  const configuration = loadRuntimeConfig({
+    DATABASE_URL: 'postgresql://127.0.0.1/corner_test',
+    NEON_AUTH_BASE_URL: 'https://127.0.0.1:45901/neondb/auth',
+    CORNER_ORIGIN: `http://127.0.0.1:${port}`,
+    CORNER_DEV_API_PORT: String(port + 1),
+    CORNER_DEPLOYMENT: 'local',
+    BETTER_AUTH_SECRET: config.authSecret,
+    CORNER_TOKEN_ENCRYPTION_KEY: Buffer.alloc(32, 7).toString('base64'),
+  }, { development: true, dataDir: '/unused' });
+  assert.equal(configuration.origin, 'http://127.0.0.1:3001');
+  assert.equal(configuration.port, 3002);
 });
 
 test('local Auth certificates survive restart and renew before expiry without disabling TLS validation', async (context) => {

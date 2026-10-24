@@ -13,7 +13,7 @@ import { WorkspaceStore } from '../dist/store.js';
 import { loadConfig } from '../dist/config.js';
 import { initializeLocalDatabase, localAuthOptions, seedLocalUsers } from './local-services.mjs';
 
-export async function startLocalServices({ config, databaseUrl, origin, directory, key, certificate }) {
+export async function startLocalServices({ config, databaseUrl, origin, apiPort, directory, key, certificate }) {
   const database = createDatabase(databaseUrl);
   let server, managed, seeding;
   const close = async () => {
@@ -52,6 +52,7 @@ export async function startLocalServices({ config, databaseUrl, origin, director
     await managed.$context;
     const appConfig = loadConfig({
       DATABASE_URL: databaseUrl, NEON_AUTH_BASE_URL: authUrl, CORNER_ORIGIN: origin,
+      CORNER_DEV_API_PORT: String(apiPort),
       CORNER_DATA_DIR: join(directory, 'data'), CORNER_DEPLOYMENT: 'local',
     }, { development: true });
     const app = createApp({
