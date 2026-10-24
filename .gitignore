@@ -10,4 +10,12 @@ dist/
 *.tgz
 *.tar.gz
 coverage/
+/apps/web/tests/.generated/
 *.log
+.neon
+.wrangler/
+.dev.vars
+.dev.vars.*
+.corner-release/
+.verification/
+/.corner-local/

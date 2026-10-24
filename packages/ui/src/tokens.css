@@ -1,0 +1,46 @@
+/* Canonical Corner light tokens, shared with the product stylesheet. */
+:root {
+  --backdrop: #edf2ef;
+  --paper: #ffffff;
+  --surface-secondary: #edf2ef;
+  --surface-inset: #e3e6e4;
+  --surface-hover: #e4ebe7;
+  --surface-accent: #e3e6e4;
+  --soft: var(--surface-secondary);
+  --ink: #242924;
+  --text: #242924;
+  --muted: #242924;
+  --forest: #637469;
+  --forest-hover: #5b6b61;
+  --on-accent: var(--paper);
+  --input: #637469;
+  --input-hover: #637469;
+  --input-text: var(--on-accent);
+  --input-placeholder: var(--input-text);
+  --input-suggested: var(--input);
+  --progress: var(--forest);
+  --progress-track: #d7dfd9;
+  --success-surface: var(--surface-accent);
+  --success-text: var(--ink);
+  --neutral-surface: var(--surface-inset);
+  --neutral-text: var(--muted);
+  --warning-surface: #f6edcf;
+  --warning-text: #6d5322;
+  --danger-surface: #f6e6e1;
+  --danger-text: #803e32;
+  --scrim: rgb(36 41 36 / 28%);
+  --inverse-hover: rgb(255 255 255 / 14%);
+  --radius: 24px;
+  --radius-control: 14px;
+  --shadow: none;
+  --shadow-shell: 0 10px 36px rgb(36 41 36 / 7%);
+  --shadow-layer: 0 24px 90px rgb(36 41 36 / 16%);
+  --shadow-floating: 0 12px 44px rgb(36 41 36 / 16%);
+  --shell-gutter: 20px;
+  --shell-gap: 20px;
+  --sidebar-width: 238px;
+  --background: var(--backdrop);
+  --foreground: var(--ink);
+  --border: transparent;
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+}

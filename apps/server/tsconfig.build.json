@@ -7,11 +7,6 @@
     "outDir": "dist",
     "sourceMap": false
   },
-  "include": [
-    "src"
-  ],
-  "exclude": [
-    "tests",
-    "dist"
-  ]
+  "include": ["src"],
+  "exclude": ["tests", "src/**/__tests__/**", "dist"]
 }
