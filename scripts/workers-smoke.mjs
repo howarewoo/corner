@@ -15,6 +15,8 @@ const { experimental_readRawConfig, unstable_getMiniflareWorkerOptions } = await
   require.resolve('wrangler')
 );
 const { Agent, fetch: fixtureFetch } = await import(require.resolve('undici'));
+const { createORPCClient } = await import(require.resolve('@orpc/client'));
+const { RPCLink } = await import(require.resolve('@orpc/client/fetch'));
 const options = {};
 for (let index = 2; index < process.argv.length; index += 2) {
   const flag = process.argv[index];
@@ -161,10 +163,10 @@ try {
       .getSetCookie()
       .map((cookie) => cookie.split(';', 1)[0])
       .join('; ');
-    const previousWrite = await worker.fetch(new URL('/api/mutate', origin), {
+    const previousWrite = await worker.fetch(new URL('/api/rpc/workspace/mutate', origin), {
       method: 'POST',
       headers: { Origin: origin, 'Content-Type': 'application/json', Cookie: priorCookie },
-      body: JSON.stringify({
+      body: JSON.stringify({ json: {
         requestId: 'prior-record-before-migration',
         mutation: {
           type: 'log.save',
@@ -178,16 +180,18 @@ try {
             createdAt: '2026-10-22T18:00:00.000Z',
           },
         },
-      }),
+      } }),
       signal: AbortSignal.timeout(20_000),
     });
     assert.equal(previousWrite.status, 200, await previousWrite.clone().text());
-    const response = await worker.fetch(new URL('/api/state', origin), {
-      headers: { Cookie: priorCookie },
+    const response = await worker.fetch(new URL('/api/rpc/workspace/get', origin), {
+      method: 'POST',
+      headers: { Origin: origin, 'Content-Type': 'application/json', Cookie: priorCookie },
+      body: '{}',
       signal: AbortSignal.timeout(20_000),
     });
     assert.equal(response.status, 200, await response.clone().text());
-    priorState = await response.json();
+    priorState = (await response.json()).json;
     await worker.dispose();
     await candidateMigrator.migrate(backend.database);
   }
@@ -197,12 +201,14 @@ try {
     await worker.ready;
     const oldFrontend = await worker.fetch(new URL('/', origin));
     assert.equal(oldFrontend.status, 200);
-    const saved = await worker.fetch(new URL('/api/state', origin), {
-      headers: { Cookie: priorCookie },
+    const saved = await worker.fetch(new URL('/api/rpc/workspace/get', origin), {
+      method: 'POST',
+      headers: { Origin: origin, 'Content-Type': 'application/json', Cookie: priorCookie },
+      body: '{}',
     });
     assert.equal(saved.status, 200);
     assert.deepEqual(
-      await saved.json(),
+      (await saved.json()).json,
       priorState,
       'Old frontend binding must reach the new backend without losing prior records.',
     );
@@ -221,11 +227,13 @@ try {
       headers: { Origin: origin, 'Content-Type': 'application/json', ...headers },
       body: JSON.stringify(body),
     });
+  const rpc = (procedure, input, headers = {}) =>
+    post(`/api/rpc/${procedure}`, { json: input }, headers);
   if (priorCookie) {
-    const response = await call('/api/state', { headers: { Cookie: priorCookie } });
+    const response = await rpc('workspace/get', undefined, { Cookie: priorCookie });
     assert.equal(response.status, 200, await response.clone().text());
     assert.deepEqual(
-      await response.json(),
+      (await response.json()).json,
       priorState,
       'Candidate schema migration must preserve the previous workspace.',
     );
@@ -273,11 +281,30 @@ try {
   }
   const alice = await signup('Alice');
   const bob = await signup('Bob');
+  assert.equal(
+    (await rpc('workspace/mutate', { padding: 'x'.repeat(192 * 1024) }, { Cookie: alice })).status,
+    413,
+    'Native mutation envelopes must retain the procedure body limit.',
+  );
+  const client = (cookie) => createORPCClient(new RPCLink({
+    url: `${origin}/api/rpc`,
+    headers: { Origin: origin, Cookie: cookie },
+    fetch: (request, init) => worker.fetch(request.url, {
+      ...init,
+      method: request.method,
+      headers: Object.fromEntries(request.headers),
+      body: request.body,
+      duplex: 'half',
+      signal: request.signal,
+    }),
+  }));
   const state = async (cookie) => {
-    const response = await call('/api/state', { headers: { Cookie: cookie } });
+    const response = await rpc('workspace/get', undefined, { Cookie: cookie });
     assert.equal(response.status, 200, await response.clone().text());
     assert.equal(response.headers.get('Cache-Control'), 'private, no-store');
-    return response.json();
+    const document = (await response.json()).json;
+    assert.deepEqual(await client(cookie).workspace.get(), document);
+    return document;
   };
   const initial = await state(alice);
   const body = {
@@ -288,17 +315,17 @@ try {
     },
   };
   assert.equal(
-    (await post('/api/mutate', body, { Cookie: alice, Origin: 'https://foreign.example.test' }))
+    (await rpc('workspace/mutate', body, { Cookie: alice, Origin: 'https://foreign.example.test' }))
       .status,
     403,
   );
   const writes = await Promise.all([
-    post('/api/mutate', body, { Cookie: alice }),
-    post('/api/mutate', body, { Cookie: alice }),
+    rpc('workspace/mutate', body, { Cookie: alice }),
+    rpc('workspace/mutate', body, { Cookie: alice }),
   ]);
   for (const response of writes) {
     assert.equal(response.status, 200, await response.clone().text());
-    assert.equal((await response.json()).revision, initial.revision + 1);
+    assert.equal((await response.json()).json.revision, initial.revision + 1);
   }
   assert.equal((await state(alice)).state.settings.name, 'Saved on Workers');
   assert.equal((await state(bob)).state.settings.name, 'Bob');
@@ -345,8 +372,8 @@ try {
       },
     ];
     for (const [index, mutation] of fixtures.entries()) {
-      const response = await post(
-        '/api/mutate',
+      const response = await rpc(
+        'workspace/mutate',
         { requestId: `candidate-fixture-write-${index}`, mutation },
         { Cookie: alice },
       );
@@ -366,8 +393,8 @@ try {
       200,
       'Recovery must support current frontend with previous backend.',
     );
-    const oldWrite = await post(
-      '/api/mutate',
+    const oldWrite = await rpc(
+      'workspace/mutate',
       {
         requestId: 'previous-version-write-123',
         mutation: {
@@ -414,16 +441,20 @@ try {
       'Redeployed candidate pair must preserve recovery writes.',
     );
   }
-  const connection = await (
-    await call('/api/ai/connection', { headers: { Cookie: alice } })
-  ).json();
+  const connection = (await (
+    await rpc('ai/connection', undefined, { Cookie: alice })
+  ).json()).json;
   assert.equal(connection.enabled, false);
   assert.equal(connection.available, false);
-  assert.equal((await post('/api/ai/connect', {}, { Cookie: alice })).status, 409);
+  const disabledConnection = await rpc('ai/connect', {}, { Cookie: alice });
+  assert.equal(disabledConnection.status, 409);
+  const disabledError = (await disabledConnection.json()).json;
+  assert.equal(disabledError.code, 'CORNER_ERROR');
+  assert.equal(typeof disabledError.data.code, 'string');
   assert.equal(
     (
-      await post(
-        '/api/agent/runs',
+      await rpc(
+        'agent/start',
         {
           requestId: 'workers-plan-request-123',
           prompt: 'Plan my training',
@@ -435,7 +466,9 @@ try {
     503,
   );
   assert.equal((await post('/api/auth/sign-out', {}, { Cookie: alice })).status, 200);
-  assert.equal((await call('/api/state', { headers: { Cookie: alice } })).status, 401);
+  const signedOut = await rpc('workspace/get', undefined, { Cookie: alice });
+  assert.equal(signedOut.status, 401);
+  assert.equal((await signedOut.json()).json.code, 'SIGN_IN_REQUIRED');
   process.stdout.write(
     `Passed paired Workers assets, both version identities, canonical origin, secure account cookies, isolated PostgreSQL writes/retries, sign-out, and hosted AI gate${previousMigrator ? ', including intermediate and recovery combinations' : ''}.\nNo live cloud, account email, or model requests were made.\n`,
   );

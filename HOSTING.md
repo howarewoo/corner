@@ -17,6 +17,8 @@ Each environment has a fixed two-Worker deployment. Only the backend holds crede
 
 One exact HTTPS custom-domain origin per environment serves assets, `/api/*`, and `/auth/callback`. The backend validates that canonical origin; no browser backend URL or cross-origin cookie setup is needed. Frontend bindings contain no database/Auth credentials. `workers.dev`, version URLs, and feature-branch Previews remain disabled. Hosted ChatGPT connections stay disabled.
 
+The unreleased application's initial deployment baseline is native oRPC at `/api/rpc`. The browser and backend share `@packages/api`; managed Auth `/api/auth`, OAuth `/auth/callback`, and `GET /api/health` retain their own protocols. Old application REST URLs and historical unpublished REST artifacts are not supported. No maintenance mode, REST upgrade bridge, or cutover controller is added; live admin/cutover actions below remain separately authorized operator work.
+
 Workers use request-scoped PostgreSQL pools and the existing owner locks, transactions, and mutation receipts. They never initialize process-wide agent recovery, read repository environment files, or start inference. Stop the old Node process before moving its database to Workers.
 
 Prerequisites: a Cloudflare account/domain, the existing Neon project with production and schema-only staging branches, independent managed Auth/configuration for staging, Node 24, and pinned pnpm dependencies. No new paid Cloudflare binding or Neon plan upgrade is assumed. Schema-only branches consume Neon's root-branch quota; confirm available capacity before provisioning.
@@ -110,13 +112,13 @@ Review evidence records a **human assertion**, not an automated proof or a claim
 
 After the release merge, synchronize main back into staging before the next release. For diverged branches, base a temporary sync branch on current staging, merge main into it, pass CI, and merge its PR into staging; direct main-to-staging PRs can otherwise fail strict up-to-date protection. Use merge commits for both promotion and synchronization.
 
-A production-credential-free plan qualifies the candidate and current pair on disposable PostgreSQL: save records through the previous pair, migrate, exercise old frontend/new backend, write candidate food/request/grocery/training records, then verify new frontend/old backend and the recovered pair read/mutate them without loss. Representative fixtures are not proof for every possible future document. Applied SQL cannot be removed or rewritten.
+A production-credential-free plan qualifies future native-RPC candidate and current pairs on disposable PostgreSQL: save records through the previous pair, migrate, exercise old frontend/new backend, write candidate food/request/grocery/training records, then verify new frontend/old backend and the recovered pair read/mutate them without loss. This same-protocol qualification does not support unpublished REST artifacts. Representative fixtures are not proof for every possible future document. Applied SQL cannot be removed or rewritten.
 
 Review exact source/artifact/digests, baseline/schema IDs, runtime revision and human evidence, then approve `production`. Serialized effects recheck the baseline and execution run/attempt. Both versions upload before the schema journal and packaged migration; backend traffic switches first, a `backend-deployed` receipt preserves partial progress, and frontend traffic switches second. Only confirmed native version IDs and public checks produce public success. There is no atomic cross-Worker switch; qualification covers the intermediate combinations.
 
 ### Verify, operate, and recover
 
-Public checks require both `X-Corner-Version` and `X-Corner-Frontend-Version` identities, canonical origin/assets/reset links, security headers, and anonymous/cross-origin boundaries. Health does not prove database/Auth availability, inbox delivery, Access policy completeness, or human review.
+Public checks require both `X-Corner-Version` and `X-Corner-Frontend-Version` identities, canonical origin/assets/reset links, security headers, and anonymous/cross-origin boundaries. Anonymous access is tested by an actual canonical-Origin POST to native `workspace.get`, requiring its native `SIGN_IN_REQUIRED` error, not an obsolete URL's HTTP status. Health does not prove database/Auth availability, inbox delivery, Access policy completeness, or human review.
 
 States remain distinct: `schema-attempted`, `backend-deployed`, `deployed`, `public-passed`, then staging/routine production `complete` or production `operational-validated`. Migration failure leaves traffic unchanged and retains the possible schema advance. Frontend failure retains backend-only progress; public failure leaves the deployed pair incomplete.
 

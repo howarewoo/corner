@@ -38,6 +38,11 @@
         "NODE_EXTRA_CA_CERTS"
       ]
     },
+    "@packages/api#dev": {
+      "dependsOn": ["build"],
+      "cache": false,
+      "persistent": true
+    },
     "@packages/shared#dev": {
       "dependsOn": ["build"],
       "cache": false,

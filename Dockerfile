@@ -6,6 +6,7 @@ COPY apps/server/package.json ./apps/server/package.json
 COPY apps/web/package.json ./apps/web/package.json
 COPY apps/design/package.json ./apps/design/package.json
 COPY packages/shared/package.json ./packages/shared/package.json
+COPY packages/api/package.json ./packages/api/package.json
 COPY packages/ui/package.json ./packages/ui/package.json
 
 FROM workspace AS build
@@ -34,6 +35,7 @@ COPY --from=build --chown=node:node /app/apps/server/dist ./apps/server/dist
 COPY --from=build --chown=node:node /app/apps/server/migrations ./apps/server/migrations
 COPY --from=build --chown=node:node /app/apps/web/dist ./apps/web/dist
 COPY --from=build --chown=node:node /app/packages/shared/dist ./packages/shared/dist
+COPY --from=build --chown=node:node /app/packages/api/dist ./packages/api/dist
 COPY --from=build --chown=node:node /app/scripts/healthcheck.mjs ./scripts/healthcheck.mjs
 RUN mkdir -p /app/data && chown node:node /app/data && chmod 700 /app/data
 USER node

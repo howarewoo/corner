@@ -8,7 +8,7 @@ export class RequestError extends Error {
   }
 }
 
-export async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
+async function authRequest<T>(path: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(path, {
     ...options,
     credentials: 'same-origin',
@@ -25,8 +25,6 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
     /* An empty successful response is valid. */
   }
   if (!response.ok) {
-    if (response.status === 401 && payload?.code === 'SIGN_IN_REQUIRED')
-      window.dispatchEvent(new Event('corner:session-expired'));
     throw new RequestError(
       typeof payload?.error === 'string'
         ? payload.error
@@ -40,7 +38,7 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
   return payload as T;
 }
 
-export const post = <T>(path: string, body: unknown, signal?: AbortSignal) =>
-  api<T>(path, { method: 'POST', body: JSON.stringify(body), signal });
+export const authPost = <T>(path: string, body: unknown, signal?: AbortSignal) =>
+  authRequest<T>(path, { method: 'POST', body: JSON.stringify(body), signal });
 export const errorMessage = (error: unknown) =>
   error instanceof Error ? error.message : 'Something went wrong. Please try again.';

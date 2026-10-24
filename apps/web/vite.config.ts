@@ -58,6 +58,7 @@ export function developmentServer(environment: Record<string, string | undefined
       allow: [
         webRoot,
         fileURLToPath(new URL('../../packages/shared/dist', import.meta.url)),
+        fileURLToPath(new URL('../../packages/api/dist', import.meta.url)),
         fileURLToPath(new URL('../../packages/ui/src', import.meta.url)),
         fileURLToPath(new URL('../../node_modules', import.meta.url)),
       ],

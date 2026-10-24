@@ -595,8 +595,21 @@ export async function publicChecks(
       health.headers.get('X-Corner-Frontend-Version') === frontendVersionId,
       'Public frontend version identity mismatch',
     );
-  for (const path of ['/api/state', '/api/not-found'])
-    need((await call(path)).status === 401, 'Public anonymous authentication boundary failed');
+  const protectedResponse = await fetcher(new URL('/api/rpc/workspace/get', origin), {
+    method: 'POST',
+    redirect: 'manual',
+    signal: AbortSignal.timeout(30000),
+    headers: { ...access, Origin: origin, 'Content-Type': 'application/json', 'Cache-Control': 'no-cache' },
+    body: '{}',
+  });
+  const protectedError = (await protectedResponse.json()).json;
+  need(
+    protectedResponse.status === 401 &&
+      protectedError?.defined === true &&
+      protectedError.code === 'SIGN_IN_REQUIRED' &&
+      protectedError.status === 401,
+    'Public anonymous RPC authentication boundary failed',
+  );
   for (const path of ['/.env', '/assets/not-found.js'])
     need((await call(path)).status === 404, 'Public private-file or missing-asset boundary failed');
   for (const path of ['/', '/account/reset-password']) {

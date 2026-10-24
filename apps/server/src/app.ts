@@ -1,39 +1,14 @@
 import { Hono } from 'hono';
-import { z } from 'zod';
-import { accountPolicy, requirePrincipal, type CornerAuth, type Principal } from './auth.js';
+import { requirePrincipal, type Principal } from './auth.js';
 import type { Config } from './config.js';
-import {
-  ApiError,
-  errorResponse,
-  json,
-  readJson,
-  requestIdSchema,
-  requireSameOrigin,
-  revisionSchema,
-} from './http.js';
-import { isEmptyWorkspace, type WorkspaceSnapshot, type WorkspaceStore } from './store.js';
+import { ApiError, errorResponse, json, readJson, requireSameOrigin } from './http.js';
+import { RPC_PREFIX } from '@packages/api/protocol';
+import { createRPCHandler, type RPCServices } from './rpc.js';
+import { subscriptionCallback } from './ai-routes.js';
 
 export type AppEnvironment = { Variables: { principal: Principal } };
 
-export type AppOptions = {
-  config: Config;
-  auth: CornerAuth;
-  store: WorkspaceStore;
-  aiAvailable?: (principal: Principal) => Promise<boolean> | boolean;
-  extraRoutes?: Hono<AppEnvironment>;
-};
-
-const mutationInput = z
-  .object({
-    mutation: z.unknown(),
-    requestId: requestIdSchema,
-    expectedRevision: revisionSchema.optional(),
-  })
-  .strict();
-const importPreviewInput = z.object({ state: z.unknown() }).strict();
-const importInput = z
-  .object({ state: z.unknown(), requestId: requestIdSchema, expectedRevision: revisionSchema })
-  .strict();
+export type AppOptions = RPCServices;
 
 const redirectFields = [
   'callbackURL',
@@ -87,14 +62,11 @@ function accountBody(path: string, raw: unknown, config: Config): unknown {
 }
 
 /** Shared Hono API app; runtime entrypoints own listeners, assets, and resources. */
-export function createApp({ config, auth, store, aiAvailable, extraRoutes }: AppOptions) {
+export function createApp(options: AppOptions) {
+  const { config, auth, ai } = options;
+  const rpc = createRPCHandler(options);
   // Preserve literal API paths instead of Hono's default percent-decoding.
   const app = new Hono<AppEnvironment>({ getPath: (request) => new URL(request.url).pathname });
-  const stateResponse = async (principal: Principal, snapshot?: WorkspaceSnapshot) =>
-    json({
-      ...(snapshot ?? (await store.read(principal.userId, principal.name))),
-      aiAvailable: Boolean(await aiAvailable?.(principal)),
-    });
   app.onError(errorResponse);
   app.notFound(() =>
     errorResponse(new ApiError(404, 'NOT_FOUND', 'This endpoint does not exist.')),
@@ -102,22 +74,13 @@ export function createApp({ config, auth, store, aiAvailable, extraRoutes }: App
   app.use('*', async (c, next) => {
     await next();
     c.res = auth.withCookies(c.req.raw, c.res);
+    c.header('Cache-Control', 'private, no-store, max-age=0');
+    c.header('Pragma', 'no-cache');
+    c.header('Vary', 'Cookie, Origin');
   });
 
   // Hono also dispatches HEAD to GET. Only GET is public in the existing API.
   app.get('/api/health', (c, next) => (c.req.method === 'GET' ? json({ ok: true }) : next()));
-  app.get('/api/account-policy', (c, next) =>
-    c.req.method === 'GET' ? json(accountPolicy(config)) : next(),
-  );
-  app.get('/api/session', async (c, next) => {
-    if (c.req.method !== 'GET') return next();
-    const principal = await auth.principal(c.req.raw);
-    return json({
-      user: principal
-        ? { id: principal.userId, name: principal.name, email: principal.email }
-        : null,
-    });
-  });
   app.on('ALL', ['/api/auth', '/api/auth/*'], async (c) => {
     const request = c.req.raw;
     const path = c.req.path;
@@ -145,6 +108,7 @@ export function createApp({ config, auth, store, aiAvailable, extraRoutes }: App
     }
     return auth.handler(request);
   });
+  app.on('ALL', [RPC_PREFIX, `${RPC_PREFIX}/*`], (c) => rpc(c.req.raw));
 
   app.use('*', async (c, next) => {
     if (!c.req.path.startsWith('/api/') && c.req.path !== '/auth/callback') {
@@ -156,39 +120,6 @@ export function createApp({ config, auth, store, aiAvailable, extraRoutes }: App
     if (c.req.method === 'HEAD') return c.notFound();
     await next();
   });
-  app.get('/api/state', (c) => stateResponse(c.get('principal')));
-  app.post('/api/mutate', async (c) => {
-    const input = mutationInput.parse(await readJson(c.req.raw));
-    const principal = c.get('principal');
-    return stateResponse(
-      principal,
-      await store.mutate(principal.userId, input.requestId, input.mutation, input.expectedRevision),
-    );
-  });
-  app.post('/api/import/preview', async (c) => {
-    const input = importPreviewInput.parse(await readJson(c.req.raw, 2 * 1024 * 1024));
-    const inspected = store.inspectImport(input.state);
-    const principal = c.get('principal');
-    const current = await store.read(principal.userId, principal.name);
-    return json({
-      summary: { ...inspected.counts, bytes: inspected.bytes },
-      canImport: isEmptyWorkspace(current.state),
-      revision: current.revision,
-    });
-  });
-  app.post('/api/import', async (c) => {
-    const input = importInput.parse(await readJson(c.req.raw, 2 * 1024 * 1024));
-    const principal = c.get('principal');
-    return stateResponse(
-      principal,
-      await store.replaceImport(
-        principal.userId,
-        input.requestId,
-        input.state,
-        input.expectedRevision,
-      ),
-    );
-  });
-  if (extraRoutes) app.route('/', extraRoutes);
+  if (ai) app.get('/auth/callback', (c) => subscriptionCallback(ai.provider, c.get('principal'), new URL(c.req.url)));
   return app;
 }

@@ -13,7 +13,8 @@ import {
 import { createInitialState } from '@packages/shared/seed';
 import { TrainingStateSchema } from '@packages/shared/training';
 import type { AppState, Mutation } from '@packages/shared/types';
-import { ApiError, requestIdSchema, revisionSchema } from './http.js';
+import { ApiError } from './http.js';
+import { requestIdSchema, revisionSchema } from '@packages/api/schemas';
 
 export const MAX_STATE_BYTES = 1_800_000;
 export type WorkspaceSnapshot = { state: AppState; revision: number };

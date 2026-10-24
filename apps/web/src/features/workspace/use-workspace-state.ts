@@ -1,27 +1,35 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { AppState, Mutation } from '@packages/shared/types';
+import type { AppState } from '@packages/shared/types';
 import { applyMutation } from '@packages/shared/domain';
 import { createToastManager } from '@packages/ui';
-import type { ApiPayload, CornerAppProps } from './types';
+import { useMutation } from '@tanstack/react-query';
+import type { WorkspaceMutationInput } from '@packages/api/schemas';
+import type { CornerAppProps, Mutate } from './types';
+import { rpc, useWorkspace, writeWorkspace, sessionLifetime } from '../../rpc';
 import { newId } from './utils';
 
 export function useWorkspaceState({
   initialState,
   initialRevision = 0,
   preview,
-  onSessionExpired,
-}: Pick<CornerAppProps, 'initialState' | 'initialRevision' | 'preview' | 'onSessionExpired'>) {
-  const [state, setState] = useState<AppState>(initialState);
-  const [revision, setRevision] = useState(initialRevision);
+}: Pick<CornerAppProps, 'initialState' | 'initialRevision' | 'preview'>) {
+  const generation = useRef(sessionLifetime()).current;
+  const [previewState, setPreviewState] = useState<AppState>(initialState);
+  const workspace = useWorkspace(!preview);
+  const saveMutation = useMutation({
+    mutationFn: (input: WorkspaceMutationInput) =>
+      writeWorkspace(() => rpc.workspace.mutate(input), generation),
+    retry: false,
+  });
+  const state = preview ? previewState : workspace.data?.state ?? initialState;
+  const revision = preview ? initialRevision : workspace.data?.revision ?? initialRevision;
   const [notifications] = useState(() => createToastManager());
   const [busy, setBusy] = useState(false);
-  const [loading, setLoading] = useState(!preview);
-  const [hydrated, setHydrated] = useState(preview);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [aiAvailable, setAiAvailable] = useState(false);
+  const loading = !preview && workspace.isFetching;
+  const hydrated = preview || Boolean(workspace.data);
+  const loadError = preview ? null : workspace.error?.message ?? null;
+  const aiAvailable = !preview && Boolean(workspace.data?.aiAvailable);
   const mutationLock = useRef(false);
-  const refreshLock = useRef(false);
-  const latestRevision = useRef(initialRevision);
   const notify = useCallback(
     (message: string, error = false) => {
       notifications.add({
@@ -34,40 +42,8 @@ export function useWorkspaceState({
     [notifications],
   );
   const readState = useCallback(async () => {
-    if (preview || refreshLock.current || mutationLock.current) return;
-    refreshLock.current = true;
-    setLoading(true);
-    try {
-      const response = await fetch('/api/state', { cache: 'no-store' });
-      const payload = (await response.json()) as ApiPayload;
-      if (response.status === 401 && payload.code === 'SIGN_IN_REQUIRED') {
-        onSessionExpired?.();
-        return;
-      }
-      if (!response.ok || !payload.state)
-        throw new Error(
-          typeof payload.error === 'string'
-            ? payload.error
-            : 'Could not load your saved data. Please try again.',
-        );
-      if ((payload.revision ?? 0) >= latestRevision.current) {
-        latestRevision.current = payload.revision ?? 0;
-        setRevision(latestRevision.current);
-        setState(payload.state);
-        setAiAvailable(Boolean(payload.aiAvailable));
-      }
-      setHydrated(true);
-      setLoadError(null);
-    } catch (error) {
-      setLoadError(error instanceof Error ? error.message : 'Could not load your data.');
-    } finally {
-      refreshLock.current = false;
-      setLoading(false);
-    }
-  }, [preview, onSessionExpired]);
-  useEffect(() => {
-    void readState();
-  }, [readState]);
+    if (!preview && !mutationLock.current) await workspace.refetch();
+  }, [preview, workspace.refetch]);
   useEffect(() => {
     const id = 'workspace-load-error';
     if (!loadError) {
@@ -92,20 +68,9 @@ export function useWorkspaceState({
       },
     });
   }, [loadError, hydrated, loading, busy, readState, notifications]);
-  useEffect(() => {
-    if (preview) return;
-    const refresh = () => {
-      if (document.visibilityState === 'visible') void readState();
-    };
-    window.addEventListener('focus', refresh);
-    document.addEventListener('visibilitychange', refresh);
-    return () => {
-      window.removeEventListener('focus', refresh);
-      document.removeEventListener('visibilitychange', refresh);
-    };
-  }, [preview, readState]);
-  const mutate = useCallback(
-    async (mutation: Mutation, success?: string): Promise<boolean> => {
+  const mutate = useCallback<Mutate>(
+    async (mutation, success): Promise<boolean> => {
+      if (!preview && generation !== sessionLifetime()) return false;
       if (!preview && !hydrated) {
         notify('Load your saved data before making changes. Use Retry to reconnect.', true);
         return false;
@@ -114,31 +79,9 @@ export function useWorkspaceState({
       mutationLock.current = true;
       setBusy(true);
       try {
-        if (preview) setState(applyMutation(state, mutation));
-        else {
-          const response = await fetch('/api/mutate', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ mutation, requestId: newId() }),
-          });
-          const payload = (await response.json()) as ApiPayload;
-          if (response.status === 401 && payload.code === 'SIGN_IN_REQUIRED') {
-            onSessionExpired?.();
-            return false;
-          }
-          if (!response.ok || !payload.state)
-            throw new Error(
-              typeof payload.error === 'string'
-                ? payload.error
-                : payload.error?.message || 'Your change could not be saved. Please try again.',
-            );
-          latestRevision.current = payload.revision ?? latestRevision.current;
-          setRevision(latestRevision.current);
-          setState(payload.state);
-          setAiAvailable(Boolean(payload.aiAvailable));
-          setHydrated(true);
-          setLoadError(null);
-        }
+        if (preview) setPreviewState(applyMutation(state, mutation));
+        else await saveMutation.mutateAsync({ mutation, requestId: newId() });
+        if (!preview && generation !== sessionLifetime()) return false;
         if (success) notify(success);
         return true;
       } catch (error) {
@@ -149,7 +92,7 @@ export function useWorkspaceState({
         setBusy(false);
       }
     },
-    [preview, notify, state, hydrated, onSessionExpired],
+    [preview, notify, state, hydrated, generation, saveMutation.mutateAsync],
   );
   const copyText = async (text: string, success = 'Copied to clipboard') => {
     try {
@@ -178,16 +121,6 @@ export function useWorkspaceState({
       );
     }
   };
-  const acceptAgentState = (payload: {
-    state: AppState;
-    revision: number;
-    aiAvailable: boolean;
-  }) => {
-    latestRevision.current = payload.revision;
-    setRevision(payload.revision);
-    setState(payload.state);
-    setAiAvailable(payload.aiAvailable);
-  };
   const disabled = busy || loading || !hydrated;
   return {
     state,
@@ -199,7 +132,6 @@ export function useWorkspaceState({
     notify,
     readState,
     mutate,
-    acceptAgentState,
     copyText,
   };
 }

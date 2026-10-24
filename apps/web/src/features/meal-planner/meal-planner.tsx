@@ -1,4 +1,4 @@
-import type { AppState, Recipe, Mutation } from '@packages/shared/types';
+import type { AppState, Recipe } from '@packages/shared/types';
 import { SLOTS } from '@packages/shared/types';
 import {
   activityForStateDate,
@@ -62,7 +62,7 @@ export default function MealPlanner({
       notify('There are no meals in the previous week to copy.');
       return;
     }
-    const mutation: Mutation = {
+    const mutation: Parameters<Mutate>[0] = {
       type: 'plan.week',
       data: {
         weekStart,

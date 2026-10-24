@@ -6,6 +6,15 @@ import { createDatabase } from '../src/database.ts';
 import { migrate } from '../src/migrate.ts';
 import { createAuth } from '../src/auth.ts';
 import type { Config } from '../src/config.ts';
+import { StandardRPCJsonSerializer, StandardRPCSerializer } from '@orpc/client/standard';
+
+const rpcSerializer = new StandardRPCSerializer(new StandardRPCJsonSerializer());
+
+/** Decode the two actual protocols exercised by HTTP fixtures: RPC and managed Auth. */
+export async function readResponse(response: Response): Promise<any> {
+  const body = await response.json();
+  return Object.hasOwn(body, 'json') ? rpcSerializer.deserialize(body) : body;
+}
 
 export const neonTestConfig = {
   databaseUrl: 'postgresql://unused.invalid/test',

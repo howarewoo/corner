@@ -6,7 +6,7 @@ import { createDatabase } from './database.js';
 import { WorkspaceStore } from './store.js';
 import { SubscriptionProvider } from './subscription.js';
 import { PlanningAgent } from './planning-agent.js';
-import { connectionDTO, createAIRouter } from './ai-routes.js';
+import { connectionDTO } from './ai-routes.js';
 
 export type WorkerEnvironment = {
   ASSETS: { fetch(request: Request): Promise<Response> };
@@ -106,7 +106,7 @@ async function fetchApplication(request: Request, env: WorkerEnvironment): Promi
         store,
         aiAvailable: async (principal) =>
           connectionDTO(await provider.status(principal.userId)).available,
-        extraRoutes: createAIRouter(provider, agent),
+        ai: { provider, agent },
       });
       const result = secure(await app.fetch(incoming), true);
       if (url.pathname === '/api/health' && env.CF_VERSION_METADATA?.id)

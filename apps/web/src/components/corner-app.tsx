@@ -59,7 +59,6 @@ function CornerWorkspace({
   accountEmail,
   signingOut,
   onSignOut,
-  onSessionExpired,
   view,
 }: CornerAppProps & { view: View }) {
   const { isMobile } = useSidebar();
@@ -85,9 +84,8 @@ function CornerWorkspace({
     notify,
     readState,
     mutate,
-    acceptAgentState,
     copyText,
-  } = useWorkspaceState({ initialState, initialRevision, preview, onSessionExpired });
+  } = useWorkspaceState({ initialState, initialRevision, preview });
   // These hooks stay mounted with the workspace so drafts and filters survive navigation.
   const recipeFilters = useRecipeFilters();
   const studio = useRecipeStudio({ initialState, state, aiAvailable, mutate, notify });
@@ -265,7 +263,6 @@ function CornerWorkspace({
                     revision={revision}
                     referenceDate={selectedDate}
                     initialPrompt={agentPrompt}
-                    onApplied={acceptAgentState}
                     onRefresh={() => void readState()}
                   />
                 </>
@@ -335,7 +332,6 @@ function CornerWorkspace({
                   accountEmail={accountEmail}
                   signingOut={signingOut}
                   onSignOut={onSignOut}
-                  acceptAgentState={acceptAgentState}
                   notify={notify}
                   readState={readState}
                   mutate={mutate}

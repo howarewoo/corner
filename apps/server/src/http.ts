@@ -11,12 +11,6 @@ export class ApiError extends Error {
   }
 }
 
-export const requestIdSchema = z
-  .string()
-  .min(8)
-  .max(128)
-  .regex(/^[a-zA-Z0-9_.:-]+$/, 'Use a unique request identifier.');
-export const revisionSchema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 
 export function json(data: unknown, status = 200, extraHeaders?: HeadersInit): Response {
   const headers = new Headers(extraHeaders);

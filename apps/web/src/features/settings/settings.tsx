@@ -17,7 +17,6 @@ export default function Settings({
   accountEmail,
   signingOut,
   onSignOut,
-  acceptAgentState,
   notify,
   readState,
   mutate,
@@ -30,7 +29,6 @@ export default function Settings({
   accountEmail?: string;
   signingOut?: boolean;
   onSignOut?: () => void;
-  acceptAgentState: (payload: { state: AppState; revision: number; aiAvailable: boolean }) => void;
   notify: Notify;
   readState: () => Promise<void>;
   mutate: Mutate;
@@ -82,10 +80,7 @@ export default function Settings({
       />
       <ImportWorkspace
         disabled={disabled || preview}
-        onImported={(payload) => {
-          acceptAgentState(payload);
-          notify('Your workspace is imported');
-        }}
+        onImported={() => notify('Your workspace is imported')}
       />
       <div style={{ marginTop: 32 }}>
         <AgentConnection onChanged={() => void readState()} compact />

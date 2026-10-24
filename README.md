@@ -2,7 +2,7 @@
 
 Corner is a self-hostable app for meal planning, nutrition logging, workouts, progress, and an optional planning agent. Neon Postgres stores application data; managed Neon Auth owns email/password accounts and sessions. It does not read ChatGPT conversations, memories, or the original Corner Site.
 
-This is a separate application. Existing personal Corner data enters only when its owner chooses to import a Corner JSON export. The repository uses Turborepo with pnpm workspaces: `apps/server` is the Hono HTTP app, `apps/web` is the Vite/React interface, and `packages/shared` owns shared domain code. Neon is managed infrastructure configured by root `neon.ts`; its server-side integration and application migrations stay in `apps/server`.
+This is a separate application. Existing personal Corner data enters only when its owner chooses to import a Corner JSON export. The repository uses Turborepo with pnpm workspaces: `apps/server` owns the Hono runtime and oRPC procedures, `apps/web` is the Vite/React interface, `packages/api` owns the browser-safe application contract, and `packages/shared` owns shared domain code. Neon is managed infrastructure configured by root `neon.ts`; its server-side integration and application migrations stay in `apps/server`.
 
 The intended direction is a hosted service for performance-focused trainees, with an approved hosted ChatGPT integration. That is future direction, not a claim that this release provides a public service or hosted AI access; see [PRODUCT.md](PRODUCT.md) in a repository checkout.
 
@@ -23,13 +23,15 @@ pnpm run db:migrate
 pnpm run dev
 ```
 
-Turborepo builds the shared package first, then starts the web app, API server, and shared-code watcher. The browser uses port **3000**; the API listens separately on **3001**. Vite proxies `/api` and `/auth/callback` to the API while preserving the browser origin for account sessions and consent callbacks. The server no longer starts Vite itself.
+Turborepo builds shared and API dependencies first, then starts the web app, API server, shared-code/API-contract watchers, and independent design catalog. The browser uses port **3000**; the API listens separately on **3001**. Vite proxies `/api` and `/auth/callback` to the API while preserving the browser origin for account sessions and consent callbacks. The server no longer starts Vite itself.
 
 Open **http://127.0.0.1:3000**. Use that exact address for the subscription callback. Create an account with an email, a name, and a password of at least 12 characters. With verification disabled in Neon, signup signs you in immediately. If verification is enabled, enter the email code and then sign in. Once authenticated, the app opens directly without onboarding. Profile preferences, optional nutrition targets, and workspace import are available in **Settings**.
 
-The account form uses Neon's `@neondatabase/auth` SDK (`signUp.email` and `signIn.email`) through Corner's same-origin `/api/auth` proxy. After authentication, `/api/session` reads the current managed user server-side. Session tokens stay in HttpOnly cookies; no browser Auth URL or `VITE_` credentials are needed. The setup command targets Codex agent tooling; choose your editor's supported `--agent` value instead if needed. `--no-config` preserves the checked-in `neon.ts`, which already enables Auth.
+The account form uses Neon's `@neondatabase/auth` SDK (`signUp.email` and `signIn.email`) through Corner's same-origin `/api/auth` proxy. After authentication, native oRPC `account.session` reads the current managed user server-side. Session tokens stay in HttpOnly cookies; no browser Auth URL or `VITE_` credentials are needed. The setup command targets Codex agent tooling; choose your editor's supported `--agent` value instead if needed. `--no-config` preserves the checked-in `neon.ts`, which already enables Auth.
 
 The SDK is pinned to `0.6.0-beta` to satisfy its bundled `@neondatabase/auth-ui` peer contract; the `0.7.0-beta` release still pulls UI that requires `0.6.0-beta`. Workspace pnpm overrides align Better Auth/core at `1.7.12` and `better-call` at `1.4.4`, avoiding conflicting legacy-UI plugin peers. Corner uses only the programmatic SDK, not those UI components. Revisit these pins together when Neon's published dependency graph is compatible without overrides.
+
+Application calls use the shared `@packages/api` contract and native oRPC at `/api/rpc`; TanStack Query owns browser server state. This unreleased application starts with that protocol baseline: old application REST URLs are not supported, and no REST upgrade bridge, maintenance mode, or cutover controller is added. Managed Auth `/api/auth`, OAuth `/auth/callback`, and `GET /api/health` retain their separate protocols.
 
 Install the CLI with `pnpm add -g neon@latest` (run `pnpm setup` first if no global bin directory is configured) or use `pnpm dlx neon@latest` in place of `neon`. `neon deploy` applies `neon.ts` and pulls server-only Postgres/Auth URLs into `.env.local` (or an existing `.env`). Both files are loaded by the server; `.env` overrides `.env.local`, and existing process environment values win. Never put database credentials in `VITE_` variables.
 
@@ -45,13 +47,13 @@ pnpm run db:migrate
 pnpm start
 ```
 
-The build compiles `@packages/shared`, then builds `server` and `web` as separate workspace tasks. The compiled server starts on port 3000 and serves `apps/web/dist` alongside its API, preserving the same browser origin. Production runs ordinary JavaScript from `apps/server/dist`; it does not run Vite or require a TypeScript loader.
+The build compiles `@packages/shared` and `@packages/api`, then builds `server` and `web` as separate workspace tasks. The compiled server starts on port 3000 and serves `apps/web/dist` alongside its API, preserving the same browser origin. Production runs ordinary JavaScript from `apps/server/dist`; it does not run Vite or require a TypeScript loader.
 
 ### Workspace commands
 
 | Root command                   | Result                                                                                                                                      |
 | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `pnpm run dev`                 | Web/API processes, a shared-package watcher, and the design catalog                                                                         |
+| `pnpm run dev`                 | Web/API processes, shared/API package watchers, and the design catalog                                                                      |
 | `pnpm run build`               | Cached dependency-aware builds for all workspaces                                                                                           |
 | `pnpm run check`               | Type checks for all apps and shared packages                                                                                                |
 | `pnpm run lint`                | Repository-wide Oxlint checks with the registered shadcn lint plugin                                                                        |
@@ -70,7 +72,7 @@ The build compiles `@packages/shared`, then builds `server` and `web` as separat
 | `pnpm run test:ci`             | Native Node CI, release, and artifact regression tests                                                                                      |
 | `pnpm run smoke:workers`       | Actual paired workerd runtime with service bindings, disposable PostgreSQL, and HTTPS Auth fixtures, after `build:workers`                  |
 
-For a focused build, use `pnpm run build --filter=server` or `pnpm run build --filter=web`. Turbo also builds their shared dependency. Each app declares its own dependencies; domain models and validation are imported through `@packages/shared/<module>` rather than relative paths into the other app.
+For a focused build, use `pnpm run build --filter=server` or `pnpm run build --filter=web`. Turbo also builds their shared/API dependencies. Each app declares its own dependencies; domain models and validation are imported through `@packages/shared/<module>` and the application contract through `@packages/api`, rather than relative paths into the other app.
 
 ### Formatting
 
@@ -214,7 +216,7 @@ pnpm run verify -- --full --report /tmp/corner-verification.jsonl
 
 Server tests and all runtime smoke checks require `CORNER_TEST_DATABASE_URL`; they never fall back to the real `DATABASE_URL`. Each fixture owns a random PostgreSQL schema and drops only that schema. Test files still run sequentially in separate processes. Better Auth is a **test-only** dependency for a local managed-service fixture; no test sends real account email or model requests.
 
-Production smoke starts disposable compiled servers on loopback ports 43137 and 43138. Development smoke starts only the web/API processes and shared-package watcher on 43139 and 43140, excluding the independent design catalog. Task-prefixed streaming logs expose readiness without waiting for persistent tasks to exit. Both use actual PostgreSQL and a private local HTTPS auth fixture, exercise cookie sessions and proxy boundaries, and clean up only their own resources. Run development smoke in a clean checkout without `.env`, `.env.local`, or Vite environment files; never remove a user's configuration just to pass it.
+Production smoke starts disposable compiled servers on loopback ports 43137 and 43138. Development smoke starts only the web/API processes and shared/API-package watchers on 43139 and 43140, excluding the independent design catalog. Task-prefixed streaming logs expose readiness without waiting for persistent tasks to exit. Both use actual PostgreSQL and a private local HTTPS auth fixture, exercise cookie sessions and proxy boundaries, and clean up only their own resources. Run development smoke in a clean checkout without `.env`, `.env.local`, or Vite environment files; never remove a user's configuration just to pass it.
 
 ### Targeted verification and merge protection
 
@@ -265,8 +267,9 @@ Old feature-preview provisioning workflows are removed. Existing provider resour
 | Folder                 | Responsibility                                                                                   |
 | ---------------------- | ------------------------------------------------------------------------------------------------ |
 | `apps/web/src/`        | React account UI, profile/import settings, meal planner, recipes, workouts, and agent review     |
-| `apps/server/src/`     | Managed Auth boundary, PostgreSQL persistence, HTTP routes, model connection, and planning agent |
+| `apps/server/src/`     | Managed Auth boundary, PostgreSQL persistence, oRPC procedures, model connection, and planning agent |
 | `packages/shared/src/` | Shared models, validation, nutrition/training calculations, proposal rules, and exercise data    |
+| `packages/api/src/`    | Browser-safe oRPC contract, transport schemas, and inferred client types                        |
 | `apps/web/tests/`      | Rendered account/connection controls and development configuration checks                        |
 | `apps/server/tests/`   | Accounts, email, data isolation, agent, provider, and proxy regression checks                    |
 | `scripts/`             | Workspace test runner, production/development smoke checks, configuration, and packaging         |

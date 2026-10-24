@@ -1,8 +1,10 @@
 'use client';
 
 import { useRef, useState } from 'react';
+import { useMutation } from '@tanstack/react-query';
 import type { AppState, Recipe, RecipeRequest } from '@packages/shared/types';
-import type { ApiPayload, Mutate, Notify } from '../workspace/types';
+import type { Mutate, Notify } from '../workspace/types';
+import { rpc, scoped, errorCode, sessionLifetime } from '../../rpc';
 import { newId } from '../workspace/utils';
 
 export function useRecipeStudio({
@@ -18,6 +20,7 @@ export function useRecipeStudio({
   mutate: Mutate;
   notify: Notify;
 }) {
+  const generation = useRef(sessionLifetime()).current;
   const [studioPrompt, setStudioPrompt] = useState('');
   const [studioCalories, setStudioCalories] = useState(
     initialState.settings.training.calories > 0
@@ -30,7 +33,11 @@ export function useRecipeStudio({
       : 25,
   );
   const [studioMinutes, setStudioMinutes] = useState(25);
-  const [generating, setGenerating] = useState(false);
+  const recipeMutation = useMutation({
+    mutationFn: (input: Parameters<typeof rpc.ai.generateRecipe>[0]) =>
+      scoped(() => rpc.ai.generateRecipe(input), generation),
+    retry: false,
+  });
   const [generated, setGenerated] = useState<Recipe | null>(null);
   const generationLock = useRef(false);
   const generationIntent = useRef<{ signature: string; requestId: string } | null>(null);
@@ -59,7 +66,7 @@ export function useRecipeStudio({
     );
   };
   const generateRecipe = async () => {
-    if (generationLock.current) return;
+    if (generation !== sessionLifetime() || generationLock.current) return;
     if (!studioPrompt.trim()) {
       notify('Describe the recipe you want first.', true);
       return;
@@ -94,42 +101,26 @@ export function useRecipeStudio({
       generationIntent.current = { signature, requestId: newId() };
     const generationRequestId = generationIntent.current.requestId;
     generationLock.current = true;
-    setGenerating(true);
     try {
-      const response = await fetch('/api/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          prompt: studioPrompt.trim(),
-          calories: studioCalories,
-          protein: studioProtein,
-          maxMinutes: studioMinutes,
-          requestId: generationRequestId,
-        }),
+      const payload = await recipeMutation.mutateAsync({
+        prompt: studioPrompt.trim(),
+        calories: studioCalories,
+        protein: studioProtein,
+        maxMinutes: studioMinutes,
+        requestId: generationRequestId,
       });
-      const payload = (await response.json()) as ApiPayload;
-      if (!response.ok || !payload.recipe) {
-        const code =
-          payload.code || (typeof payload.error === 'object' ? payload.error?.code : undefined);
-        if (!code?.endsWith('_PENDING') && code !== 'AI_BUSY' && code !== 'DAILY_LIMIT')
-          generationIntent.current = null;
-        throw new Error(
-          payload.code === 'AI_NOT_CONFIGURED' ||
-            payload.error === 'AI_NOT_CONFIGURED' ||
-            (typeof payload.error === 'object' && payload.error?.code === 'AI_NOT_CONFIGURED')
-            ? 'Connect your AI account in My agent to generate a recipe.'
-            : typeof payload.error === 'string'
-              ? payload.error
-              : payload.error?.message || 'The recipe could not be generated. Please try again.',
-        );
-      }
+      if (generation !== sessionLifetime()) return;
       setGenerated(payload.recipe);
       generationIntent.current = null;
     } catch (error) {
-      notify(error instanceof Error ? error.message : 'Could not generate a recipe.', true);
+      const code = errorCode(error);
+      if (code && !code.endsWith('_PENDING') && code !== 'AI_BUSY' && code !== 'DAILY_LIMIT')
+        generationIntent.current = null;
+      notify(code === 'AI_NOT_CONFIGURED'
+        ? 'Connect your AI account in My agent to generate a recipe.'
+        : error instanceof Error ? error.message : 'Could not generate a recipe.', true);
     } finally {
       generationLock.current = false;
-      setGenerating(false);
     }
   };
 
@@ -142,8 +133,7 @@ export function useRecipeStudio({
     setStudioProtein,
     studioMinutes,
     setStudioMinutes,
-    generating,
-    setGenerating,
+    generating: recipeMutation.isPending,
     generated,
     setGenerated,
     studioBrief,

@@ -26,7 +26,8 @@ import {
   TrendingUp,
   X,
 } from 'lucide-react';
-import type { AppState, Mutation } from '@packages/shared/types';
+import type { AppState } from '@packages/shared/types';
+import type { WorkspaceMutationInput } from '@packages/api/schemas';
 import type {
   LoadType,
   TrainingCheckIn,
@@ -96,7 +97,7 @@ type Props = {
   state: AppState;
   selectedDate: string;
   onDateChange: (date: string) => void;
-  mutate: (mutation: Mutation, success?: string) => Promise<boolean>;
+  mutate: (mutation: WorkspaceMutationInput['mutation'], success?: string) => Promise<boolean>;
   busy: boolean;
   notify: (message: string, error?: boolean) => void;
   onRefresh: () => void;

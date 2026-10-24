@@ -11,7 +11,7 @@ import {
   Unplug,
 } from 'lucide-react';
 import type { AgentChange, AgentRun } from '@packages/shared/agent';
-import type { AppState, Macros, Recipe, StateResponse } from '@packages/shared/types';
+import type { AppState, Macros, Recipe } from '@packages/shared/types';
 import type {
   ExerciseTarget,
   WorkoutSession,
@@ -39,19 +39,10 @@ import {
   ToggleGroup,
   ToggleGroupItem,
 } from '@packages/ui';
-import { api, errorMessage, post } from './api';
+import { errorMessage } from './api';
+import { useMutation, useQuery, useQueries } from '@tanstack/react-query';
+import { rpc, scoped, useConnection, queryClient, privateKey, writeWorkspace, sessionLifetime } from './rpc';
 import './agent.css';
-type Connection = {
-  available: boolean;
-  connected: boolean;
-  enabled: boolean;
-  state?: string;
-  reason?: string;
-  model: string | null;
-  models: Array<{ slug: string; displayName: string }>;
-  email?: string;
-  manageUsageUrl?: string | null;
-};
 const number = (value: number) => value.toLocaleString(undefined, { maximumFractionDigits: 1 });
 const when = (value: string) =>
   new Date(value).toLocaleString(undefined, {
@@ -75,11 +66,27 @@ export function AgentConnection({
   onChanged?: () => void;
   compact?: boolean;
 }) {
+  const mutationGeneration = useRef(sessionLifetime()).current;
   const modelSelectId = useId();
-  const [connection, setConnection] = useState<Connection | null>(null);
-  const [loading, setLoading] = useState(true);
+  const connectionQuery = useConnection();
+  const connectMutation = useMutation({
+    mutationFn: () => scoped(() => rpc.ai.connect({}), mutationGeneration),
+    retry: false,
+  });
+  const disconnectMutation = useMutation({
+    mutationFn: () => scoped(() => rpc.ai.disconnect({}), mutationGeneration),
+    retry: false,
+  });
+  const modelMutation = useMutation({
+    mutationFn: (input: Parameters<typeof rpc.ai.setModel>[0]) =>
+      scoped(() => rpc.ai.setModel(input), mutationGeneration),
+    retry: false,
+  });
+  const connection = connectionQuery.data;
+  const loading = connectionQuery.isFetching;
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
+  const [actionError, setError] = useState('');
+  const error = actionError || connectionQuery.error?.message || '';
   const [actionNotice, setActionNotice] = useState<{ message: string; warning: boolean } | null>(
     null,
   );
@@ -87,36 +94,22 @@ export function AgentConnection({
   onChangedRef.current = onChanged;
   const sequence = useRef(0);
   const refresh = useCallback(async () => {
-    const current = ++sequence.current;
-    setLoading(true);
-    setError('');
-    try {
-      const result = await api<Connection>('/api/ai/connection');
-      if (current === sequence.current) {
-        setConnection(result);
-        onChangedRef.current?.();
-      }
-    } catch (failure) {
-      if (current === sequence.current) setError(errorMessage(failure));
-    } finally {
-      if (current === sequence.current) setLoading(false);
-    }
-  }, []);
-  useEffect(() => {
-    void refresh();
-    return () => {
-      sequence.current += 1;
-    };
-  }, [refresh]);
+    const generation = sessionLifetime();
+    const result = await connectionQuery.refetch();
+    if (generation !== sessionLifetime()) return;
+    if (result.error) setError(errorMessage(result.error));
+    else onChangedRef.current?.();
+  }, [connectionQuery.refetch]);
+  useEffect(() => () => { sequence.current += 1; }, []);
   async function connect() {
-    if (busy) return;
+    if (mutationGeneration !== sessionLifetime() || busy) return;
     const current = sequence.current;
     setBusy(true);
     setError('');
     setActionNotice(null);
     try {
-      const result = await post<{ url: string }>('/api/ai/connect', {});
-      if (current !== sequence.current) return;
+      const result = await connectMutation.mutateAsync();
+      if (mutationGeneration !== sessionLifetime() || current !== sequence.current) return;
       const destination = new URL(result.url, window.location.origin);
       if (!['https:', 'http:'].includes(destination.protocol))
         throw new Error('The sign-in link is unavailable. Please try again.');
@@ -127,14 +120,12 @@ export function AgentConnection({
     }
   }
   async function disconnect() {
-    if (busy) return;
+    if (mutationGeneration !== sessionLifetime() || busy) return;
     setBusy(true);
     setError('');
     try {
-      const result = await post<{ revocationConfirmed?: boolean; reason?: string }>(
-        '/api/ai/disconnect',
-        {},
-      );
+      const result = await disconnectMutation.mutateAsync();
+      if (mutationGeneration !== sessionLifetime()) return;
       await refresh();
       setActionNotice({
         warning: result?.revocationConfirmed === false,
@@ -151,11 +142,12 @@ export function AgentConnection({
     }
   }
   async function changeModel(model: string) {
-    if (!model || busy) return;
+    if (mutationGeneration !== sessionLifetime() || !model || busy) return;
     setBusy(true);
     setError('');
     try {
-      await post('/api/ai/model', { model });
+      await modelMutation.mutateAsync({ model });
+      if (mutationGeneration !== sessionLifetime()) return;
       await refresh();
       setActionNotice({ message: 'Model selection saved.', warning: false });
     } catch (failure) {
@@ -535,68 +527,65 @@ export default function AgentPanel({
   revision,
   referenceDate,
   initialPrompt = '',
-  onApplied,
   onRefresh,
 }: {
   state: AppState;
   revision: number;
   referenceDate: string;
   initialPrompt?: string;
-  onApplied: (payload: StateResponse) => void;
   onRefresh: () => void;
 }) {
+  const mutationGeneration = useRef(sessionLifetime()).current;
   const promptId = useId();
   const dateId = useId();
-  const [runs, setRuns] = useState<AgentRun[]>([]);
+  const runsKey = privateKey('runs');
+  const startMutation = useMutation({
+    mutationFn: (input: Parameters<typeof rpc.agent.start>[0]) =>
+      scoped(() => rpc.agent.start(input), mutationGeneration),
+    retry: false,
+  });
+  const cancelMutation = useMutation({
+    mutationFn: (input: Parameters<typeof rpc.agent.cancel>[0]) =>
+      scoped(() => rpc.agent.cancel(input), mutationGeneration),
+    retry: false,
+  });
+  const applyMutation = useMutation({
+    mutationFn: (input: Parameters<typeof rpc.agent.apply>[0]) =>
+      writeWorkspace(() => rpc.agent.apply(input), mutationGeneration),
+    retry: false,
+  });
+  const historyQuery = useQuery({ queryKey: runsKey, queryFn: async ({ signal }) => {
+    const result = await scoped(() => rpc.agent.list(undefined, { signal }));
+    const previous = queryClient.getQueryData<AgentRun[]>(runsKey) ?? [];
+    return [
+      ...result.runs.map(run => latestRun(previous.find(item => item.id === run.id), run)),
+      ...previous.filter(run => !result.runs.some(incoming => incoming.id === run.id)),
+    ];
+  } });
+  const runs = historyQuery.data ?? [];
+  const setRuns = (update: (current: AgentRun[]) => AgentRun[]) => queryClient.setQueryData<AgentRun[]>(runsKey, current => update(current ?? []));
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [prompt, setPrompt] = useState(initialPrompt);
   const [date, setDate] = useState(referenceDate);
-  const [loading, setLoading] = useState(true);
+  const loading = historyQuery.isFetching;
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
-  const [connection, setConnection] = useState<Connection | null>(null);
+  const [actionError, setError] = useState('');
+  const connectionQuery = useConnection();
+  const connection = connectionQuery.data;
   const textarea = useRef<HTMLTextAreaElement>(null);
   const operation = useRef(false);
   const intent = useRef<{ signature: string; id: string } | null>(null);
   const appliedIntent = useRef(new Map<string, string>());
   const active = useRef(true);
-  const refreshSequence = useRef(0);
   const selected = runs.find((run) => run.id === selectedId) ?? runs[0];
   const ready = Boolean(connection?.available && connection.connected && connection.enabled);
   const refresh = useCallback(async () => {
-    if (!active.current) return;
-    const sequence = ++refreshSequence.current;
-    setLoading(true);
-    setError('');
-    try {
-      const [history, currentConnection] = await Promise.all([
-        api<{ runs: AgentRun[] }>('/api/agent/runs'),
-        api<Connection>('/api/ai/connection'),
-      ]);
-      if (!active.current || sequence !== refreshSequence.current) return;
-      setRuns((current) =>
-        history.runs.map((run) =>
-          latestRun(
-            current.find((item) => item.id === run.id),
-            run,
-          ),
-        ),
-      );
-      setConnection(currentConnection);
-    } catch (failure) {
-      if (active.current && sequence === refreshSequence.current) setError(errorMessage(failure));
-    } finally {
-      if (active.current && sequence === refreshSequence.current) setLoading(false);
-    }
-  }, []);
+    await Promise.all([historyQuery.refetch(), connectionQuery.refetch()]);
+  }, [historyQuery.refetch, connectionQuery.refetch]);
   useEffect(() => {
     active.current = true;
-    void refresh();
-    return () => {
-      active.current = false;
-      refreshSequence.current += 1;
-    };
-  }, [refresh]);
+    return () => { active.current = false; };
+  }, []);
   useEffect(() => {
     if (initialPrompt) {
       setPrompt(initialPrompt);
@@ -604,45 +593,21 @@ export default function AgentPanel({
       textarea.current?.focus();
     }
   }, [initialPrompt]);
-  const runningIds = runs
-    .filter(isActive)
-    .map((run) => run.id)
-    .join('|');
-  useEffect(() => {
-    if (!runningIds) return;
-    let pending = false;
-    const controller = new AbortController();
-    const timer = window.setInterval(async () => {
-      if (pending) return;
-      pending = true;
-      try {
-        const updated = await Promise.all(
-          runningIds.split('|').map((id) =>
-            api<{ run: AgentRun }>(`/api/agent/runs/${encodeURIComponent(id)}`, {
-              signal: controller.signal,
-            }),
-          ),
-        );
-        if (!controller.signal.aborted)
-          setRuns((current) =>
-            current.map((run) => {
-              const incoming = updated.find((item) => item.run.id === run.id)?.run;
-              return incoming ? latestRun(run, incoming) : run;
-            }),
-          );
-      } catch (failure) {
-        if (!controller.signal.aborted) setError(errorMessage(failure));
-      } finally {
-        pending = false;
-      }
-    }, 2000);
-    return () => {
-      clearInterval(timer);
-      controller.abort();
-    };
-  }, [runningIds]);
+  const runQueries = useQueries({ queries: runs.filter(isActive).map(run => ({
+    queryKey: [...privateKey('run'), run.id],
+    queryFn: async ({ signal }: { signal: AbortSignal }) => {
+      const result = await scoped(() => rpc.agent.get({ id: run.id }, { signal }));
+      setRuns(current => current.map(item => item.id === run.id ? latestRun(item, result.run) : item));
+      return result.run;
+    },
+    refetchInterval: (query: { state: { data?: AgentRun } }) => query.state.data && !isActive(query.state.data) ? false as const : 2000,
+    refetchIntervalInBackground: true,
+  })) });
+  const pollError = runQueries.find(query => query.error)?.error;
+  const error = actionError || historyQuery.error?.message || connectionQuery.error?.message || pollError?.message || '';
   async function start(event: FormEvent) {
     event.preventDefault();
+    if (mutationGeneration !== sessionLifetime()) return;
     if (operation.current || !ready || prompt.trim().length < 3) return;
     operation.current = true;
     setBusy(true);
@@ -651,14 +616,13 @@ export default function AgentPanel({
     if (intent.current?.signature !== signature)
       intent.current = { signature, id: crypto.randomUUID() };
     try {
-      const result = await post<{ run: AgentRun }>('/api/agent/runs', {
-        requestId: intent.current.id,
+      const requestId = intent.current.id;
+      const result = await startMutation.mutateAsync({
+        requestId,
         prompt: prompt.trim(),
         referenceDate: date,
       });
-      if (!active.current) return;
-      refreshSequence.current += 1;
-      setLoading(false);
+      if (!active.current || mutationGeneration !== sessionLifetime()) return;
       intent.current = null;
       setRuns((current) => [
         latestRun(
@@ -676,18 +640,13 @@ export default function AgentPanel({
     }
   }
   async function cancel(run: AgentRun) {
-    if (operation.current) return;
+    if (mutationGeneration !== sessionLifetime() || operation.current) return;
     operation.current = true;
     setBusy(true);
     setError('');
     try {
-      const result = await post<{ run: AgentRun }>(
-        `/api/agent/runs/${encodeURIComponent(run.id)}/cancel`,
-        {},
-      );
-      if (!active.current) return;
-      refreshSequence.current += 1;
-      setLoading(false);
+      const result = await cancelMutation.mutateAsync({ id: run.id });
+      if (!active.current || mutationGeneration !== sessionLifetime()) return;
       setRuns((current) =>
         current.map((item) => (item.id === run.id ? latestRun(item, result.run) : item)),
       );
@@ -699,6 +658,7 @@ export default function AgentPanel({
     }
   }
   async function apply(run: AgentRun) {
+    if (mutationGeneration !== sessionLifetime()) return;
     if (
       operation.current ||
       run.status !== 'completed' ||
@@ -711,14 +671,9 @@ export default function AgentPanel({
     setError('');
     if (!appliedIntent.current.has(run.id)) appliedIntent.current.set(run.id, crypto.randomUUID());
     try {
-      const result = await post<StateResponse & { run: AgentRun }>(
-        `/api/agent/runs/${encodeURIComponent(run.id)}/apply`,
-        { requestId: appliedIntent.current.get(run.id) },
-      );
-      if (!active.current) return;
-      refreshSequence.current += 1;
-      setLoading(false);
-      onApplied(result);
+      const requestId = appliedIntent.current.get(run.id)!;
+      const result = await applyMutation.mutateAsync({ id: run.id, requestId });
+      if (!active.current || mutationGeneration !== sessionLifetime()) return;
       setRuns((current) =>
         current.map((item) => (item.id === run.id ? latestRun(item, result.run) : item)),
       );
@@ -821,7 +776,7 @@ export default function AgentPanel({
         </form>
         <AgentConnection
           onChanged={() => {
-            void refresh();
+            void historyQuery.refetch();
             onRefresh();
           }}
         />

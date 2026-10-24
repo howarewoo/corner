@@ -3,17 +3,17 @@ import { createRoot } from 'react-dom/client';
 import { BrowserRouter, useLocation, useNavigate } from 'react-router';
 import { Loader2 } from 'lucide-react';
 import CornerApp from '@/components/corner-app';
-import type { StateResponse } from '@packages/shared/types';
 import { Button, Alert, Toaster, createToastManager } from '@packages/ui';
 import AccountAccess, { readAccountRoute } from './account-access';
-import { api, post, errorMessage } from './api';
+import { authPost, errorMessage } from './api';
+import { focusManager, QueryClientProvider, useQuery } from '@tanstack/react-query';
+import { clearPrivateState, privateKey, queryClient, rpc, scoped, sessionLifetime, useSessionLifetime, useWorkspace } from './rpc';
 import '@packages/ui/utilities-only.css';
 import '@packages/ui/theme.css';
 import '@packages/ui/styles.css';
 import '@/components/globals.css';
 import './standalone.css';
 
-type User = { id: string; name: string; email: string };
 function Brand() {
   return (
     <div className="standalone-brand">
@@ -60,44 +60,48 @@ function ConnectionNotice() {
 }
 
 function App() {
-  const [user, setUser] = useState<User | null>(null);
-  const [workspace, setWorkspace] = useState<StateResponse | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+  const lifetime = useSessionLifetime();
+  useEffect(() => focusManager.setEventListener(handleFocus => {
+    const refresh = () => {
+      const visible = document.visibilityState === 'visible';
+      handleFocus(visible);
+      if (visible) void queryClient.invalidateQueries(
+        { queryKey: privateKey('workspace') },
+        { cancelRefetch: false },
+      );
+    };
+    window.addEventListener('focus', refresh);
+    document.addEventListener('visibilitychange', refresh);
+    return () => {
+      window.removeEventListener('focus', refresh);
+      document.removeEventListener('visibilitychange', refresh);
+    };
+  }), []);
+  const session = useQuery({ queryKey: privateKey('session'), queryFn: ({ signal }) => scoped(() => rpc.account.session(undefined, { signal })) });
+  const user = session.data?.user ?? null;
+  const workspaceQuery = useWorkspace(Boolean(user));
+  const workspace = workspaceQuery.data;
+  const loading = session.isPending || (Boolean(user) && workspaceQuery.isPending);
+  const [actionError, setError] = useState('');
+  const error = actionError || session.error?.message || workspaceQuery.error?.message || '';
   const [signingOut, setSigningOut] = useState(false);
-  const sequence = useRef(0);
   const expire = useCallback(() => {
-    sequence.current += 1;
-    setUser(null);
-    setWorkspace(null);
-    setLoading(false);
+    clearPrivateState();
+    queryClient.setQueryData(privateKey('session'), { user: null });
   }, []);
   const load = useCallback(async () => {
-    const current = ++sequence.current;
-    setLoading(true);
+    clearPrivateState();
+    const generation = sessionLifetime();
     setError('');
     try {
-      const session = await api<{ user: User | null }>('/api/session');
-      if (current !== sequence.current) return;
-      setUser(session.user);
-      if (!session.user) {
-        setWorkspace(null);
-        return;
-      }
-      const result = await api<StateResponse>('/api/state');
-      if (current === sequence.current) setWorkspace(result);
+      await queryClient.fetchQuery({
+        queryKey: privateKey('session'),
+        queryFn: () => scoped(() => rpc.account.session()),
+      });
     } catch (failure) {
-      if (current === sequence.current) setError(errorMessage(failure));
-    } finally {
-      if (current === sequence.current) setLoading(false);
+      if (generation === sessionLifetime()) setError(errorMessage(failure));
     }
   }, []);
-  useEffect(() => {
-    void load();
-    return () => {
-      sequence.current += 1;
-    };
-  }, [load]);
   useEffect(() => {
     window.addEventListener('corner:session-expired', expire);
     return () => window.removeEventListener('corner:session-expired', expire);
@@ -107,7 +111,7 @@ function App() {
     setSigningOut(true);
     setError('');
     try {
-      await post('/api/auth/sign-out', {});
+      await authPost('/api/auth/sign-out', {});
       expire();
     } catch (failure) {
       const msg = errorMessage(failure);
@@ -155,7 +159,7 @@ function App() {
     );
   return (
     <CornerApp
-      key={user.id}
+      key={`${user.id}:${lifetime}`}
       initialState={workspace.state}
       initialRevision={workspace.revision}
       preview={false}
@@ -163,7 +167,6 @@ function App() {
       accountEmail={user.email}
       signingOut={signingOut}
       onSignOut={() => void signOut()}
-      onSessionExpired={expire}
     />
   );
 }
@@ -177,6 +180,7 @@ function AccountEntryPoint() {
       <AccountAccess
         initialRoute={route}
         onSignedIn={async () => {
+          clearPrivateState();
           await navigate('/', { replace: true });
         }}
       />
@@ -186,10 +190,12 @@ function AccountEntryPoint() {
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <BrowserRouter>
-      <Toaster toastManager={accountToasts} viewportProps={{ className: 'corner-ui' }} />
-      <ConnectionNotice />
-      <AccountEntryPoint />
-    </BrowserRouter>
+    <QueryClientProvider client={queryClient}>
+      <BrowserRouter>
+        <Toaster toastManager={accountToasts} viewportProps={{ className: 'corner-ui' }} />
+        <ConnectionNotice />
+        <AccountEntryPoint />
+      </BrowserRouter>
+    </QueryClientProvider>
   </StrictMode>,
 );

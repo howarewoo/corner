@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import { afterEach, beforeEach, describe, test } from 'node:test';
 import type { Pool } from 'pg';
-import { testDatabase, closeTestDatabase, createTestAuth, neonTestConfig } from './helpers.ts';
+import { testDatabase, closeTestDatabase, createTestAuth, neonTestConfig, readResponse } from './helpers.ts';
 import { createApp } from '../src/app.ts';
-import { createAIRouter, connectionDTO } from '../src/ai-routes.ts';
+import { connectionDTO } from '../src/ai-routes.ts';
 import { PlanningAgent, type InferenceProvider } from '../src/planning-agent.ts';
 import { WorkspaceStore } from '../src/store.ts';
 import type { Config } from '../src/config.ts';
@@ -162,24 +162,25 @@ describe('authenticated planning routes with fake inference only', { concurrency
     const headers = new Headers({ 'x-corner-client-ip': '127.0.0.1', ...options.headers });
     if (options.cookie) headers.set('Cookie', options.cookie);
     if (options.origin !== null) headers.set('Origin', options.origin ?? config.origin);
-    if (options.body !== undefined) headers.set('Content-Type', 'application/json');
+    const rpc = path.startsWith('/api/rpc/');
+    if (rpc || options.body !== undefined) headers.set('Content-Type', 'application/json');
     return app.request(config.origin + path, {
       headers,
-      method: options.body === undefined ? 'GET' : 'POST',
-      ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
+      method: rpc || options.body !== undefined ? 'POST' : 'GET',
+      ...(rpc ? { body: JSON.stringify({ json: options.body }) } : options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
     });
   }
   async function error(response: Response, status: number, code: string) {
     assert.equal(response.status, status);
-    assert.equal((await response.json()).code, code);
+    const body = await readResponse(response);
+    assert.equal(body.data?.code ?? body.code, code);
   }
   async function start(requestId: string, prompt = 'Help me plan a breakfast.') {
-    const response = await send('/api/agent/runs', {
+    const response = await send('/api/rpc/agent/start', {
       cookie: alice.cookie,
       body: { requestId, prompt, referenceDate: date },
     });
-    assert.equal(response.status, 202);
-    return (await response.json()).run as { id: string };
+    return (await readResponse(response)).run as { id: string };
   }
   beforeEach(async () => {
     db = await testDatabase();
@@ -213,7 +214,7 @@ describe('authenticated planning routes with fake inference only', { concurrency
       auth,
       store,
       aiAvailable: async () => connectionDTO(await status()).available,
-      extraRoutes: createAIRouter(provider as unknown as SubscriptionProvider, agent),
+      ai: { provider: provider as unknown as SubscriptionProvider, agent },
     });
     async function register(name: string) {
       const response = await send('/api/auth/sign-up/email', {
@@ -224,7 +225,7 @@ describe('authenticated planning routes with fake inference only', { concurrency
         },
       });
       assert.equal(response.status, 200);
-      const body = await response.json();
+      const body = await readResponse(response);
       return {
         id: body.user.id as string,
         cookie: response.headers
@@ -246,7 +247,7 @@ describe('authenticated planning routes with fake inference only', { concurrency
     settings.profile!.goals = 'BOB_ONLY_PRIVATE_GOALS';
     await store.mutate(bob.id, 'bob-profile-123', { type: 'settings.save', data: settings });
     await error(
-      await send('/api/agent/runs', {
+      await send('/api/rpc/agent/start', {
         body: { requestId: 'anonymous-run', prompt: 'Plan a week.', referenceDate: date },
         headers: { 'oai-authenticated-user-id': alice.id },
       }),
@@ -254,7 +255,7 @@ describe('authenticated planning routes with fake inference only', { concurrency
       'SIGN_IN_REQUIRED',
     );
     await error(
-      await send('/api/agent/runs', {
+      await send('/api/rpc/agent/start', {
         cookie: alice.cookie,
         origin: 'https://other.example',
         body: { requestId: 'cross-origin-run', prompt: 'Plan a week.', referenceDate: date },
@@ -262,36 +263,32 @@ describe('authenticated planning routes with fake inference only', { concurrency
       403,
       'ORIGIN_NOT_ALLOWED',
     );
-    const response = await send('/api/agent/runs', {
+    const response = await send('/api/rpc/agent/start', {
       cookie: alice.cookie,
       headers: { 'oai-authenticated-user-id': bob.id },
       body: { requestId: 'private-run-123', prompt: 'Plan a week.', referenceDate: date },
     });
-    assert.equal(response.status, 202);
-    const run = (await response.json()).run;
+    const run = (await readResponse(response)).run;
     await agent.settled(run.id);
     assert.equal(calls[0].owner, alice.id);
     assert(!JSON.stringify(calls[0].input).includes('BOB_ONLY_PRIVATE_GOALS'));
     await error(
-      await send(`/api/agent/runs/${run.id}`, { cookie: bob.cookie }),
+      await send('/api/rpc/agent/get', {cookie: bob.cookie, body: {id: run.id}}),
       404,
       'RUN_NOT_FOUND',
     );
     await error(
-      await send(`/api/agent/runs/${run.id}/apply`, {
-        cookie: bob.cookie,
-        body: { requestId: 'wrong-owner-123' },
-      }),
+      await send('/api/rpc/agent/apply', {cookie: bob.cookie, body: {requestId: 'wrong-owner-123', id: run.id}}),
       404,
       'RUN_NOT_FOUND',
     );
     await error(
-      await send(`/api/agent/runs/${run.id}/cancel`, { cookie: bob.cookie, body: {} }),
+      await send('/api/rpc/agent/cancel', {cookie: bob.cookie, body: {id: run.id}}),
       404,
       'RUN_NOT_FOUND',
     );
     assert.deepEqual(
-      (await (await send('/api/agent/runs', { cookie: bob.cookie })).json()).runs,
+      (await readResponse(await send('/api/rpc/agent/list', { cookie: bob.cookie }))).runs,
       [],
     );
     assert.equal((await store.read(alice.id)).revision, 0);
@@ -309,10 +306,7 @@ describe('authenticated planning routes with fake inference only', { concurrency
         throw new Error('simulated completion failure');
       });
     await error(
-      await send(`/api/agent/runs/${run.id}/apply`, {
-        cookie: alice.cookie,
-        body: { requestId: 'apply-failure-123' },
-      }),
+      await send('/api/rpc/agent/apply', {cookie: alice.cookie, body: {requestId: 'apply-failure-123', id: run.id}}),
       503,
       'SERVICE_UNAVAILABLE',
     );
@@ -324,22 +318,16 @@ describe('authenticated planning routes with fake inference only', { concurrency
       0,
     );
     store.applyBatch = originalApply;
-    const applied = await send(`/api/agent/runs/${run.id}/apply`, {
-      cookie: alice.cookie,
-      body: { requestId: 'apply-success-123' },
-    });
+    const applied = await send('/api/rpc/agent/apply', {cookie: alice.cookie, body: {requestId: 'apply-success-123', id: run.id}});
     assert.equal(applied.status, 200);
-    const first = await applied.json();
+    const first = await readResponse(applied);
     assert.equal(first.revision, 1);
     assert.equal(first.run.status, 'applied');
     assert.equal(first.state.recipes.length, 1);
     assert.equal(first.state.plan.length, 1);
     assert.equal(first.state.logs.length, 0);
-    const retry = await send(`/api/agent/runs/${run.id}/apply`, {
-      cookie: alice.cookie,
-      body: { requestId: 'another-apply-123' },
-    });
-    assert.equal((await retry.json()).revision, 1);
+    const retry = await send('/api/rpc/agent/apply', {cookie: alice.cookie, body: {requestId: 'another-apply-123', id: run.id}});
+    assert.equal((await readResponse(retry)).revision, 1);
     assert.equal(calls.length, 1);
     assert.equal((await store.read(bob.id)).state.recipes.length, 0);
   });
@@ -359,10 +347,7 @@ describe('authenticated planning routes with fake inference only', { concurrency
     };
     await store.mutate(alice.id, 'actual-lunch-123', { type: 'log.save', data: log });
     await error(
-      await send(`/api/agent/runs/${run.id}/apply`, {
-        cookie: alice.cookie,
-        body: { requestId: 'stale-apply-123' },
-      }),
+      await send('/api/rpc/agent/apply', {cookie: alice.cookie, body: {requestId: 'stale-apply-123', id: run.id}}),
       409,
       'STALE_PROPOSAL',
     );
@@ -389,11 +374,8 @@ describe('authenticated planning routes with fake inference only', { concurrency
       };
       const run = await start('cancel-http-run');
       await started;
-      const cancelled = await send(`/api/agent/runs/${run.id}/cancel`, {
-        cookie: alice.cookie,
-        body: {},
-      });
-      assert.equal((await cancelled.json()).run.status, 'cancelled');
+      const cancelled = await send('/api/rpc/agent/cancel', {cookie: alice.cookie, body: {id: run.id}});
+      assert.equal((await readResponse(cancelled)).run.status, 'cancelled');
       finish(completed(mealProposal()));
       await agent.settled(run.id);
       assert.equal((await agent.get(alice.id, run.id)).status, 'cancelled');
@@ -411,9 +393,9 @@ describe('authenticated planning routes with fake inference only', { concurrency
       assumptions: [],
     };
     answer = async () => completed({ result: estimate });
-    const food = await send('/api/estimate-food', { cookie: alice.cookie, body: foodInput });
+    const food = await send('/api/rpc/ai/estimateFood', { cookie: alice.cookie, body: foodInput });
     assert.equal(food.status, 200);
-    const expectedFood = await food.json();
+    const expectedFood = await readResponse(food);
     const {
       id: _id,
       source: _source,
@@ -430,30 +412,29 @@ describe('authenticated planning routes with fake inference only', { concurrency
       protein: 25,
       maxMinutes: 15,
     };
-    const generated = await send('/api/generate', { cookie: alice.cookie, body: recipeInput });
+    const generated = await send('/api/rpc/ai/generateRecipe', { cookie: alice.cookie, body: recipeInput });
     assert.equal(generated.status, 200);
-    const expectedRecipe = await generated.json();
+    const expectedRecipe = await readResponse(generated);
     answer = async () => completed(clarification);
     const planInput = {
       requestId: 'cached-plan-123',
       prompt: 'Plan a training week.',
       referenceDate: date,
     };
-    const plan = await send('/api/agent/runs', { cookie: alice.cookie, body: planInput });
-    const run = (await plan.json()).run;
+    const plan = await send('/api/rpc/agent/start', { cookie: alice.cookie, body: planInput });
+    const run = (await readResponse(plan)).run;
     await agent.settled(run.id);
     connected = false;
-    const cachedFood = await send('/api/estimate-food', { cookie: alice.cookie, body: foodInput });
+    const cachedFood = await send('/api/rpc/ai/estimateFood', { cookie: alice.cookie, body: foodInput });
     assert.equal(cachedFood.status, 200);
-    assert.deepEqual(await cachedFood.json(), expectedFood);
-    const cachedRecipe = await send('/api/generate', { cookie: alice.cookie, body: recipeInput });
+    assert.deepEqual(await readResponse(cachedFood), expectedFood);
+    const cachedRecipe = await send('/api/rpc/ai/generateRecipe', { cookie: alice.cookie, body: recipeInput });
     assert.equal(cachedRecipe.status, 200);
-    assert.deepEqual(await cachedRecipe.json(), expectedRecipe);
-    const cachedPlan = await send('/api/agent/runs', { cookie: alice.cookie, body: planInput });
-    assert.equal(cachedPlan.status, 202);
-    assert.equal((await cachedPlan.json()).run.id, run.id);
+    assert.deepEqual(await readResponse(cachedRecipe), expectedRecipe);
+    const cachedPlan = await send('/api/rpc/agent/start', { cookie: alice.cookie, body: planInput });
+    assert.equal((await readResponse(cachedPlan)).run.id, run.id);
     await error(
-      await send('/api/estimate-food', {
+      await send('/api/rpc/ai/estimateFood', {
         cookie: alice.cookie,
         body: { ...foodInput, description: '3 boiled eggs' },
       }),
@@ -461,7 +442,7 @@ describe('authenticated planning routes with fake inference only', { concurrency
       'REQUEST_ID_REUSED',
     );
     await error(
-      await send('/api/generate', {
+      await send('/api/rpc/ai/generateRecipe', {
         cookie: alice.cookie,
         body: { ...recipeInput, requestId: 'fresh-recipe-123' },
       }),
@@ -469,7 +450,7 @@ describe('authenticated planning routes with fake inference only', { concurrency
       'AI_CONNECTION_REQUIRED',
     );
     await error(
-      await send('/api/agent/runs', {
+      await send('/api/rpc/agent/start', {
         cookie: alice.cookie,
         body: { ...planInput, requestId: 'fresh-plan-123' },
       }),
@@ -477,7 +458,7 @@ describe('authenticated planning routes with fake inference only', { concurrency
       'AI_CONNECTION_REQUIRED',
     );
     await error(
-      await send('/api/estimate-food', {
+      await send('/api/rpc/ai/estimateFood', {
         cookie: alice.cookie,
         body: { ...foodInput, requestId: 'fresh-food-123' },
       }),
@@ -517,10 +498,7 @@ describe('authenticated planning routes with fake inference only', { concurrency
     answer = async () => completed(workoutProposal(plannedWorkout()));
     const planned = await start('targets-only-planned');
     await agent.settled(planned.id);
-    const applied = await send(`/api/agent/runs/${planned.id}/apply`, {
-      cookie: alice.cookie,
-      body: { requestId: 'apply-planned-targets' },
-    });
+    const applied = await send('/api/rpc/agent/apply', {cookie: alice.cookie, body: {requestId: 'apply-planned-targets', id: planned.id}});
     assert.equal(applied.status, 200);
     const session = (await store.read(alice.id)).state.training.sessions[0];
     assert.deepEqual(session.exercises[0].targetLoad, { weight: 20, unit: 'lb' });
@@ -542,10 +520,7 @@ describe('authenticated planning routes with fake inference only', { concurrency
       });
     const removal = await start('remove-planned-session');
     await agent.settled(removal.id);
-    const removed = await send(`/api/agent/runs/${removal.id}/apply`, {
-      cookie: alice.cookie,
-      body: { requestId: 'apply-removal-123' },
-    });
+    const removed = await send('/api/rpc/agent/apply', {cookie: alice.cookie, body: {requestId: 'apply-removal-123', id: removal.id}});
     assert.equal(removed.status, 200);
     assert.equal((await store.read(alice.id)).state.training.sessions.length, 0);
   });

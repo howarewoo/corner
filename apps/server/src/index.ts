@@ -10,7 +10,7 @@ import { WorkspaceStore } from './store.js';
 import { createApp } from './app.js';
 import { SubscriptionProvider } from './subscription.js';
 import { PlanningAgent } from './planning-agent.js';
-import { connectionDTO, createAIRouter } from './ai-routes.js';
+import { connectionDTO } from './ai-routes.js';
 import { requestClientIP, verifiedProxyIP } from './request-identity.js';
 
 const development = process.argv.includes('--dev');
@@ -29,7 +29,7 @@ const app = createApp({
   store,
   aiAvailable: async (principal) =>
     connectionDTO(await provider.status(principal.userId)).available,
-  extraRoutes: createAIRouter(provider, agent),
+  ai: { provider, agent },
 });
 const server = createServer();
 const dist = join(REPOSITORY_ROOT, 'apps', 'web', 'dist');
@@ -89,7 +89,10 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse) {
     }
     if (path.startsWith('/api/') || path === '/auth/callback') {
       const request = toWebRequest(req);
-      await sendWebResponse(res, await app.fetch(request));
+      const response = await app.fetch(request);
+      // Rejected bodies must not leave an unread stream on a reusable HTTP connection.
+      if (request.body && !req.readableEnded) res.shouldKeepAlive = false;
+      await sendWebResponse(res, response);
       return;
     }
     if (!['GET', 'HEAD'].includes(req.method ?? 'GET')) {
@@ -149,7 +152,11 @@ function toWebRequest(req: IncomingMessage): Request {
   const method = req.method ?? 'GET';
   const init: RequestInit & { duplex?: 'half' } = { method, headers };
   if (!['GET', 'HEAD'].includes(method)) {
-    init.body = Readable.toWeb(req) as ReadableStream<Uint8Array>;
+    // Let the response finish before closing a rejected upload's transport.
+    init.body = (Readable.toWeb(req) as ReadableStream<Uint8Array>).pipeThrough(
+      new TransformStream(),
+      { preventCancel: true },
+    );
     init.duplex = 'half';
   }
   return new Request(new URL(req.url!, config.origin), init);

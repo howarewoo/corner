@@ -1,16 +1,28 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useMutation } from '@tanstack/react-query';
 import { ArrowUpFromLine, Loader2 } from 'lucide-react';
-import type { StateResponse } from '@packages/shared/types';
 import { Alert, Button, Field, FieldLabel, Input } from '@packages/ui';
-import { post, errorMessage } from './api';
+import { errorMessage } from './api';
+import { rpc, scoped, writeWorkspace, sessionLifetime } from './rpc';
 
 export default function ImportWorkspace({
   onImported,
   disabled,
 }: {
-  onImported: (state: StateResponse) => void;
+  onImported: () => void;
   disabled: boolean;
 }) {
+  const generation = useRef(sessionLifetime()).current;
+  const previewMutation = useMutation({
+    mutationFn: (input: Parameters<typeof rpc.workspace.previewImport>[0]) =>
+      scoped(() => rpc.workspace.previewImport(input), generation),
+    retry: false,
+  });
+  const importMutation = useMutation({
+    mutationFn: (input: Parameters<typeof rpc.workspace.import>[0]) =>
+      writeWorkspace(() => rpc.workspace.import(input), generation),
+    retry: false,
+  });
   const [candidate, setCandidate] = useState<unknown>(null);
   const [summary, setSummary] = useState<Record<string, unknown> | null>(null);
   const [fileName, setFileName] = useState('');
@@ -41,12 +53,9 @@ export default function ImportWorkspace({
         throw new Error('Choose a Corner JSON export smaller than 2 MB.');
       const parsed = JSON.parse(await file.text());
       const state = parsed?.state ?? parsed;
-      const result = await post<{
-        summary: Record<string, unknown>;
-        canImport: boolean;
-        revision: number;
-      }>('/api/import/preview', { state });
-      if (selection.current !== sequence) return;
+      if (selection.current !== sequence || generation !== sessionLifetime()) return;
+      const result = await previewMutation.mutateAsync({ state });
+      if (selection.current !== sequence || generation !== sessionLifetime()) return;
       if (!result.canImport)
         throw new Error(
           'This account already has saved records. Import is available only in an empty workspace.',
@@ -68,18 +77,20 @@ export default function ImportWorkspace({
   }
   async function commit(event: FormEvent) {
     event.preventDefault();
+    if (generation !== sessionLifetime()) return;
     if (disabled || busy || !candidate || !summary || confirmation.trim() !== 'IMPORT') return;
     const current = selection.current;
     setBusy(true);
     setError('');
     try {
-      const result = await post<StateResponse>('/api/import', {
+      const requestId = intent.current!;
+      await importMutation.mutateAsync({
         state: candidate,
-        requestId: intent.current,
+        requestId,
         expectedRevision: importRevision.current,
       });
-      if (current === selection.current) {
-        onImported(result);
+      if (current === selection.current && generation === sessionLifetime()) {
+        onImported();
         setCandidate(null);
         setSummary(null);
         setConfirmation('');

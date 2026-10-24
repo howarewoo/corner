@@ -1002,3 +1002,38 @@ test('public checks refuse a stale frontend even when the backend version is cor
     /frontend version identity/,
   );
 });
+
+test('public probes require a canonical native protected RPC error, not an obsolete REST 401', async () => {
+  const requests = [];
+  let native = true;
+  const fetcher = async (url, options = {}) => {
+    const path = new URL(url).pathname;
+    requests.push(path);
+    if (path === '/api/health')
+      return Response.json({ ok: true }, { headers: { 'X-Corner-Version': versionId } });
+    if (path.includes('sign-up'))
+      return Response.json({ code: 'ORIGIN_NOT_ALLOWED' }, { status: 403 });
+    if (path === '/api/rpc/workspace/get') {
+      assert.equal(options.method, 'POST');
+      assert.equal(options.headers.Origin, config.origin);
+      assert.deepEqual(JSON.parse(options.body), {});
+      return Response.json(
+        native
+          ? { json: { defined: true, code: 'SIGN_IN_REQUIRED', status: 401, message: 'Sign in required' } }
+          : { code: 'SIGN_IN_REQUIRED' },
+        { status: 401 },
+      );
+    }
+    if (path === '/.env' || path === '/assets/not-found.js')
+      return new Response(null, { status: 404 });
+    if (path === '/assets/app.js')
+      return new Response('export {};', { headers: { 'Cache-Control': 'public, immutable' } });
+    return new Response('<script src="/assets/app.js"></script>', {
+      headers: { 'Content-Security-Policy': "frame-ancestors 'none'" },
+    });
+  };
+  await publicChecks(config.origin, versionId, fetcher);
+  assert.equal(requests.includes('/api/state'), false);
+  native = false;
+  await assert.rejects(publicChecks(config.origin, versionId, fetcher), /RPC authentication/);
+});

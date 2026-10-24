@@ -8,6 +8,7 @@ import { act, createElement, type ComponentType } from 'react';
 import { create, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer';
 import { BrowserRouter } from 'react-router';
 import type { AccountPolicy, AccountRoute } from '../src/account-access.tsx';
+import { QueryClient, QueryClientProvider, notifyManager } from '@tanstack/react-query';
 
 // Actual rendered account screens, their effects, and event handlers. Every
 // HTTP response and navigation is synthetic; no account or email is created.
@@ -153,6 +154,7 @@ async function render(
     globalThis,
     'fetch',
     async (request: string | URL | Request, init: RequestInit = {}) => {
+      if (request instanceof Request) init = { ...init, method: request.method, body: await request.clone().text() };
       const url = new URL(
         typeof request === 'string' ? request : request instanceof URL ? request.href : request.url,
         origin,
@@ -166,7 +168,7 @@ async function render(
       calls.push(call);
       const override = await options.handler?.(call);
       if (override) return override;
-      if (url.pathname === '/api/account-policy') return json(policy);
+      if (url.pathname === '/api/rpc/account/policy') return json({ json: policy });
       throw new Error(`Unexpected synthetic account request: ${url.pathname}`);
     },
   );
@@ -187,6 +189,7 @@ async function render(
   });
   await act(async () => {
     renderer = create(
+      createElement(QueryClientProvider, { client: new QueryClient({ defaultOptions: { queries: { retry: false } } }) },
       createElement(
         BrowserRouter,
         { window: window },
@@ -197,12 +200,14 @@ async function render(
           },
         }),
       ),
+      ),
     );
   });
   return { renderer, calls, state, unmount, ...environment };
 }
 
 test('rendered standalone account verification and password recovery', async (t) => {
+  notifyManager.setScheduler(queueMicrotask);
   const generated = join(project, 'tests', '.generated');
   await mkdir(generated, { recursive: true });
   const directory = await mkdtemp(join(generated, 'account-ui-'));
@@ -220,6 +225,7 @@ test('rendered standalone account verification and password recovery', async (t)
     target: 'node24',
     mainFields: ['module', 'main'],
     external: [
+      '@tanstack/react-query',
       'react',
       'react/*',
       'react-dom',
@@ -544,8 +550,8 @@ test('rendered standalone account verification and password recovery', async (t)
       let failures = 1;
       const view = await render(child, AccountAccess, hosted, {
         handler: (call) =>
-          call.path === '/api/account-policy' && failures-- > 0
-            ? json({ error: 'Temporarily unavailable' }, 503)
+          call.path === '/api/rpc/account/policy' && failures-- > 0
+            ? json({ json: { defined: true, code: 'SERVICE_UNAVAILABLE', status: 503, message: 'Temporarily unavailable' } }, 503)
             : undefined,
       });
       assert.match(text(view.renderer.root), /Account options could not be loaded/);

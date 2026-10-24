@@ -1,11 +1,12 @@
 'use client';
 
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { useMutation } from '@tanstack/react-query';
+import { rpc, scoped, errorCode, sessionLifetime } from '../rpc';
 import { Check, Loader2, Sparkles } from 'lucide-react';
 import {
   FOOD_DESCRIPTION_MAX_LENGTH,
   FoodDescriptionSchema,
-  FoodEstimateResultSchema,
   type EstimatedFood,
   type FoodEstimateResult,
 } from '@packages/shared/food-estimate';
@@ -19,11 +20,6 @@ import {
   FieldLabel,
   Textarea,
 } from '@packages/ui';
-type EstimatePayload = {
-  estimate?: unknown;
-  code?: string;
-  error?: string | { code?: string; message?: string };
-};
 
 type FoodEstimatorProps = {
   disabled: boolean;
@@ -35,6 +31,14 @@ const formatAmount = (value: number, digits = 1) =>
   value.toLocaleString(undefined, { maximumFractionDigits: digits });
 
 export default function FoodEstimator({ disabled, aiAvailable, onApply }: FoodEstimatorProps) {
+  const generation = useRef(sessionLifetime()).current;
+  const estimateMutation = useMutation({
+    mutationFn: ({ input, signal }: {
+      input: Parameters<typeof rpc.ai.estimateFood>[0];
+      signal: AbortSignal;
+    }) => scoped(() => rpc.ai.estimateFood(input, { signal }), generation),
+    retry: false,
+  });
   const fieldId = useId();
   const helpId = `${fieldId}-help`;
   const connectionId = `${fieldId}-connection`;
@@ -80,6 +84,7 @@ export default function FoodEstimator({ disabled, aiAvailable, onApply }: FoodEs
   }
 
   async function estimateFood() {
+    if (generation !== sessionLifetime()) return;
     const input = description.trim();
     if (disabled || connectionMissing || inFlight.current || !descriptionValid) return;
 
@@ -103,52 +108,19 @@ export default function FoodEstimator({ disabled, aiAvailable, onApply }: FoodEs
     }, 60_000);
 
     try {
-      const response = await fetch('/api/estimate-food', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(intent),
-        signal: controller.signal,
-      });
-      let payload: EstimatePayload;
-      try {
-        payload = (await response.json()) as EstimatePayload;
-      } catch {
-        throw new Error(
-          'The estimator returned an unreadable response. Try again to check the same request, or enter nutrition manually.',
-        );
-      }
-      if (sequence !== requestSequence.current || controller.signal.aborted) return;
-
-      if (!response.ok) {
-        const code =
-          payload.code || (typeof payload.error === 'object' ? payload.error?.code : undefined);
-        // Keep the same intent while the server is still processing it, or when
-        // its allowance is temporarily unavailable. Transport failures also
-        // retain the ID so a retry cannot accidentally purchase a second call.
-        if (!code?.endsWith('_PENDING') && !code?.endsWith('_LIMIT') && code !== 'AI_BUSY')
-          requestIntent.current = null;
-        if (code === 'AI_NOT_CONFIGURED') {
-          setConnectionUnavailable(true);
-          return;
-        }
-        throw new Error(
-          typeof payload.error === 'string'
-            ? payload.error
-            : payload.error?.message || 'Could not estimate this food. Please try again.',
-        );
-      }
-
-      const parsed = FoodEstimateResultSchema.safeParse(payload.estimate);
-      if (!parsed.success) {
-        requestIntent.current = null;
-        throw new Error(
-          'This estimate could not be checked. Please try a more specific description.',
-        );
-      }
+      const payload = await estimateMutation.mutateAsync({ input: intent, signal: controller.signal });
+      if (generation !== sessionLifetime() || sequence !== requestSequence.current || controller.signal.aborted) return;
       requestIntent.current = null;
-      setResult(parsed.data);
+      setResult(payload.estimate);
     } catch (failure) {
       if (sequence !== requestSequence.current || (controller.signal.aborted && !timedOut)) return;
+      const code = errorCode(failure);
+      if (code && !code.endsWith('_PENDING') && !code.endsWith('_LIMIT') && code !== 'AI_BUSY')
+        requestIntent.current = null;
+      if (code === 'AI_NOT_CONFIGURED') {
+        setConnectionUnavailable(true);
+        return;
+      }
       setError(
         timedOut
           ? 'The estimate is taking too long. Try again to check the same request, or enter nutrition manually.'

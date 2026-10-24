@@ -14,6 +14,10 @@
     "start": "node --env-file-if-exists=../../.env.local --env-file-if-exists=../../.env dist/index.js"
   },
   "dependencies": {
+    "@orpc/client": "1.16.1",
+    "@orpc/server": "1.16.1",
+    "@orpc/standard-server-fetch": "1.16.1",
+    "@packages/api": "workspace:*",
     "@packages/shared": "workspace:*",
     "hono": "4.13.13",
     "jose": "6.2.13",

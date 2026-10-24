@@ -6,7 +6,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { build } from 'esbuild';
 import { act, createElement, type ComponentType } from 'react';
 import { create, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer';
-import { api, RequestError } from '../src/api.ts';
+import { QueryClient, QueryClientProvider, notifyManager } from '@tanstack/react-query';
+import { rpc, scoped, clearPrivateState, errorCode } from '../src/rpc.ts';
 
 // Render the actual production control. This is not a second implementation of
 // its enable/disable logic. CSS is omitted only from the Node test bundle; all
@@ -58,7 +59,7 @@ type MockHandler = (call: FetchCall) => Response | undefined | Promise<Response 
 type TestConnectionComponent = ComponentType<{ onChanged?: () => void; compact?: boolean }>;
 
 function json(value: unknown, status = 200): Response {
-  return new Response(JSON.stringify(value), {
+  return new Response(JSON.stringify({ json: value }), {
     status,
     headers: { 'Content-Type': 'application/json' },
   });
@@ -117,9 +118,10 @@ async function renderConnection(
   handler?: MockHandler,
 ) {
   const browser = installBrowser();
-  const state = { connection: structuredClone(initial), changes: 0 };
+  const state = { connection: structuredClone(initial) };
   const calls: FetchCall[] = [];
   const mockFetch: typeof fetch = async (input, init = {}) => {
+    if (input instanceof Request) init = { ...init, method: input.method, body: await input.clone().text() };
     const url = new URL(
       typeof input === 'string' ? input : input instanceof URL ? input.href : input.url,
       localOrigin,
@@ -129,10 +131,10 @@ async function renderConnection(
     calls.push(call);
     const overridden = await handler?.(call);
     if (overridden) return overridden;
-    if (call.path === '/api/ai/connection') return json(state.connection);
-    if (call.path === '/api/ai/connect') return json({ url: authorizationURL });
-    if (call.path === '/api/ai/model') {
-      const model = JSON.parse(String(init.body)).model as string;
+    if (call.path === '/api/rpc/ai/connection') return json(state.connection);
+    if (call.path === '/api/rpc/ai/connect') return json({ url: authorizationURL });
+    if (call.path === '/api/rpc/ai/setModel') {
+      const model = JSON.parse(String(init.body)).json.model as string;
       state.connection = { ...state.connection, model };
       return json(state.connection);
     }
@@ -149,11 +151,9 @@ async function renderConnection(
   });
   await act(async () => {
     renderer = create(
-      createElement(Component, {
-        onChanged: () => {
-          state.changes += 1;
-        },
-      }),
+      createElement(QueryClientProvider, { client: new QueryClient({ defaultOptions: { queries: { retry: false } } }) },
+        createElement(Component),
+      ),
     );
   });
   return { renderer, calls, state, ...browser };
@@ -172,6 +172,7 @@ async function click(control: ReactTestInstance): Promise<void> {
 }
 
 test('rendered ChatGPT connection controls and independent Corner session handling', async (t) => {
+  notifyManager.setScheduler(queueMicrotask);
   const generated = join(project, 'tests', '.generated');
   await mkdir(generated, { recursive: true });
   const directory = await mkdtemp(join(generated, 'connection-ui-'));
@@ -189,6 +190,7 @@ test('rendered ChatGPT connection controls and independent Corner session handli
     target: 'node24',
     mainFields: ['module', 'main'],
     external: [
+      '@tanstack/react-query',
       'react',
       'react/*',
       'react-dom',
@@ -226,7 +228,7 @@ test('rendered ChatGPT connection controls and independent Corner session handli
       assert.match(text(view.renderer.root), /Connect to use the agent/);
       assert.doesNotMatch(text(view.renderer.root), /Connected and ready/);
       assert.equal(view.renderer.root.findAllByType('select').length, 0);
-      assert.equal(view.calls.filter((call) => call.path === '/api/ai/connect').length, 0);
+      assert.equal(view.calls.filter((call) => call.path === '/api/rpc/ai/connect').length, 0);
     },
   );
 
@@ -242,7 +244,7 @@ test('rendered ChatGPT connection controls and independent Corner session handli
       assert.equal(button(view.renderer, 'Continue with ChatGPT').props.disabled, true);
       assert.match(text(view.renderer.root), /Agent unavailable/);
       assert.match(text(view.renderer.root), /Hosted integrations require OpenAI partner approval/);
-      assert.equal(view.calls.filter((call) => call.path === '/api/ai/connect').length, 0);
+      assert.equal(view.calls.filter((call) => call.path === '/api/rpc/ai/connect').length, 0);
     },
   );
 
@@ -251,11 +253,11 @@ test('rendered ChatGPT connection controls and independent Corner session handli
     async (child) => {
       const view = await renderConnection(child, AgentConnection, disconnected);
       await click(button(view.renderer, 'Continue with ChatGPT'));
-      const request = view.calls.find((call) => call.path === '/api/ai/connect');
+      const request = view.calls.find((call) => call.path === '/api/rpc/ai/connect');
       assert.ok(request);
       assert.equal(request.init.method, 'POST');
       assert.equal(request.init.credentials, 'same-origin');
-      assert.deepEqual(JSON.parse(String(request.init.body)), {});
+      assert.deepEqual(JSON.parse(String(request.init.body)), { json: {} });
       assert.deepEqual(view.navigation, [authorizationURL]);
       assert.equal(button(view.renderer, 'Opening sign-in…').props.disabled, true);
     },
@@ -281,7 +283,7 @@ test('rendered ChatGPT connection controls and independent Corner session handli
       await click(reconnect);
       assert.deepEqual(view.navigation, [authorizationURL]);
       assert.equal(
-        view.calls.some((call) => call.path === '/api/ai/disconnect'),
+        view.calls.some((call) => call.path === '/api/rpc/ai/disconnect'),
         false,
       );
     },
@@ -307,12 +309,11 @@ test('rendered ChatGPT connection controls and independent Corner session handli
         select.props.onChange({ target: { value: 'test-model-b' } });
       });
       assert.deepEqual(
-        JSON.parse(String(view.calls.find((call) => call.path === '/api/ai/model')?.init.body)),
-        { model: 'test-model-b' },
+        JSON.parse(String(view.calls.find((call) => call.path === '/api/rpc/ai/setModel')?.init.body)),
+        { json: { model: 'test-model-b' } },
       );
       assert.equal(view.renderer.root.findByType('select').props.value, 'test-model-b');
       assert.match(text(view.renderer.root), /Model selection saved/);
-      assert.ok(view.state.changes >= 2);
       assert.ok(
         view.renderer.root
           .findAllByType('a')
@@ -343,7 +344,7 @@ test('rendered ChatGPT connection controls and independent Corner session handli
       const warning =
         'Disconnected in Corner. Remote revocation was not confirmed; you can also remove Corner in ChatGPT settings.';
       view = await renderConnection(child, AgentConnection, connected, (call) => {
-        if (call.path !== '/api/ai/disconnect') return undefined;
+        if (call.path !== '/api/rpc/ai/disconnect') return undefined;
         view.state.connection = { ...disconnected, email: connected.email };
         return json({ ...disconnected, revocationConfirmed: false, reason: warning });
       });
@@ -370,23 +371,20 @@ test('rendered ChatGPT connection controls and independent Corner session handli
     async (child) => {
       const browser = installBrowser();
       child.after(browser.restore);
-      let code = 'invalid_grant';
+      clearPrivateState();
+      let code = 'CORNER_ERROR';
       child.mock.method(globalThis, 'fetch', async () =>
-        json({ code, error: 'Reconnect the selected connection.' }, 401),
+        json({ defined: true, code, status: 401, message: 'Reconnect the selected connection.', data: { code: 'invalid_grant' } }, 401),
       );
       await assert.rejects(
-        api('/api/ai/model'),
-        (error) =>
-          error instanceof RequestError && error.status === 401 && error.code === 'invalid_grant',
+        scoped(() => rpc.ai.setModel({ model: 'test-model-a' })),
+        error => errorCode(error) === 'invalid_grant',
       );
       assert.deepEqual(browser.events, []);
       code = 'SIGN_IN_REQUIRED';
       await assert.rejects(
-        api('/api/state'),
-        (error) =>
-          error instanceof RequestError &&
-          error.status === 401 &&
-          error.code === 'SIGN_IN_REQUIRED',
+        scoped(() => rpc.workspace.get()),
+        error => errorCode(error) === 'SIGN_IN_REQUIRED',
       );
       assert.deepEqual(browser.events, ['corner:session-expired']);
     },

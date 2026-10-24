@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { access, mkdtemp, rm } from 'node:fs/promises';
 import { request as httpRequest } from 'node:http';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -11,6 +12,9 @@ import { startSmokeServices } from './smoke-services.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const serverEntry = join(root, 'apps/server/dist/index.js');
+const require = createRequire(new URL('../apps/server/package.json', import.meta.url));
+const { createORPCClient, ORPCError } = await import(require.resolve('@orpc/client'));
+const { RPCLink } = await import(require.resolve('@orpc/client/fetch'));
 try {
   await Promise.all([access(serverEntry), access(join(root, 'apps/web/dist/index.html'))]);
 } catch {
@@ -132,23 +136,25 @@ async function run(mode, port) {
       body: JSON.stringify(body),
       headers: { Origin: origin, 'Content-Type': 'application/json', ...extra },
     });
+  const rpc = (procedure, input, extra = {}) =>
+    json(`/api/rpc/${procedure}`, { json: input }, extra);
   assert.equal(
-    (await call('/api/account-policy', { headers: { 'X-Corner-Proxy-Token': 'forged' } })).status,
+    (await rpc('account/policy', undefined, { 'X-Corner-Proxy-Token': 'forged' })).status,
     403,
   );
   assert.equal(
     (
-      await call('/api/account-policy', {
-        headers: { 'X-Corner-Proxy-IP': '192.0.2.12, 192.0.2.13' },
+      await rpc('account/policy', undefined, {
+        'X-Corner-Proxy-IP': '192.0.2.12, 192.0.2.13',
       })
     ).status,
     403,
   );
   assert.equal(
-    (await call('/api/account-policy', { headers: { Host: 'other.example.test' } })).status,
+    (await rpc('account/policy', undefined, { Host: 'other.example.test' })).status,
     400,
   );
-  assert.deepEqual(await (await call('/api/account-policy')).json(), {
+  assert.deepEqual((await (await rpc('account/policy')).json()).json, {
     emailVerificationRequired: false,
     passwordResetAvailable: true,
   });
@@ -168,7 +174,7 @@ async function run(mode, port) {
     'The real health script must use the configured Host and listener port.',
   );
 
-  // Hosted runtime checks stay GET-only; account/provider behavior is isolated elsewhere.
+  // Hosted checks never create accounts or contact an AI provider.
   if (mode === 'local') {
     const signup = await json('/api/auth/sign-up/email', {
       name: 'HTTP test',
@@ -181,11 +187,40 @@ async function run(mode, port) {
       .map((value) => value.split(';', 1)[0])
       .join('; ');
     assert(cookie);
-    const workspace = await (await call('/api/state', { headers: { Cookie: cookie } })).json();
+    const workspace = (await (await rpc('workspace/get', undefined, { Cookie: cookie })).json()).json;
     assert.equal(workspace.state.settings.name, 'HTTP test');
+    const native = createORPCClient(new RPCLink({
+      url: listener + '/api/rpc',
+      headers: { ...headers, Origin: origin, Cookie: cookie },
+    }));
+    const oversized = {
+      requestId: 'http-body-limit-123',
+      mutation: { type: 'grocery.check', data: { key: 'x'.repeat(192 * 1024), checked: true } },
+    };
+    await assert.rejects(
+      native.workspace.mutate(oversized),
+      (error) => error instanceof ORPCError && error.status === 413 && error.data.code === 'REQUEST_TOO_LARGE',
+    );
+    assert.deepEqual(await native.workspace.get(), workspace);
+    // Chunked uploads have no Content-Length; cancellation must still deliver
+    // the native 413 response without destroying the next HTTP connection.
+    const streamed = await fetch(listener + '/api/rpc/workspace/mutate', {
+      method: 'POST',
+      headers: { ...headers, Origin: origin, Cookie: cookie, 'Content-Type': 'application/json' },
+      body: new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(JSON.stringify({ json: oversized })));
+          controller.close();
+        },
+      }),
+      duplex: 'half',
+      signal: AbortSignal.timeout(15_000),
+    });
+    assert.equal(streamed.status, 413);
+    assert.equal((await streamed.json()).json.data.code, 'REQUEST_TOO_LARGE');
+    assert.deepEqual(await native.workspace.get(), workspace);
     assert.equal(
-      (await call('/api/state', { headers: { 'oai-authenticated-user-id': 'forged-user' } }))
-        .status,
+      (await rpc('workspace/get', undefined, { 'oai-authenticated-user-id': 'forged-user' })).status,
       401,
     );
     assert.equal(
@@ -199,7 +234,9 @@ async function run(mode, port) {
       403,
     );
     assert.equal((await json('/api/auth/sign-out', {}, { Cookie: cookie })).status, 200);
-    assert.equal((await call('/api/state', { headers: { Cookie: cookie } })).status, 401);
+    const signedOut = await rpc('workspace/get', undefined, { Cookie: cookie });
+    assert.equal(signedOut.status, 401);
+    assert.equal((await signedOut.json()).json.code, 'SIGN_IN_REQUIRED');
 
     // The 100-continue handshake confirms that Node accepted this handler.
     // SIGTERM arrives while its body is pending. Shutdown must finish the

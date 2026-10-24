@@ -1,4 +1,5 @@
-import type { AppState, FoodEntry, MealSlot, Mutation, Recipe } from '@packages/shared/types';
+import type { AppState, FoodEntry, MealSlot, Recipe } from '@packages/shared/types';
+import type { WorkspaceMutationInput } from '@packages/api/schemas';
 
 export type View =
   | 'agent'
@@ -17,15 +18,6 @@ export type Overlay =
   | { kind: 'pick'; date: string; slot: MealSlot; recipeId?: string }
   | null;
 
-export type ApiPayload = {
-  state?: AppState;
-  revision?: number;
-  aiAvailable?: boolean;
-  recipe?: Recipe;
-  code?: string;
-  error?: string | { message?: string; code?: string };
-};
-
 export type CornerAppProps = {
   initialState: AppState;
   preview: boolean;
@@ -34,9 +26,8 @@ export type CornerAppProps = {
   accountEmail?: string;
   signingOut?: boolean;
   onSignOut?: () => void;
-  onSessionExpired?: () => void;
 };
 
-export type Mutate = (mutation: Mutation, success?: string) => Promise<boolean>;
+export type Mutate = (mutation: WorkspaceMutationInput['mutation'], success?: string) => Promise<boolean>;
 export type Notify = (message: string, error?: boolean) => void;
 export type Confirmation = { title: string; description: string; confirm: () => Promise<boolean> };

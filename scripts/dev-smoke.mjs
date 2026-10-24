@@ -1,4 +1,4 @@
-// Exercise the real three-workspace development stack with disposable local
+// Exercise the real four-workspace development stack with disposable local
 // data. No provider connection, account email, or external request is needed.
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
@@ -15,8 +15,10 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const origin = 'http://127.0.0.1:43139';
 const apiPort = 43140;
 const password = 'synthetic-development-smoke-password-not-used-elsewhere';
-const tasks = ['@packages/shared', 'server', 'web'];
+const compilerTasks = ['@packages/shared', '@packages/api'];
+const tasks = [...compilerTasks, 'server', 'web'];
 const seenTasks = new Set();
+const compiledTasks = new Set();
 const interrupted = new AbortController();
 let child;
 let exited;
@@ -93,6 +95,8 @@ function capture(chunk) {
   // response data into CI output. Only bounded readiness markers are retained.
   captured = (captured + String(chunk)).slice(-64 * 1024);
   for (const task of tasks) if (captured.includes(`${task}:dev:`)) seenTasks.add(task);
+  for (const match of captured.matchAll(/(@packages\/(?:shared|api)):dev:[^\r\n]*Found 0 errors\. Watching for file changes\./g))
+    compiledTasks.add(match[1]);
   apiStarted ||= captured.includes(`Development API listens at http://127.0.0.1:${apiPort};`);
 }
 
@@ -156,16 +160,22 @@ const filesystemPath = (path) => `/@fs${join(root, path)}`;
 
 async function ready() {
   const deadline = Date.now() + 30_000;
+  // Initial compiler emissions can restart Node after its first healthy response.
+  let healthySince = 0;
   while (Date.now() < deadline) {
     interrupted.signal.throwIfAborted();
     if (childFinished) throw new Error('The development stack exited before it was ready.');
-    if (apiStarted && seenTasks.size === tasks.length) {
+    if (apiStarted && seenTasks.size === tasks.length && compiledTasks.size === compilerTasks.length) {
       try {
         const response = await call('/api/health', {
           timeout: Math.max(1, Math.min(1000, deadline - Date.now())),
         });
-        if (response.status === 200 && json(response, 'Development health').ok === true) return;
+        if (response.status === 200 && json(response, 'Development health').ok === true) {
+          healthySince ||= Date.now();
+          if (Date.now() - healthySince >= 1000) return;
+        } else healthySince = 0;
       } catch {
+        healthySince = 0;
         interrupted.signal.throwIfAborted();
       }
     }
@@ -174,7 +184,7 @@ async function ready() {
     });
   }
   throw new Error(
-    `The development stack was not ready within 30 seconds (${seenTasks.size}/3 workspace tasks observed; API listener ${apiStarted ? 'started' : 'not started'}).`,
+    `The development stack was not ready within 30 seconds (${seenTasks.size}/${tasks.length} workspace tasks observed; ${compiledTasks.size}/${compilerTasks.length} compiler watchers ready; API listener ${apiStarted ? 'started' : 'not started'}).`,
   );
 }
 
@@ -237,6 +247,7 @@ try {
       '--filter=web',
       '--filter=server',
       '--filter=@packages/shared',
+      '--filter=@packages/api',
       '--ui=stream',
       '--log-order=stream',
       '--log-prefix=task',
@@ -307,20 +318,20 @@ try {
     'The root project configuration must remain outside the web filesystem allowlist.',
   );
 
-  const policy = await call('/api/account-policy');
+  const policy = await post('/api/rpc/account/policy', {});
   assert.equal(
     policy.status,
     200,
     'The browser origin must proxy account policy to the separate API.',
   );
-  const accountPolicy = json(policy, 'Account policy');
+  const accountPolicy = json(policy, 'Account policy').json;
   assert.ok(
     accountPolicy.emailVerificationRequired === false &&
       accountPolicy.passwordResetAvailable === true,
     'Account policy must match managed auth configuration.',
   );
   assert.equal(
-    (await call('/api/state')).status,
+    (await post('/api/rpc/workspace/get', {})).status,
     401,
     'Workspace data must require a session through the proxy.',
   );
@@ -350,14 +361,14 @@ try {
     .map((value) => value.split(';', 1)[0])
     .join('; ');
   assert.ok(cookie, 'Signup must establish a browser session.');
-  const state = await call('/api/state', { headers: { Cookie: cookie } });
+  const state = await post('/api/rpc/workspace/get', {}, { Cookie: cookie });
   assert.equal(
     state.status,
     200,
     'The session cookie must authenticate proxied workspace requests.',
   );
   assert.ok(
-    json(state, 'Workspace state').state?.settings?.name === 'Development test',
+    json(state, 'Workspace state').json.state?.settings?.name === 'Development test',
     'The session must own the disposable workspace.',
   );
   assert.equal(
@@ -372,7 +383,7 @@ try {
     'The same-origin session must sign out through the proxy.',
   );
   assert.equal(
-    (await call('/api/state', { headers: { Cookie: cookie } })).status,
+    (await post('/api/rpc/workspace/get', {}, { Cookie: cookie })).status,
     401,
     'Signed-out cookies must no longer grant access.',
   );
@@ -388,7 +399,7 @@ try {
   }
 }
 process.stdout.write(
-  'Passed all three Turbo development tasks, web/shared catalog serving, filesystem isolation, API proxy, callback authentication, and account session checks.\n',
+  'Passed all four Turbo development tasks, web/shared catalog serving, filesystem isolation, native RPC proxy, callback authentication, and account session checks.\n',
 );
 process.stdout.write(
   'The owned development process group and temporary data were cleaned up. No account email or model requests were made.\n',

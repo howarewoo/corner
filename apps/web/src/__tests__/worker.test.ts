@@ -39,7 +39,7 @@ test('account reset deep links resolve the app, while private files and missing 
 });
 
 test('frontend identity cannot be spoofed by backend headers and does not discard auth responses', async () => {
-  const response = await worker.fetch(new Request('https://corner.test/api/session'), env);
+  const response = await worker.fetch(new Request('https://corner.test/api/rpc/account/session'), env);
   assert.equal(response.status, 401);
   assert.equal(response.headers.get('X-Corner-Frontend-Version'), env.CF_VERSION_METADATA.id);
   assert.equal(response.headers.get('Cache-Control'), 'private, no-store');

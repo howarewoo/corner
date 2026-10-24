@@ -13,13 +13,13 @@ import {
 } from '@packages/shared/agent';
 import { RecipeSchema, macroTotal, shiftDate } from '@packages/shared/domain';
 import {
-  FoodDescriptionSchema,
   FoodEstimateResultSchema,
   FOOD_ESTIMATE_INSTRUCTIONS,
 } from '@packages/shared/food-estimate';
 import { searchExerciseCatalog } from '@packages/shared/exercise-catalog';
 import type { AppState, Recipe } from '@packages/shared/types';
 import type { WorkspaceStore } from './store.js';
+import { FoodInputSchema, RecipeInputSchema } from '@packages/api/schemas';
 
 export interface InferenceProvider {
   respond(
@@ -66,16 +66,6 @@ const requestId = z
   .min(1)
   .max(120)
   .regex(/^[a-zA-Z0-9_:.\-]+$/);
-export const RecipeInputSchema = z
-  .object({
-    requestId,
-    prompt: z.string().trim().min(8).max(1600),
-    calories: z.number().int().min(150).max(1500),
-    protein: z.number().int().min(5).max(120),
-    maxMinutes: z.number().int().min(5).max(120),
-  })
-  .strict();
-export const FoodInputSchema = z.object({ requestId, description: FoodDescriptionSchema }).strict();
 const DraftRecipeSchema = RecipeSchema.omit({
   id: true,
   color: true,

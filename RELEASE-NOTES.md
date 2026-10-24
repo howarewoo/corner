@@ -1,3 +1,22 @@
+# Initial native oRPC application baseline
+
+The unreleased application now uses a shared `@packages/api` native oRPC contract and TanStack Query browser server state. Application REST routes are removed; `/api/auth`, `/auth/callback`, and `GET /api/health` retain their independent protocols. Old application URLs and unpublished REST artifacts are not supported. No maintenance machinery, upgrade bridge, or cutover controller is introduced.
+
+Production/development/Workers smokes and public release probes target native RPC procedures/envelopes. Future same-protocol prior/candidate/recovered pair qualification retains immutable artifacts, receipts, current-schema recovery, owner isolation, idempotent writes, and preserved-data checks. Development smoke selects the shared/API watchers plus server/web, excluding the design catalog.
+
+Observed using Node 24.21.0, disposable PostgreSQL 17, and local HTTPS Auth fixtures:
+
+- Root type checks, full workspace builds, both Worker dry runs, 11/11 server files, 6/6 web files, and 58 native tooling regressions passed. Lint passed with 47 warnings and no errors.
+- Production Node HTTP and paired Workers smokes passed, including native clients, owner isolation, idempotent writes, and sign-out. Node HTTP additionally proved declared/chunked oversized-upload rejection followed by healthy requests. Workers still emitted the previously recorded private-safe database-connection diagnostics; clean connection logs are not established.
+- Actual desktop and 390px phone browser checks covered account access, persisted food, retained local drafts, and session cache retirement. Synthetic native agent responses exercised background polling, visible failures, recovery, and stopping at a terminal run. No paid inference was used.
+- Offline frozen installation and a clean source-package build passed after explicitly isolating the new API package from ambient types. Browser imports keep runtime contract validators server-side and preserve the lazy exercise-catalog chunk.
+- The Docker image built and started; native RPC policy/origin errors, static app serving, and its healthcheck passed. Docker authentication was not exercised because the host-only Auth fixture is unreachable from the container; Node and Workers covered authentication separately. The first image build exceeded its command deadline; the final-source build completed using the populated dependency cache.
+- Development smoke exposed a compiler-startup restart race. Readiness now waits for both compiler watchers and stable health within the existing deadline. The latest run failed with OS `EPERM` while probing its owned process group during cleanup; full development-smoke acceptance remains unverified and is not represented as passing.
+
+Focused source reviews found no remaining reported migration issue after fixing monotonic cache ingestion and visible agent-poll errors; both regressions failed before and passed after their fixes. Source review is not runtime proof. No live provider provisioning, cloud deployment, production migration, real email, or model request was performed. Earlier entries below describe their then-current code, not this baseline.
+
+---
+
 # Wrangler configuration JSONC compatibility
 
 Worker smoke and release packaging now read source Wrangler configurations through the pinned Wrangler raw configuration reader. Comments and trailing commas are supported without adding a dependency or changing the immutable payload format. Generated artifact manifests and configurations retain strict JSON validation and digest checks.

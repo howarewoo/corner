@@ -3,6 +3,8 @@ import { useLocation, useNavigate } from 'react-router';
 import { ArrowRight, Check, ChevronLeft, Loader2, Mail } from 'lucide-react';
 import { createAuthClient, isAuthError } from '@neondatabase/auth';
 import { BetterAuthVanillaAdapter } from '@neondatabase/auth/vanilla/adapters';
+import { useQuery } from '@tanstack/react-query';
+import { rpc } from './rpc';
 import {
   Button,
   Input,
@@ -13,7 +15,7 @@ import {
   ToggleGroupItem,
   Alert,
 } from '@packages/ui';
-import { api, post, RequestError } from './api';
+import { authPost, RequestError } from './api';
 
 export type AccountPolicy = { emailVerificationRequired: boolean; passwordResetAvailable: boolean };
 export type AccountRoute = { kind: 'default' } | { kind: 'reset'; token: string | null };
@@ -95,46 +97,23 @@ export default function AccountAccess({
   const [password, setPassword] = useState('');
   const [confirmation, setConfirmation] = useState('');
   const [verificationCode, setVerificationCode] = useState('');
-  const [policy, setPolicy] = useState<AccountPolicy | null>(null);
-  const [policyLoading, setPolicyLoading] = useState(true);
-  const [policyError, setPolicyError] = useState('');
+  const policyQuery = useQuery({ queryKey: ['policy'], queryFn: ({ signal }) => rpc.account.policy(undefined, { signal }) });
+  const policy = policyQuery.data ?? null;
+  const policyLoading = policyQuery.isFetching;
+  const policyError = policyQuery.error ? 'Account options could not be loaded. Please try again.' : '';
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const active = useRef(true);
   const sequence = useRef(0);
-  const policySequence = useRef(0);
   const action = useRef<{ id: number; controller: AbortController } | null>(null);
-  const policyRequest = useRef<AbortController | null>(null);
   const resetToken = useRef(initialRoute.kind === 'reset' ? initialRoute.token : null);
   const heading = useRef<HTMLHeadingElement>(null);
   const confirmationInput = useRef<HTMLInputElement>(null);
   const onSignedInRef = useRef(onSignedIn);
   onSignedInRef.current = onSignedIn;
 
-  const loadPolicy = useCallback(async () => {
-    const current = ++policySequence.current;
-    policyRequest.current?.abort();
-    const controller = new AbortController();
-    policyRequest.current = controller;
-    setPolicyLoading(true);
-    setPolicyError('');
-    try {
-      const result = await api<AccountPolicy>('/api/account-policy', { signal: controller.signal });
-      if (!active.current || current !== policySequence.current) return;
-      if (
-        typeof result?.emailVerificationRequired !== 'boolean' ||
-        typeof result?.passwordResetAvailable !== 'boolean'
-      )
-        throw new Error('Invalid account policy');
-      setPolicy(result);
-    } catch (failure) {
-      if (active.current && current === policySequence.current)
-        setPolicyError('Account options could not be loaded. Please try again.');
-    } finally {
-      if (active.current && current === policySequence.current) setPolicyLoading(false);
-    }
-  }, []);
+  const loadPolicy = useCallback(async () => { await policyQuery.refetch(); }, [policyQuery.refetch]);
 
   useEffect(() => {
     active.current = true;
@@ -146,13 +125,10 @@ export default function AccountAccess({
         { replace: true, state: location.state },
       );
     }
-    void loadPolicy();
     return () => {
       active.current = false;
       sequence.current += 1;
-      policySequence.current += 1;
       action.current?.controller.abort();
-      policyRequest.current?.abort();
     };
   }, [initialRoute.kind, loadPolicy]);
   useEffect(() => {
@@ -262,7 +238,7 @@ export default function AccountAccess({
     if (!pending) return;
     const submittedEmail = email.trim();
     try {
-      await post(
+      await authPost(
         '/api/auth/email-otp/send-verification-otp',
         { email: submittedEmail, type: 'email-verification' },
         pending.controller.signal,
@@ -286,7 +262,7 @@ export default function AccountAccess({
     const pending = begin();
     if (!pending) return;
     try {
-      await post(
+      await authPost(
         '/api/auth/email-otp/verify-email',
         { email: email.trim(), otp: verificationCode.trim() },
         pending.controller.signal,
@@ -308,7 +284,7 @@ export default function AccountAccess({
     if (!pending) return;
     const submittedEmail = email.trim();
     try {
-      await post(
+      await authPost(
         '/api/auth/request-password-reset',
         {
           email: submittedEmail,
@@ -345,7 +321,7 @@ export default function AccountAccess({
     const pending = begin();
     if (!pending) return;
     try {
-      await post(
+      await authPost(
         '/api/auth/reset-password',
         { newPassword: password, token: resetToken.current },
         pending.controller.signal,
