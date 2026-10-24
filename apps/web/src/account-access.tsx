@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type FormEvent } from 'react';
 import { useLocation, useNavigate } from 'react-router';
 import { ArrowRight, Check, ChevronLeft, Loader2, Mail } from 'lucide-react';
 import { createAuthClient, isAuthError } from '@neondatabase/auth';
@@ -109,6 +109,8 @@ export default function AccountAccess({
   const action = useRef<{ id: number; controller: AbortController } | null>(null);
   const resetToken = useRef(initialRoute.kind === 'reset' ? initialRoute.token : null);
   const heading = useRef<HTMLHeadingElement>(null);
+  const surface = useRef<HTMLElement>(null);
+  const animateModeSwitch = useRef(false);
   const confirmationInput = useRef<HTMLInputElement>(null);
   const onSignedInRef = useRef(onSignedIn);
   onSignedInRef.current = onSignedIn;
@@ -133,6 +135,31 @@ export default function AccountAccess({
   }, [initialRoute.kind, loadPolicy]);
   useEffect(() => {
     heading.current?.focus();
+  }, [mode]);
+  useLayoutEffect(() => {
+    const requested = animateModeSwitch.current;
+    animateModeSwitch.current = false;
+    if (
+      !requested ||
+      (mode !== 'signin' && mode !== 'signup') ||
+      !surface.current?.animate ||
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    )
+      return;
+
+    // Keep the shared mode controls still and the single live form interactive.
+    const animations = Array.from(surface.current.children)
+      .filter((element) => !element.classList.contains('account-mode'))
+      .map((element) =>
+        element.animate(
+          [
+            { opacity: 0, transform: `translateX(${mode === 'signup' ? 12 : -12}px)` },
+            { opacity: 1, transform: 'translateX(0)' },
+          ],
+          { duration: 220, easing: 'cubic-bezier(0.16, 1, 0.3, 1)' },
+        ),
+      );
+    return () => animations.forEach((animation) => animation.cancel());
   }, [mode]);
 
   function show(next: Mode, message = '') {
@@ -369,7 +396,6 @@ export default function AccountAccess({
           corner<span>.</span>
         </div>
         <div>
-          <p className="eyebrow">YOUR OWN EVERYDAY PRACTICE</p>
           <h1>
             Make room for
             <br />
@@ -380,19 +406,24 @@ export default function AccountAccess({
             track of what happens, and adjust as you go.
           </p>
         </div>
-        <div className="account-principles">
-          <span>Your own account and records</span>
-          <span>Plans you can change</span>
-          <span>An agent you choose to connect</span>
-        </div>
       </section>
-      <section className="account-form-surface corner-ui" aria-labelledby="account-access-heading">
+      <section
+        ref={surface}
+        className="account-form-surface corner-ui"
+        aria-labelledby="account-access-heading"
+      >
         {credentials ? (
           <ToggleGroup
             value={[mode]}
+            onClickCapture={(event) => {
+              animateModeSwitch.current = event.detail > 0;
+            }}
+            onKeyDownCapture={() => {
+              animateModeSwitch.current = false;
+            }}
             onValueChange={(val) => {
               const next = Array.isArray(val) ? val[0] : val;
-              if (next === 'signin' || next === 'signup') show(next);
+              if ((next === 'signin' || next === 'signup') && next !== mode) show(next);
             }}
             aria-label="Account access"
             className="account-mode"
@@ -437,11 +468,6 @@ export default function AccountAccess({
         )}
         {credentials && (
           <>
-            <p>
-              {mode === 'signup'
-                ? 'Create your account and start planning. You can edit your profile or import an existing workspace in Settings.'
-                : 'Pick up your plans, recipes, and training where you left them.'}
-            </p>
             <form onSubmit={submitCredentials} aria-busy={busy}>
               {mode === 'signup' && (
                 <Field className="field">
@@ -836,10 +862,6 @@ export default function AccountAccess({
             </Button>
           </div>
         )}
-        <p className="account-footnote">
-          Your Corner account is separate from any AI connection. You can plan and track without
-          connecting an agent.
-        </p>
       </section>
     </main>
   );
