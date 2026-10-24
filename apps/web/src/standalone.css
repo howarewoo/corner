@@ -43,8 +43,6 @@
 .import-summary dl { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; margin: 0; }
 .import-summary dt { font-size: 12px; text-transform: capitalize; color: var(--muted-foreground); }
 .import-summary dd { margin: 4px 0 0; font-size: 24px; font-weight: 600; color: var(--ink); }
-.targets-unset { padding: 0 28px 24px; color: var(--muted-foreground); font-size: 13px; }
-.targets-unset strong { color: var(--ink); }
 .onboarding-nudge { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 20px; padding: 24px; margin-bottom: 28px; border-radius: 22px; background: var(--surface-secondary); }
 .onboarding-nudge p { font-size: 13px; color: var(--muted-foreground); margin-top: 6px; }
 @media (max-width: 850px) { .account-layout { grid-template-columns: 1fr; max-width: 650px; padding: 24px; gap: 24px; } .account-intro { padding: 4px; gap: 28px; } .account-intro h1 { margin: 14px 0; } .account-principles { display: none; } .account-intro h1 br { display: none; } .profile-week { grid-template-columns: repeat(2, minmax(0, 1fr)); } }

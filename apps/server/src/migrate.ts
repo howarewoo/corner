@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { readFile, readdir } from 'node:fs/promises';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Pool } from 'pg';
 import { createDatabase } from './database.js';
@@ -12,7 +13,7 @@ export async function migrate(database: Pool): Promise<void> {
     await connection.query("SELECT pg_advisory_xact_lock(hashtextextended('corner:schema-migrations', 0))");
     await connection.query('CREATE TABLE IF NOT EXISTS corner_schema_migrations (name TEXT PRIMARY KEY, checksum TEXT NOT NULL)');
     for (const name of (await readdir(directory)).filter(name => /^\d+_.+\.sql$/.test(name)).sort()) {
-      const sql = await readFile(new URL(`../migrations/${name}`, import.meta.url), 'utf8');
+      const sql = await readFile(join(directory, name), 'utf8');
       const checksum = createHash('sha256').update(sql).digest('hex');
       const existing = (await connection.query('SELECT checksum FROM corner_schema_migrations WHERE name = $1', [name])).rows[0];
       if (existing) {

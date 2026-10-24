@@ -1,5 +1,2 @@
 .food-entry-mode-panel[hidden] { display: none; }
 .food-entry-description { padding: 0; }
-@media (max-width: 560px) {
-  .food-entry-description { padding: 0; }
-}

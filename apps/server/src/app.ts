@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
-import { accountPolicy, getPrincipal, requirePrincipal, type CornerAuth, type Principal } from './auth.js';
+import { accountPolicy, requirePrincipal, type CornerAuth, type Principal } from './auth.js';
 import type { Config } from './config.js';
 import { ApiError, errorResponse, json, readJson, requestIdSchema, requireSameOrigin, revisionSchema } from './http.js';
 import { isEmptyWorkspace, type WorkspaceSnapshot, type WorkspaceStore } from './store.js';
@@ -21,16 +21,15 @@ const importInput = z.object({ state: z.unknown(), requestId: requestIdSchema, e
 
 const redirectFields = ['callbackURL', 'redirectTo', 'errorCallbackURL', 'newUserCallbackURL'] as const;
 function accountRedirect(value: unknown, config: Config, expectedPath?: string): string {
-  if (typeof value !== 'string' || !value || value.length > 2048 || /[\\\u0000-\u0020\u007f]/.test(value) || value.startsWith('//')) {
-    throw new ApiError(400, 'INVALID_ACCOUNT_REDIRECT', 'Account links must return to this Corner installation.');
+  if (typeof value === 'string' && value && value.length <= 2048 && !/[\\\u0000-\u0020\u007f]/.test(value) && !value.startsWith('//')) {
+    try {
+      const destination = new URL(value, config.origin);
+      if (destination.origin === config.origin && !destination.username && !destination.password && !destination.hash && (!expectedPath || destination.pathname === expectedPath)) {
+        return destination.href;
+      }
+    } catch {}
   }
-  let destination: URL;
-  try { destination = new URL(value, config.origin); }
-  catch { throw new ApiError(400, 'INVALID_ACCOUNT_REDIRECT', 'Account links must return to this Corner installation.'); }
-  if (destination.origin !== config.origin || destination.username || destination.password || destination.hash || (expectedPath && destination.pathname !== expectedPath)) {
-    throw new ApiError(400, 'INVALID_ACCOUNT_REDIRECT', 'Account links must return to this Corner installation.');
-  }
-  return destination.href;
+  throw new ApiError(400, 'INVALID_ACCOUNT_REDIRECT', 'Account links must return to this Corner installation.');
 }
 function accountBody(path: string, raw: unknown, config: Config): unknown {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return raw;
@@ -62,7 +61,7 @@ export function createApp({ config, auth, store, aiAvailable, extraRoutes }: App
   app.get('/api/account-policy', (c, next) => c.req.method === 'GET' ? json(accountPolicy(config)) : next());
   app.get('/api/session', async (c, next) => {
     if (c.req.method !== 'GET') return next();
-    const principal = await getPrincipal(auth, c.req.raw);
+    const principal = await auth.principal(c.req.raw);
     return json({ user: principal ? { id: principal.userId, name: principal.name, email: principal.email } : null });
   });
   app.on('ALL', ['/api/auth', '/api/auth/*'], async c => {
@@ -77,7 +76,7 @@ export function createApp({ config, auth, store, aiAvailable, extraRoutes }: App
       // Resend must not reveal a different, already signed-in account.
       if (path === '/api/auth/email-otp/send-verification-otp') headers.delete('Cookie');
       const forwarded = new Request(request, { headers, body: JSON.stringify(body) });
-      const response = auth.withCookies(forwarded, await auth.handler(forwarded));
+      const response = await auth.handler(forwarded);
       if (response.status >= 500) throw new ApiError(503, 'ACCOUNT_SERVICE_UNAVAILABLE', 'The account service is temporarily unavailable. Try again later.');
       return response;
     }
@@ -85,8 +84,7 @@ export function createApp({ config, auth, store, aiAvailable, extraRoutes }: App
     for (const key of redirectFields) {
       for (const value of url.searchParams.getAll(key)) accountRedirect(value, config);
     }
-    const forwarded = new Request(url, request);
-    return auth.withCookies(forwarded, await auth.handler(forwarded));
+    return auth.handler(request);
   });
 
   app.use('*', async (c, next) => {

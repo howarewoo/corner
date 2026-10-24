@@ -1,3 +1,29 @@
+# Branch simplification
+
+Simplified server authentication by removing a pass-through principal helper and letting the account proxy attach its own cookies. Subscription concurrency checks now select only the stored version instead of fetching an entire account row; owner locks, generation checks, atomic commits, and both shutdown drains remain intact.
+
+Product navigation and account headings now use static definitions. Shared navigation reuses its brand markup and click policy. The catalog uses one selected-entry lookup, memoized search groups, and scoped specimen hooks/context subscriptions. Removed unused legacy settings/onboarding CSS and an accidentally tracked generated test bundle; future web test bundles are ignored.
+
+Release tooling compares baseline IDs directly and avoids hashing packaging inputs whose digests were immediately discarded. Artifact validation, immutable payload checks, approval/schema boundaries, strict CLI parsing, and unconditional Worker security checks—including artifacts without version metadata—remain in place.
+
+Observed on Node 24.21.0 with disposable PostgreSQL 17 and local HTTPS Auth fixtures: lint passed with the same 48 warnings as baseline; workspace type checks, 45 native tooling regressions, 10/10 server and 3/3 web test files, workspace/Worker builds, production HTTP smoke, two-Worker smoke, artifact packaging/verification, and a packaged Worker smoke without version metadata passed. Development smoke first hit the previously recorded macOS process-group `EPERM`; a terminal-backed run passed without code changes.
+
+Browser checks covered all eight workspace routes and all 70 catalog entries at 1440px and 390px without document overflow or JavaScript errors. Exercised account creation/sign-out/sign-in, deep-link retention, profile save/reload, route history and filter retention, phone nutrition navigation, catalog search/theme controls, and mobile Sheet dismissal/selection focus. A modified-link event remained uncancelled; native new-tab opening was not established by the browser automation.
+
+Concurrent frontend Worker work was preserved and included in combined local verification, not authored by this simplification. No commit, publication, cloud deployment, live Neon request, real account email, or model inference was performed.
+
+---
+
+# Separate Cloudflare frontend Worker
+
+Added `apps/web/wrangler.jsonc` for `corner-web`, with static assets from `apps/web/dist` and a `SERVER` service binding targeting the independently deployed `corner-server`. The frontend forwards API and callback requests without changing the browser origin or cookie headers, retains static security/cache policies, and serves SPA deep links without turning missing assets or API routes into HTML. It requires no database/Auth secrets.
+
+Added `build:web:worker` and `deploy:web`; `build:workers` dry-runs both bundles. The existing Workers smoke now starts both bundled Workers in one local workerd runtime with an actual service binding and disposable PostgreSQL/HTTPS Auth fixtures. Backend artifact qualification retains its separate entrypoint. Hosting guidance records Cloudflare Builds commands, backend naming/origin prerequisites, and the separate frontend/backend release and rollback boundaries.
+
+Observed on Node 24.21.0: both Worker bundle dry runs, repository type checks, lint (existing warnings), all three web test files, 45 native CI/release regressions, and the two-Worker runtime smoke passed. The smoke exercised assets/reset deep links, canonical and cross-origin boundaries, secure account cookies, isolated PostgreSQL writes/idempotent retries, sign-out, and the hosted AI gate. No Cloudflare deployment, production migration, real inbox delivery, or model inference was performed.
+
+---
+
 # Local targeted verification and approved immutable releases
 
 Added conservative local docs/web/design/shared-UI profiles while keeping PR and main CI unconditionally full. No targeted CI gate, activation switch, or duplicate advisory CI job remains. Required-check configuration uses ordinary GitHub Actions repository-writer trust, preserves unrelated checks/review rules, and requires an actually successful full job on current main. GitHub protection/environment setup remains an explicit post-merge operator action, not a side effect of this change.

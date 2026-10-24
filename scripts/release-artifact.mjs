@@ -4,14 +4,13 @@ import { access, copyFile, lstat, mkdir, readFile, readdir, writeFile } from 'no
 import { createRequire } from 'node:module';
 import { dirname, join, resolve, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
-
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const sha = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
-const safe = name => typeof name === 'string' && name.length > 0 && !name.includes('\\') && !name.includes('\0') && !name.startsWith('/') && name.split('/').every(part => part && part !== '.' && part !== '..' && !part.startsWith('.'));
+const safe = name => typeof name === 'string' && Boolean(name) && !name.includes('\\') && !name.includes('\0') && !name.startsWith('/') && name.split('/').every(part => part && !part.startsWith('.'));
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 
-async function inventory(directory, prefix = '') {
+async function inventory(directory, prefix = '', hashContent = true) {
   if (!(await lstat(directory)).isDirectory()) throw new Error('Artifact directories must be real directories.');
   const files = Object.create(null);
   for (const name of (await readdir(directory)).sort()) {
@@ -20,8 +19,8 @@ async function inventory(directory, prefix = '') {
     const entry = join(directory, name);
     const stat = await lstat(entry);
     if (stat.isSymbolicLink()) throw new Error(`Symlink forbidden: ${path}`);
-    if (stat.isDirectory()) Object.assign(files, await inventory(entry, path));
-    else if (stat.isFile()) files[path] = hash(await readFile(entry));
+    if (stat.isDirectory()) Object.assign(files, await inventory(entry, path, hashContent));
+    else if (stat.isFile()) files[path] = hashContent ? hash(await readFile(entry)) : '';
     else throw new Error(`Nonregular artifact file: ${path}`);
   }
   return files;
@@ -55,7 +54,7 @@ export async function verifyArtifact(directory) {
 }
 
 async function copyTree(source, destination) {
-  const files = await inventory(source);
+  const files = await inventory(source, '', false);
   for (const name of Object.keys(files)) {
     if (name.endsWith('.map') || name === 'README.md') continue;
     if (/\.(?:map|pem|key|env)$/i.test(name) || name.startsWith('.')) throw new Error(`Forbidden packaging input: ${name}`);
@@ -70,10 +69,8 @@ export async function packageArtifact({ root: sourceRoot = root, out, sourceSha 
   if (!/^[a-f0-9]{40}$/.test(sourceSha)) throw new Error('A full source SHA is required.');
   const serverRequire = createRequire(join(sourceRoot, 'apps/server/package.json'));
   const webRequire = createRequire(join(sourceRoot, 'apps/web/package.json'));
-  await access(join(sourceRoot, 'packages/shared/dist/index.js')).catch(async () => {
-    const entries = await readdir(join(sourceRoot, 'packages/shared/dist'));
-    if (!entries.some(name => name.endsWith('.js'))) throw new Error('Build shared before packaging.');
-  });
+  const shared = await readdir(join(sourceRoot, 'packages/shared/dist')).catch(() => []);
+  if (!shared.some(name => name.endsWith('.js'))) throw new Error('Build shared before packaging.');
   await access(join(sourceRoot, 'apps/server/dist/migrate.js'));
   const workerSource = join(sourceRoot, 'apps/server/dist/worker');
   await access(join(workerSource, 'worker.js'));
@@ -97,7 +94,7 @@ export async function packageArtifact({ root: sourceRoot = root, out, sourceSha 
 }
 
 export async function qualifyArtifact({ candidate, previous, bootstrap = false, report }) {
-  if (!report || Boolean(previous) === bootstrap || (!previous && !bootstrap)) throw new Error('Qualification requires exactly one of --previous or --bootstrap, and --report.');
+  if (!report || Boolean(previous) === Boolean(bootstrap)) throw new Error('Qualification requires exactly one of --previous or --bootstrap, and --report.');
   candidate = resolve(candidate); report = resolve(report);
   for (const tree of [candidate, previous && resolve(previous)].filter(Boolean)) {
     const path = relative(tree, report);

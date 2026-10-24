@@ -20,6 +20,11 @@ export type AccountRoute = { kind: 'default' } | { kind: 'reset'; token: string 
 type Mode = 'signin' | 'signup' | 'verify' | 'resend' | 'forgot' | 'reset-sent' | 'reset' | 'reset-invalid' | 'reset-complete';
 const emptyRoute: AccountRoute = { kind: 'default' };
 const invalidResetCodes = new Set(['INVALID_TOKEN', 'TOKEN_EXPIRED', 'RESET_PASSWORD_TOKEN_EXPIRED', 'USER_NOT_FOUND']);
+const titles: Record<Mode, string> = {
+  signin: 'Welcome back.', signup: 'A space of your own.', verify: 'Check your email.', resend: 'A fresh verification code.',
+  forgot: 'Let’s get you back in.', 'reset-sent': 'Check your email.', reset: 'Choose a new password.',
+  'reset-invalid': 'This reset link can’t be used.', 'reset-complete': 'Your password is updated.',
+};
 
 /** Only consume Corner's fixed account routes. Query text never becomes a
  * destination, HTML, account identity, or proof of an authenticated session. */
@@ -203,11 +208,6 @@ export default function AccountAccess({ onSignedIn, initialRoute = emptyRoute }:
     } finally { finish(pending.id); }
   }
 
-  const titles: Record<Mode, string> = {
-    signin: 'Welcome back.', signup: 'A space of your own.', verify: 'Check your email.', resend: 'A fresh verification code.',
-    forgot: 'Let’s get you back in.', 'reset-sent': 'Check your email.', reset: 'Choose a new password.',
-    'reset-invalid': 'This reset link can’t be used.', 'reset-complete': 'Your password is updated.',
-  };
   const credentials = mode === 'signin' || mode === 'signup';
   const resetAvailable = Boolean(policy?.passwordResetAvailable);
   const disabled = busy || policyLoading || !policy;

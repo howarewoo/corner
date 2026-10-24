@@ -7,18 +7,20 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { startSmokeServices } from './smoke-services.mjs';
+import { publicChecks } from './release.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const require = createRequire(new URL('../apps/server/package.json', import.meta.url));
-const { unstable_startWorker } = await import(require.resolve('wrangler'));
+const { unstable_startWorker, unstable_getMiniflareWorkerOptions } = await import(require.resolve('wrangler'));
 const { Agent, fetch: fixtureFetch } = await import(require.resolve('undici'));
 const options = {};
 for (let index = 2; index < process.argv.length; index += 2) {
   const flag = process.argv[index];
-  if (!['--config', '--migration-entry', '--previous-config', '--previous-migration-entry'].includes(flag) || !process.argv[index + 1] || options[flag]) throw new Error(`Invalid smoke option: ${flag}`);
+  if (!['--config', '--frontend-config', '--migration-entry', '--previous-config', '--previous-migration-entry'].includes(flag) || !process.argv[index + 1] || options[flag]) throw new Error(`Invalid smoke option: ${flag}`);
   options[flag] = resolve(process.argv[index + 1]);
 }
 if (Boolean(options['--previous-config']) !== Boolean(options['--previous-migration-entry'])) throw new Error('Previous Worker and migrator must be supplied together.');
+if (options['--frontend-config'] && (options['--config'] || options['--previous-config'])) throw new Error('Frontend smoke uses the current checkout builds only.');
 if (!options['--config']) await access(join(root, 'apps/web/dist/index.html'));
 const candidateMigrator = options['--migration-entry'] ? await import(pathToFileURL(options['--migration-entry']).href) : undefined;
 const previousMigrator = options['--previous-migration-entry'] ? await import(pathToFileURL(options['--previous-migration-entry']).href) : undefined;
@@ -88,7 +90,38 @@ try {
     await worker.dispose();
     await candidateMigrator.migrate(backend.database);
   }
-  worker = await startWorker(options['--config'] ?? join(root, 'apps/server/wrangler.jsonc'));
+  if (options['--frontend-config']) {
+    const miniflareRequire = createRequire(require.resolve('wrangler'));
+    const { Miniflare, convertV4MiniflareOptions } = await import(miniflareRequire.resolve('miniflare'));
+    const workers = [];
+    for (const [config, bundle, isServer] of [
+      [options['--frontend-config'], join(root, 'apps/web/.wrangler/worker/worker.js'), false],
+      [join(root, 'apps/server/wrangler.jsonc'), join(root, 'apps/server/dist/worker/worker.js'), true],
+    ]) {
+      const original = JSON.parse(await readFile(config, 'utf8'));
+      const name = isServer ? 'corner-server' : original.name;
+      const localConfig = join(directory, `${name}.json`);
+      await writeFile(localConfig, JSON.stringify({
+        ...original, name, main: bundle,
+        assets: { ...original.assets, directory: resolve(dirname(config), original.assets.directory) },
+      }));
+      const { workerOptions, externalWorkers } = unstable_getMiniflareWorkerOptions(localConfig);
+      // These are Wrangler's already-bundled JS outputs, not raw source modules.
+      delete workerOptions.modulesRules;
+      workers.push({
+        ...workerOptions, name, modules: true, modulesRoot: dirname(bundle), scriptPath: bundle,
+        bindings: isServer ? bindings : {},
+        ...(isServer ? { outboundService: async request => {
+          assert.equal(new URL(request.url).origin, new URL(backend.authUrl).origin, 'The smoke must never contact a real provider.');
+          return fixtureFetch(request.url, { method: request.method, headers: request.headers, body: request.body, duplex: 'half', redirect: 'manual', dispatcher });
+        } } : {}),
+      }, ...externalWorkers);
+    }
+    const runtime = new Miniflare(convertV4MiniflareOptions({ workers, host: '127.0.0.1', port: 0 }));
+    worker = { ready: runtime.ready, fetch: (...args) => runtime.dispatchFetch(...args), dispose: () => runtime.dispose() };
+  } else {
+    worker = await startWorker(options['--config'] ?? join(root, 'apps/server/wrangler.jsonc'));
+  }
   await worker.ready;
   const call = (path, options = {}) => worker.fetch(new URL(path, origin), { ...options, signal: AbortSignal.timeout(20_000) });
   const post = (path, body, headers = {}) => call(path, { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body) });
@@ -100,28 +133,15 @@ try {
   const health = await call('/api/health');
   assert.deepEqual(await health.json(), { ok: true });
   const workerConfig = JSON.parse(await readFile(options['--config'] ?? join(root, 'apps/server/wrangler.jsonc'), 'utf8'));
+  const version = health.headers.get('X-Corner-Version');
   if (workerConfig.version_metadata?.binding === 'CF_VERSION_METADATA') {
-    const version = health.headers.get('X-Corner-Version');
     assert.match(version ?? '', /^[a-f0-9-]{36}$/i);
-    const { publicChecks } = await import('./release.mjs');
-    await publicChecks(origin, version, (url, options) => worker.fetch(url, options));
   }
+  await publicChecks(origin, version, (url, options) => worker.fetch(url, options));
   assert.equal((await call('https://wrong.example.test/api/health')).status, 400);
-  assert.equal((await call('/api/state')).status, 401);
-  assert.equal((await call('/.env')).status, 404);
-  assert.equal((await call('/assets/not-found.js')).status, 404);
-  assert.equal((await call('/api/not-found')).status, 401, 'API misses must not serve SPA HTML.');
-  const page = await call('/account/reset-password');
-  assert.equal(page.status, 200);
-  assert.match(page.headers.get('Content-Security-Policy'), /frame-ancestors 'none'/);
-  const html = await page.text();
-  assert.match(html, /<div id="root"><\/div>/);
-  const script = html.match(/src="([^"]+\.js)"/)[1];
-  const asset = await call(script);
-  assert.equal(asset.status, 200);
-  assert.match(asset.headers.get('Cache-Control'), /immutable/);
-  await asset.arrayBuffer();
   assert.equal((await call('/', { method: 'POST' })).status, 405);
+  const page = await call('/account/reset-password');
+  assert.match(await page.text(), /<div id="root"><\/div>/);
 
   async function signup(name) {
     const response = await post('/api/auth/sign-up/email', { name, email: `${name.toLowerCase()}@example.test`, password: 'synthetic-workers-smoke-password' });

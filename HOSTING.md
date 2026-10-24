@@ -8,15 +8,38 @@ This guide does not create a cloud account, register a domain, configure SMTP, o
 
 ### Runtime and prerequisites
 
-The Worker in `apps/server/src/worker.ts` reuses the account, workspace, and persisted AI-history routes. Wrangler uploads `apps/web/dist` as Workers Static Assets. Every request passes through canonical-origin validation and response security headers before assets or API handling; missing API endpoints never become SPA HTML.
+`corner-web` serves `apps/web/dist` through `apps/web/wrangler.jsonc` and forwards `/api`, `/api/*`, and `/auth/callback` to the separately deployed **`corner-server`** through the `SERVER` service binding. The browser uses one public origin: no cross-origin cookies, browser backend URL, or CORS configuration is needed. The backend preserves canonical-origin validation and response security headers; missing API endpoints never become SPA HTML. The existing server release artifact also retains its asset support for backend qualification.
 
 Workers always run in **hosted** mode. They do not read repository `.env` files, generate local keys, initialize process-wide agent recovery, or start new inference. Request-scoped `pg` pools close before the request finishes; existing PostgreSQL transactions, owner locks, and mutation receipts still protect writes across isolates. This is not support for distributed background AI tasks. Do not run the old Node process against the same database during cutover.
 
 You need a Cloudflare account with a domain/zone you control, a Neon Postgres/Auth project, Node 24, and the pinned pnpm dependencies. No D1, KV, R2, Hyperdrive, container, or paid inference binding is required. The app connects directly to the **pooled Neon PostgreSQL URL** using Workers' Node compatibility; use a separate direct URL only for migrations.
 
+### Cloudflare dashboard setup
+
+The frontend Worker is **`corner-web`** (`apps/web/wrangler.jsonc`); it expects the separately deployed backend to be named **`corner-server`**. Deploy the server first in the same Cloudflare account. Only the server holds database/Auth credentials and application keys.
+
+In **Workers & Pages → corner-web → Settings → Builds**, use:
+
+| Setting | Value |
+| --- | --- |
+| Production branch | `main` |
+| Root directory | `/` (repository root, not `apps/web`) |
+| Build command | `pnpm run build:web:worker` |
+| Deploy command | `pnpm run deploy:web` |
+| Build environment | `NODE_VERSION=24.21.0`, `PNPM_VERSION=10.33.2` |
+| Dependency installation | Root `pnpm install --frozen-lockfile`; preserve the workspace lockfile |
+| Runtime service binding | `SERVER` → `corner-server`, supplied by `apps/web/wrangler.jsonc` |
+| Runtime secrets | None on `corner-web`; keep the four secrets below on `corner-server` only |
+
+The build/deploy commands select `apps/web/wrangler.jsonc` explicitly and use the repository's pinned Wrangler from the server workspace; the frontend build does not start or deploy the backend or apply migrations. `pnpm run build:web:worker` only builds/dry-runs. Keep the dashboard root at `/` for the shared workspace lockfile and dependencies; the configuration itself belongs to the web app. Do not use bare root `npx wrangler deploy`, which neither selects an app configuration nor guarantees the pinned tool version.
+
+Attach the frontend's exact HTTPS custom domain to **`corner-web`** in Cloudflare. Set backend `CORNER_ORIGIN` to that **frontend origin** and register the same origin with Neon Auth. Service-binding requests preserve the original URL, Origin, cookies, and response cookies. Keep `workers.dev` and preview URLs disabled; arbitrary preview origins are not authenticated application origins.
+
+Keep automatic Cloudflare Git builds **disabled on `corner-server`**: its protected release workflow below owns database migrations and backend promotion. An existing backend Worker without a Corner production ledger is not a completed bootstrap; the release workflow refuses to overwrite it. Reconcile its ownership/history under operator control before first release. This restriction applies to the backend, not the independently built frontend.
+
 ### Configure the origin and secrets
 
-1. Choose the Worker `name` in `apps/server/wrangler.jsonc` and reserve one exact HTTPS custom-domain origin. Keep the checked-in compatibility settings, native `CF_VERSION_METADATA` binding, and assets policy. Automated releases deliberately do not create routes/domains or enable `workers.dev`/preview URLs. For first creation, bind the custom domain in Cloudflare after bootstrap creates the Worker; until then public verification cannot pass. A failed public check leaves a deployed receipt for subsequent protected validation, not a false successful release.
+1. Before backend bootstrap, configure its Worker `name` as `corner-server` in `apps/server/wrangler.jsonc` so the backend release artifact targets the service expected by the frontend. Reserve one exact HTTPS custom-domain origin for the frontend. Keep the checked-in compatibility settings, native `CF_VERSION_METADATA` binding, and assets policy. Backend automated releases deliberately do not create routes/domains or enable `workers.dev`/preview URLs. Deploy `corner-web` with its domain and `SERVER` binding to make public verification reachable; public verification cannot pass before that gateway exists. A failed public check leaves a deployed receipt for subsequent protected validation, not a false successful release.
 
 2. Register that exact origin with Neon Auth (`neon neon-auth domain add https://corner.your-domain.com`). Configure production custom SMTP and email verification using **OTP** in Neon. The checked-in verification setting is `true` and must agree with the branch policy.
 
@@ -30,7 +53,9 @@ You need a Cloudflare account with a domain/zone you control, a Neon Postgres/Au
 
 Main CI installs the frozen lockfile, runs the full verification profile with disposable PostgreSQL/local Auth fixtures, builds all workspaces and the Worker, and packages the already-built bytes. A release artifact contains Worker code, web assets, checksummed SQL, a standalone Node migrator/data validator, deployment configuration, manifest digests, and a successful standalone qualification report. It contains no private environment files. CI uploads `corner-release-<full-source-SHA>`; CI itself never deploys.
 
-The former rebuild-and-deploy command is removed. Production promotion must consume a specific successful **push-to-main** CI run and its exact retained artifact. It checks GitHub repository/run/artifact identities, archive digest, manifest inventory, every payload digest, previous-release provenance, and that the installed pinned Wrangler matches the artifact's recorded tool version. Missing/expired previous artifacts fail; they do not select bootstrap.
+The former backend rebuild-and-deploy command is removed. Backend production promotion must consume a specific successful **push-to-main** CI run and its exact retained artifact. It checks GitHub repository/run/artifact identities, archive digest, manifest inventory, every payload digest, previous-release provenance, and that the installed pinned Wrangler matches the artifact's recorded tool version. Missing/expired previous artifacts fail; they do not select bootstrap. The independent frontend uses the Cloudflare Builds settings above.
+
+The immutable artifact and `X-Corner-Version` identity qualify the **backend** release. Public checks also exercise the currently deployed frontend's assets and gateway, but do not attest that its bytes came from the backend artifact. Frontend Cloudflare Builds has its own source revision and deployment history; backend rollback does not roll back the frontend. Review compatible frontend/backend revisions before promotion or recovery.
 
 #### One-time protected configuration
 

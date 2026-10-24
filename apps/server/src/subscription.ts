@@ -119,14 +119,6 @@ interface PendingAttempt {
   generation: number;
 }
 
-interface StoredRow {
-  user_id: string;
-  encrypted: string;
-  version: number;
-  refresh_owner: string | null;
-  refresh_until: number;
-}
-
 interface AttemptRow {
   state_hash: string;
   user_id: string;
@@ -329,8 +321,8 @@ export class SubscriptionProvider {
     }
   }
 
-  private async row(userId: string): Promise<StoredRow | undefined> {
-    return (await this.db.query("SELECT * FROM corner_subscription_accounts WHERE user_id = $1", [userId])).rows[0] as StoredRow | undefined;
+  private async version(userId: string): Promise<number | null> {
+    return ((await this.db.query('SELECT version FROM corner_subscription_accounts WHERE user_id = $1', [userId])).rows[0] as { version: number } | undefined)?.version ?? null;
   }
 
   private async registration(userId: string): Promise<Registration | null> {
@@ -523,7 +515,7 @@ export class SubscriptionProvider {
     } catch (error) {
       // Keep a newly issued registration after invalid_grant, as documented,
       // without treating an unverified identity or token as connected.
-      if (error instanceof SubscriptionError && error.code === 'invalid_grant' && !previous && !(await this.row(userId)) && (await this.generation(userId)) === pending.generation) {
+      if (error instanceof SubscriptionError && error.code === 'invalid_grant' && !previous && (await this.version(userId)) === null && (await this.generation(userId)) === pending.generation) {
         await this.save(userId, { generation: pending.generation, clientId, issuer: null, subject: null, email: null, name: null, tokens: null, model: null, models: [], modelsUpdatedAt: 0, needsReauth: true }, null);
       }
       throw error;
@@ -534,7 +526,7 @@ export class SubscriptionProvider {
     if (pending.subject && (identity.sub !== pending.subject || identity.iss !== pending.issuer)) {
       throw new SubscriptionError('account_mismatch', 'This sign-in used a different ChatGPT account. Reconnect the originally selected account.', 409);
     }
-    const latestVersion = (await this.row(userId))?.version ?? null;
+    const latestVersion = await this.version(userId);
     if (latestVersion !== startingVersion || (await this.generation(userId)) !== pending.generation) throw new SubscriptionError('connection_changed', 'Your ChatGPT connection changed while signing in. Start again.', 409);
     const tokenSet = this.tokenSet(tokenResponse, idToken);
     (await this.save(userId, {

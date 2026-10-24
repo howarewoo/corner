@@ -76,169 +76,38 @@ import { ExpandedSpecimen } from "./expanded-specimens";
 // Live compositions adapted on 2026-10-23 from each current upstream page:
 // https://ui.shadcn.com/docs/components/base/<id> (18 component IDs below).
 // Corner content, controlled transitions, invalid states, and foundations are project extensions.
-const coreCatalog = [
-  {
-    id: "colors",
-    label: "Colors",
-    group: "Foundations",
-    description:
-      "Forest, sage, and purposeful surfaces. One palette, assigned by role.",
-    importPath: "@packages/ui/theme.css",
-  },
-  {
-    id: "typography",
-    label: "Typography",
-    group: "Foundations",
-    description:
-      "A familiar system font, a clear hierarchy, and quantities that stay readable.",
-    importPath: "@packages/ui/theme.css",
-  },
-  {
-    id: "spacing",
-    label: "Spacing & shape",
-    group: "Foundations",
-    description:
-      "Room to scan. Consistent spacing and soft corners without decorative depth.",
-    importPath: "@packages/ui/theme.css",
-  },
-  {
-    id: "button",
-    label: "Button",
-    group: "Actions",
-    description:
-      "Clear actions, from the next step to the quieter alternative.",
-    importPath: "@packages/ui",
-  },
-  {
-    id: "input",
-    label: "Input",
-    group: "Forms",
-    description:
-      "Dark editable fields, persistent labels, and explicit validation.",
-    importPath: "@packages/ui",
-  },
-  {
-    id: "textarea",
-    label: "Textarea",
-    group: "Forms",
-    description:
-      "Space for context, notes, and details in the user’s own words.",
-    importPath: "@packages/ui",
-  },
-  {
-    id: "checkbox",
-    label: "Checkbox",
-    group: "Forms",
-    description: "Independent choices with a clear selected state.",
-    importPath: "@packages/ui",
-  },
-  {
-    id: "switch",
-    label: "Switch",
-    group: "Forms",
-    description: "An immediate on/off preference with a visible state.",
-    importPath: "@packages/ui",
-  },
-  {
-    id: "radio-group",
-    label: "Radio Group",
-    group: "Forms",
-    description: "Choose one option from a small, visible set.",
-    importPath: "@packages/ui",
-  },
-  {
-    id: "select",
-    label: "Select",
-    group: "Forms",
-    description:
-      "A compact choice list with keyboard selection and a real portal.",
-    importPath: "@packages/ui",
-  },
-  {
-    id: "card",
-    label: "Card",
-    group: "Structure",
-    description:
-      "Group related content with tonal fill, not borders and shadows.",
-    importPath: "@packages/ui",
-  },
-  {
-    id: "separator",
-    label: "Separator",
-    group: "Structure",
-    description:
-      "A quiet rule when spacing alone does not communicate the boundary.",
-    importPath: "@packages/ui",
-  },
-  {
-    id: "tabs",
-    label: "Tabs",
-    group: "Structure",
-    description:
-      "Switch between related views without leaving the current context.",
-    importPath: "@packages/ui",
-  },
-  {
-    id: "accordion",
-    label: "Accordion",
-    group: "Structure",
-    description:
-      "Keep supporting detail available without overwhelming the main task.",
-    importPath: "@packages/ui",
-  },
-  {
-    id: "table",
-    label: "Table",
-    group: "Structure",
-    description:
-      "Compare structured records with visible units and aligned quantities.",
-    importPath: "@packages/ui",
-  },
-  {
-    id: "badge",
-    label: "Badge",
-    group: "Feedback",
-    description:
-      "Short, explicit status labels that never rely on color alone.",
-    importPath: "@packages/ui",
-  },
-  {
-    id: "alert",
-    label: "Alert",
-    group: "Feedback",
-    description: "Useful context, confirmation, and recoverable errors.",
-    importPath: "@packages/ui",
-  },
-  {
-    id: "progress",
-    label: "Progress",
-    group: "Feedback",
-    description: "Show completed work against a named, measurable target.",
-    importPath: "@packages/ui",
-  },
-  {
-    id: "dialog",
-    label: "Dialog",
-    group: "Overlays",
-    description:
-      "A focused editing task with deliberate confirmation and cancellation.",
-    importPath: "@packages/ui",
-  },
-  {
-    id: "popover",
-    label: "Popover",
-    group: "Overlays",
-    description: "Small contextual settings, anchored to their trigger.",
-    importPath: "@packages/ui",
-  },
-  {
-    id: "dropdown-menu",
-    label: "Dropdown Menu",
-    group: "Overlays",
-    description: "Related actions in a keyboard-navigable menu.",
-    importPath: "@packages/ui",
-  },
+const coreEntries: [string, string, string, string, string?][] = [
+  ["colors", "Colors", "Foundations", "Forest, sage, and purposeful surfaces. One palette, assigned by role.", "@packages/ui/theme.css"],
+  ["typography", "Typography", "Foundations", "A familiar system font, a clear hierarchy, and quantities that stay readable.", "@packages/ui/theme.css"],
+  ["spacing", "Spacing & shape", "Foundations", "Room to scan. Consistent spacing and soft corners without decorative depth.", "@packages/ui/theme.css"],
+  ["button", "Button", "Actions", "Clear actions, from the next step to the quieter alternative."],
+  ["input", "Input", "Forms", "Dark editable fields, persistent labels, and explicit validation."],
+  ["textarea", "Textarea", "Forms", "Space for context, notes, and details in the user’s own words."],
+  ["checkbox", "Checkbox", "Forms", "Independent choices with a clear selected state."],
+  ["switch", "Switch", "Forms", "An immediate on/off preference with a visible state."],
+  ["radio-group", "Radio Group", "Forms", "Choose one option from a small, visible set."],
+  ["select", "Select", "Forms", "A compact choice list with keyboard selection and a real portal."],
+  ["card", "Card", "Structure", "Group related content with tonal fill, not borders and shadows."],
+  ["separator", "Separator", "Structure", "A quiet rule when spacing alone does not communicate the boundary."],
+  ["tabs", "Tabs", "Structure", "Switch between related views without leaving the current context."],
+  ["accordion", "Accordion", "Structure", "Keep supporting detail available without overwhelming the main task."],
+  ["table", "Table", "Structure", "Compare structured records with visible units and aligned quantities."],
+  ["badge", "Badge", "Feedback", "Short, explicit status labels that never rely on color alone."],
+  ["alert", "Alert", "Feedback", "Useful context, confirmation, and recoverable errors."],
+  ["progress", "Progress", "Feedback", "Show completed work against a named, measurable target."],
+  ["dialog", "Dialog", "Overlays", "A focused editing task with deliberate confirmation and cancellation."],
+  ["popover", "Popover", "Overlays", "Small contextual settings, anchored to their trigger."],
+  ["dropdown-menu", "Dropdown Menu", "Overlays", "Related actions in a keyboard-navigable menu."],
 ];
+const coreCatalog = coreEntries.map(
+  ([id, label, group, description, importPath = "@packages/ui"]) => ({
+    id,
+    label,
+    group,
+    description,
+    importPath,
+  }),
+);
 const groupOrder = [
   "Foundations",
   "Actions",
@@ -355,7 +224,7 @@ const colors = [
   },
 ];
 
-export function Specimen({ id }: { id: string }) {
+function CoreSpecimen({ id }: { id: string }) {
   const [status, setStatus] = useState(
     "Try an action. Changes stay in this preview.",
   );
@@ -1257,8 +1126,16 @@ export function Specimen({ id }: { id: string }) {
         </>
       );
     default:
-      return <ExpandedSpecimen id={id} />;
+      return null;
   }
+}
+
+const coreLookup: Record<string, true> = Object.fromEntries(
+  coreCatalog.map((item) => [item.id, true]),
+);
+
+export function Specimen({ id }: { id: string }) {
+  return coreLookup[id] ? <CoreSpecimen id={id} /> : <ExpandedSpecimen id={id} />;
 }
 function ChevronMenu() {
   return <Settings2 size={16} />;

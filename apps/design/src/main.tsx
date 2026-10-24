@@ -1,6 +1,7 @@
 import {
   StrictMode,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -38,7 +39,10 @@ function CatalogApp() {
   const [params, setParams] = useSearchParams();
   const location = useLocation();
   const component = params.get("component");
-  const selected = catalog.some(item => item.id === component) ? component! : "colors";
+  const foundIndex = catalog.findIndex((entry) => entry.id === component);
+  const index = foundIndex >= 0 ? foundIndex : 0;
+  const item = catalog[index];
+  const selected = item.id;
   const [query, setQuery] = useState("");
   const [theme, setTheme] = useState<"light" | "dark">(() =>
     document.documentElement.dataset.cornerTheme === "dark" ? "dark" : "light",
@@ -50,13 +54,27 @@ function CatalogApp() {
   const content = useRef<HTMLElement>(null);
   const selectedFromDrawer = useRef(false);
   const focusSearchWhenExpanded = useRef(false);
-  const item = catalog.find((entry) => entry.id === selected)!;
-  const index = catalog.indexOf(item);
-  const matches = catalog.filter((entry) =>
-    `${entry.label} ${entry.group} ${entry.description}`
-      .toLowerCase()
-      .includes(query.trim().toLowerCase()),
-  );
+
+  const sidebarGroups = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const matches = q
+      ? catalog.filter((entry) =>
+          `${entry.label} ${entry.group} ${entry.description}`
+            .toLowerCase()
+            .includes(q),
+        )
+      : catalog;
+    return groups.map((group) => ({
+      label: group,
+      items: matches
+        .filter((entry) => entry.group === group)
+        .map((entry) => ({
+          id: entry.id,
+          label: entry.label,
+          href: `?component=${entry.id}`,
+        })),
+    }));
+  }, [query]);
 
   useEffect(() => {
     setOpenMobile(false);
@@ -134,7 +152,7 @@ function CatalogApp() {
         selectedIndicator
         onSelect={navigate}
         renderLink={({ href, ...props }) => <Link {...props} to={href!} onClick={() => { selectedFromDrawer.current = openMobile; }} />}
-        groups={groups.map(group => ({ label: group, items: matches.filter(entry => entry.group === group).map(entry => ({ id: entry.id, label: entry.label, href: `?component=${entry.id}` })) }))}
+        groups={sidebarGroups}
         search={{ value: query, onChange: setQuery, label: "Search components", placeholder: "Find a component…", inputRef: search }}
         empty={{ message: "No matching components.", actionLabel: "Clear search", onAction: () => { setQuery(""); search.current?.focus(); } }}
         footer={{ icon: <Layers3 size={18} />, title: "Shared by design", description: "Base UI · Complete catalog" }}

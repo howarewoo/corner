@@ -30,8 +30,10 @@
     "smoke": "node scripts/smoke.mjs",
     "package": "python3 scripts/package.py",
     "smoke:dev": "node scripts/dev-smoke.mjs",
-    "build:workers": "pnpm run build && pnpm --filter server exec wrangler deploy --dry-run --outdir dist/worker",
-    "smoke:workers": "node scripts/workers-smoke.mjs"
+    "build:workers": "pnpm run build && pnpm --filter server exec wrangler deploy --dry-run --outdir dist/worker && pnpm --filter server exec wrangler deploy --config ../web/wrangler.jsonc --dry-run --outdir .wrangler/worker",
+    "build:web:worker": "pnpm run build --filter=web && pnpm --filter server exec wrangler deploy --config ../web/wrangler.jsonc --dry-run --outdir .wrangler/worker",
+    "deploy:web": "pnpm --filter server exec wrangler deploy --config ../web/wrangler.jsonc",
+    "smoke:workers": "node scripts/workers-smoke.mjs --frontend-config apps/web/wrangler.jsonc"
   },
   "devDependencies": {
     "@shadcn/lint": "0.2.3",

@@ -99,7 +99,7 @@ test('web auth and build changes require operational completion', async () => {
   assert.equal(requiresOperator([], true, null, manifest, config.digest), true);
 });
 test('stale approved baseline fails before artifact execution or effects', async () => {
-  assert.throws(() => assertBaseline({ id: '10' }, { id: '12' }), /Stale approval/);
+  assert.throws(() => assertBaseline('10', '12'), /Stale approval/);
   const f = fixture(); f.github.baseline = async () => ({ id: 12, payload: receipt });
   await assert.rejects(promote(f.options), /Stale approval/); assert.deepEqual(f.effects, []);
 });

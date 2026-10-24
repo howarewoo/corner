@@ -1,0 +1,23 @@
+{
+  "$schema": "../server/node_modules/wrangler/config-schema.json",
+  "name": "corner-web",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-10-19",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "assets": {
+    "directory": "dist",
+    "binding": "ASSETS",
+    "run_worker_first": true,
+    "html_handling": "none",
+    "not_found_handling": "none"
+  },
+  "services": [
+    { "binding": "SERVER", "service": "corner-server" }
+  ],
+  "observability": {
+    "enabled": true,
+    "logs": { "invocation_logs": false }
+  }
+}

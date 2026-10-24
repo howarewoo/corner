@@ -37,6 +37,29 @@ const chartConfig = {
 } satisfies UI.ChartConfig;
 const sampleAvatar = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="80" height="80"><rect width="80" height="80" rx="40" fill="#d9e8de"/><text x="40" y="49" font-family="Arial,sans-serif" font-size="26" text-anchor="middle" fill="#234b35">CW</text></svg>')}`;
 
+function SidebarSpecimenContent() {
+  const sidebar = UI.useSidebar();
+  return (
+    <div className="specimen-stack">
+      <div className="specimen-row">
+        <UI.SidebarTrigger aria-label="Toggle live catalog sidebar" />
+        <UI.Button variant="outline" onClick={sidebar.toggleSidebar}>
+          Toggle the app sidebar
+        </UI.Button>
+      </div>
+      <p>
+        The surrounding navigation is the shared AppSidebar composition,
+        built from SidebarProvider, Sidebar, SidebarHeader, SidebarContent,
+        SidebarGroup, SidebarMenuButton, SidebarFooter, and SidebarInset.
+      </p>
+      <p className="specimen-note">
+        Desktop: {sidebar.open ? "expanded" : "collapsed"}. On phones, the
+        same component uses its real Sheet navigation.
+      </p>
+    </div>
+  );
+}
+
 export function ExpandedSpecimen({ id }: { id: string }) {
   const [status, setStatus] = useState(
     "Illustrative preview. Changes stay in this catalog.",
@@ -50,7 +73,6 @@ export function ExpandedSpecimen({ id }: { id: string }) {
   const [slider, setSlider] = useState([60]);
   const [marks, setMarks] = useState<string[]>(["strength"]);
   const [ratio, setRatio] = useState(16 / 9);
-  const sidebar = UI.useSidebar();
   let example: ReactNode;
 
   switch (id) {
@@ -940,25 +962,7 @@ export function ExpandedSpecimen({ id }: { id: string }) {
       );
       break;
     case "sidebar":
-      example = (
-        <div className="specimen-stack">
-          <div className="specimen-row">
-            <UI.SidebarTrigger aria-label="Toggle live catalog sidebar" />
-            <UI.Button variant="outline" onClick={sidebar.toggleSidebar}>
-              Toggle the app sidebar
-            </UI.Button>
-          </div>
-          <p>
-            The surrounding navigation is the shared AppSidebar composition,
-            built from SidebarProvider, Sidebar, SidebarHeader, SidebarContent,
-            SidebarGroup, SidebarMenuButton, SidebarFooter, and SidebarInset.
-          </p>
-          <p className="specimen-note">
-            Desktop: {sidebar.open ? "expanded" : "collapsed"}. On phones, the
-            same component uses its real Sheet navigation.
-          </p>
-        </div>
-      );
+      example = <SidebarSpecimenContent />;
       break;
     case "skeleton":
       example = (

@@ -40,7 +40,8 @@ export function validateReceipt(receipt) {
   return receipt;
 }
 export function assertBaseline(expected, current) {
-  need((expected?.id ?? null) === (current?.id ?? null), 'Stale approval: production baseline changed; prepare a new plan');
+  const normalize = value => (value === null || value === undefined ? null : String(value));
+  need(normalize(expected) === normalize(current), 'Stale approval: production baseline changed; prepare a new plan');
 }
 export function rollbackEligible(target, current, qualification, runtimeDigest) {
   validateReceipt(target); validateReceipt(current);
@@ -174,13 +175,20 @@ export async function plan({ github, runId, sourceSha, bootstrap = false, rollba
     files = await changedFiles(github, baseline?.payload, sourceSha);
   }
   const review = manualAttestation(attestation, reference.sourceSha, actor);
-  const payload = { format: 1, kind: 'corner-production', phase: 'planned', sourceSha: reference.sourceSha, runId: reference.runId, artifactId: reference.artifactId, candidateDigest: candidate.digest, configurationSha256: candidate.manifest.configurationSha256, runtimeConfigurationDigest: config.digest, origin: config.origin, baselineId: baseline ? String(baseline.id) : null, bootstrap, rollback: Boolean(rollbackId), rollbackVersionId: rollbackId ? reference.versionId : null, qualification, operatorRequired: Boolean(rollbackId) || requiresOperator(files, bootstrap, baseline?.payload, candidate.manifest, config.digest) };
-  payload.bindingsRevision = config.bindingsRevision;
-  payload.manualReview = review;
-  payload.targetQualification = rollbackId ? reference.qualification : null;
-  payload.schemaId = schemaState ? String(schemaState.id) : null;
-  payload.executionRunId = process.env.GITHUB_RUN_ID;
-  payload.executionRunAttempt = process.env.GITHUB_RUN_ATTEMPT;
+  const payload = {
+    format: 1, kind: 'corner-production', phase: 'planned',
+    sourceSha: reference.sourceSha, runId: reference.runId, artifactId: reference.artifactId,
+    candidateDigest: candidate.digest, configurationSha256: candidate.manifest.configurationSha256,
+    runtimeConfigurationDigest: config.digest, origin: config.origin,
+    baselineId: baseline ? String(baseline.id) : null, bootstrap,
+    rollback: Boolean(rollbackId), rollbackVersionId: rollbackId ? reference.versionId : null,
+    qualification,
+    operatorRequired: Boolean(rollbackId) || requiresOperator(files, bootstrap, baseline?.payload, candidate.manifest, config.digest),
+    bindingsRevision: config.bindingsRevision, manualReview: review,
+    targetQualification: rollbackId ? reference.qualification : null,
+    schemaId: schemaState ? String(schemaState.id) : null,
+    executionRunId: process.env.GITHUB_RUN_ID, executionRunAttempt: process.env.GITHUB_RUN_ATTEMPT,
+  };
   const record = await github.record(payload);
   if (process.env.GITHUB_STEP_SUMMARY) await writeFile(process.env.GITHUB_STEP_SUMMARY, `## Qualified production plan ${record.id}\n\nReview immutable deployment metadata before approval.\n\n${JSON.stringify(payload, null, 2)}\n`, { flag: 'a' });
   return record;
@@ -240,13 +248,13 @@ export async function promote({ github, planId, configuration, work, execute = c
   need(p.executionRunId === process.env.GITHUB_RUN_ID && p.executionRunAttempt === process.env.GITHUB_RUN_ATTEMPT, 'Plan belongs to a different approval execution');
   const config = validateConfiguration(configuration);
   need(config.digest === p.runtimeConfigurationDigest, 'Production configuration changed after planning');
-  const baseline = await github.baseline(); assertBaseline(p.baselineId ? { id: p.baselineId } : null, baseline ? { id: String(baseline.id) } : null);
+  const baseline = await github.baseline(); assertBaseline(p.baselineId, baseline?.id);
   need(p.format === 1 && sha.test(p.sourceSha) && digest.test(p.candidateDigest) && digest.test(p.configurationSha256) && typeof p.bootstrap === 'boolean' && typeof p.rollback === 'boolean' && typeof p.operatorRequired === 'boolean', 'Invalid persisted approval plan');
   id(p.runId); id(p.artifactId);
   need(p.origin === config.origin && p.qualification?.passed === true && (p.rollback ? p.qualification.previousDigest === p.candidateDigest && p.targetQualification?.passed === true && p.targetQualification.candidateDigest === p.candidateDigest && uuid.test(p.rollbackVersionId) : p.qualification.candidateDigest === p.candidateDigest && p.qualification.previousDigest === (baseline?.payload.candidateDigest ?? null) && p.qualification.bootstrap === p.bootstrap), 'Persisted approval qualification does not bind candidate and current baseline');
   manualAttestation(JSON.stringify(p.manualReview), p.sourceSha, process.env.GITHUB_ACTOR);
   const schemaState = await github.schema();
-  assertBaseline(p.schemaId ? { id: p.schemaId } : null, schemaState ? { id: String(schemaState.id) } : null);
+  assertBaseline(p.schemaId, schemaState?.id);
   const approval = await github.approval('production');
   let bootstrapSecrets;
   if (p.bootstrap) {
@@ -301,9 +309,8 @@ export async function promote({ github, planId, configuration, work, execute = c
     await reverify();
     if (p.bootstrap) {
       // Bootstrap alone creates the Worker; normal promotion never changes triggers.
-      const secrets = bootstrapSecrets;
       const secretFile = join(work, 'bootstrap-secrets.json');
-      await writeFile(secretFile, JSON.stringify(secrets), { mode: 0o600 });
+      await writeFile(secretFile, JSON.stringify(bootstrapSecrets), { mode: 0o600 });
       let output;
       try { output = wrangler(['deploy', ...common, '--no-bundle', '--keep-vars', '--secrets-file', secretFile, ...vars]); }
       finally { await rm(secretFile, { force: true }); }
@@ -313,7 +320,7 @@ export async function promote({ github, planId, configuration, work, execute = c
   }
   need(uuid.test(versionId ?? ''), 'Invalid qualified version ID');
   // Recheck immediately before the traffic switch as well as before migration/upload.
-  const latest = await github.baseline(); assertBaseline(p.baselineId ? { id: p.baselineId } : null, latest ? { id: String(latest.id) } : null);
+  const latest = await github.baseline(); assertBaseline(p.baselineId, latest?.id);
   wrangler(['versions', 'deploy', `${versionId}@100%`, ...common, '--yes']);
   let receipt = { ...p, phase: 'deployed', versionId, planId: String(prepared.id), approval, rollbackCompatibility: p.rollback ? p.qualification : null, qualification: p.rollback ? p.targetQualification : p.qualification };
   await github.record(receipt);

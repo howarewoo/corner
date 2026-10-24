@@ -35,7 +35,7 @@ h1 { margin: 7px 0 10px; color: var(--ink); font-size: clamp(30px, 2.45vw, 38px)
 .panel-heading h2, .section-heading h2 { color: var(--ink); font-size: 18px; font-weight: 600; letter-spacing: -.35px; line-height: 1.4; }
 .panel-heading p { margin-top: 6px; color: var(--muted-foreground); font-size: 13px; line-height: 1.65; }
 .today-grid { display: grid; grid-template-columns: minmax(0,1.65fr) minmax(300px,1fr); gap: 24px; align-items: stretch; }
-.today-grid > *, .today-bottom-grid > *, .studio-layout > *, .settings-layout > *, .grocery-layout > * { min-width: 0; }
+.today-grid > *, .today-bottom-grid > *, .studio-layout > *, .grocery-layout > * { min-width: 0; }
 .nutrition-panel { display: flex; flex-direction: column; }
 .nutrition-main { display: flex; align-items: center; gap: 32px; padding: 6px 30px 24px; flex: 1; }
 .calorie-ring { position: relative; width: 190px; height: 190px; flex-shrink: 0; }
@@ -171,7 +171,7 @@ h1 { margin: 7px 0 10px; color: var(--ink); font-size: clamp(30px, 2.45vw, 38px)
 .grocery-summary .inline-link { width: 100%; margin-top: 12px; justify-content: center; font-size: 13px; }
 
 /* Recipe studio and settings. */
-.studio-layout, .settings-layout { display: grid; grid-template-columns: minmax(0,1.8fr) minmax(280px,1fr); gap: 28px; align-items: start; }
+.studio-layout { display: grid; grid-template-columns: minmax(0,1.8fr) minmax(280px,1fr); gap: 28px; align-items: start; }
 .studio-form { padding: 32px; }
 .studio-intro-icon { display: grid; place-items: center; width: 46px; height: 46px; margin-bottom: 23px; color: var(--muted-foreground); background: var(--surface-inset); border-radius: 16px; }
 .studio-form > h2 { font-size: 25px; font-weight: 600; color: var(--ink); letter-spacing: -.65px; }
@@ -204,23 +204,10 @@ h1 { margin: 7px 0 10px; color: var(--ink); font-size: clamp(30px, 2.45vw, 38px)
 .generated-recipe .panel-heading h2 { margin-top: 10px; }
 .generated-recipe > p { margin: 8px 0 17px; font-size: 14px; line-height: 1.75; color: var(--muted-foreground); }
 .generated-recipe .macro-line { font-size: 13px; margin-bottom: 23px; }
-.settings-panel { margin-bottom: 24px; }
-.settings-panel .panel-heading > svg { color: var(--muted-foreground); }
-.settings-fields { padding: 6px 28px 28px; }
 .form-two { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 20px; }
 .form-three { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 16px; }
 .macro-fields { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 14px; }
-.target-section + .target-section { margin-top: 34px; padding-top: 10px; }
-.target-section h3 { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; color: var(--ink); font-size: 15px; font-weight: 600; }
-.target-section h3 > span { margin-left: auto; color: var(--muted-foreground); font-size: 12px; font-weight: 400; }
-.target-section .field { font-size: 12px; }
 .form-help { margin-top: 16px; color: var(--muted-foreground); font-size: 12px; line-height: 1.75; }
-.settings-save { display: flex; justify-content: flex-end; }
-.schedule-fields { padding: 0 27px 16px; }
-.schedule-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 8px 0; color: var(--text); font-size: 14px; }
-.settings-note { padding: 27px; background: var(--surface-secondary); border-radius: 24px; box-shadow: none; color: var(--muted-foreground); }
-.settings-note h3 { margin: 14px 0 10px; color: var(--ink); font-size: 18px; font-weight: 500; line-height: 1.45; letter-spacing: -.4px; }
-.settings-note p { color: var(--muted-foreground); font-size: 14px; line-height: 1.75; }
 
 /* Dialogs, editing forms, and feedback are the only prominent elevated layers. */
 .workout-rest-timer button:focus-visible { outline-color: var(--on-accent); }
@@ -303,7 +290,7 @@ h1 { margin: 7px 0 10px; color: var(--ink); font-size: clamp(30px, 2.45vw, 38px)
   .recipe-grid { gap: 18px; }
   .recipe-card-main { padding: 13px 22px 22px; height: auto; white-space: normal; }
   .recipe-card-bottom { padding-left: 22px; }
-  .studio-layout, .settings-layout, .grocery-layout { grid-template-columns: minmax(0,1.7fr) minmax(270px,1fr); gap: 22px; }
+  .studio-layout, .grocery-layout { grid-template-columns: minmax(0,1.7fr) minmax(270px,1fr); gap: 22px; }
   .studio-form { padding: 28px; }
   .studio-targets { gap: 10px; }
   .macro-fields { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 20px; }
@@ -322,7 +309,7 @@ h1 { margin: 7px 0 10px; color: var(--ink); font-size: clamp(30px, 2.45vw, 38px)
   .planned-meal-actions { flex-direction: row; }
   .planned-meal .meal-glyph { display: grid; }
   .recipe-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
-  .studio-layout, .settings-layout, .grocery-layout { grid-template-columns: minmax(0,1fr); }
+  .studio-layout, .grocery-layout { grid-template-columns: minmax(0,1fr); }
   .grocery-summary { position: static; order: -1; display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 0 28px; padding: 28px; }
   .grocery-summary-icon { display: none; }
   .grocery-summary > .eyebrow { grid-column: 1 / -1; }
@@ -332,9 +319,6 @@ h1 { margin: 7px 0 10px; color: var(--ink); font-size: clamp(30px, 2.45vw, 38px)
   .grocery-summary .inline-link { margin-top: 0; }
   .studio-aside { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
   .request-list { margin-top: 0; }
-  .settings-layout > aside { display: grid; grid-template-columns: 1.1fr 1fr; gap: 24px; align-items: start; }
-  .settings-layout > aside .settings-panel { margin-bottom: 0; }
-  .settings-layout > aside .settings-note { margin-top: 0; }
 }
 @media (max-width: 760px) {
   :root { --shell-gutter: 0; }
@@ -383,9 +367,6 @@ h1 { margin: 7px 0 10px; color: var(--ink); font-size: clamp(30px, 2.45vw, 38px)
   .studio-tip { padding: 26px; }
   .studio-tip h2 { font-size: 26px; }
   .studio-preferences { font-size: 13px; }
-  .settings-fields { padding: 4px 26px 26px; }
-  .settings-layout > aside { gap: 22px; }
-  .schedule-fields { padding-left: 25px; padding-right: 25px; }
   .dialog-form { padding: 0; }
   .recipe-detail { padding: 0; }
   .detail-topline { font-size: 13px; gap: 10px; }
@@ -457,16 +438,11 @@ h1 { margin: 7px 0 10px; color: var(--ink); font-size: clamp(30px, 2.45vw, 38px)
   .studio-preferences { display: grid; grid-template-columns: 1fr 1fr; gap: 18px 12px; }
   .request-list { margin-top: 4px; }
   .connection-note { padding: 17px; }
-  .settings-layout > aside { display: flex; flex-direction: column; }
-  .settings-layout > aside > * { width: 100%; }
-  .settings-fields { padding: 3px 23px 25px; }
   .form-two { grid-template-columns: 1fr; gap: 21px; }
   .form-three { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 16px; }
   .form-three > .field:first-child { grid-column: 1 / -1; }
   .form-three > .field:first-child:has(select) { grid-column: auto; }
   .macro-fields { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 20px 14px; }
-  .target-section h3 { font-size: 15px; }
-  .target-section h3 > span { margin-left: 0; width: 100%; }
   .dialog-form, .recipe-detail { padding: 3px 22px 26px; }
   .detail-topline > .text-link { margin-left: 0; }
   .detail-macros { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 20px 8px; padding: 23px 14px; }

@@ -1,6 +1,21 @@
 import type { ComponentProps, ReactElement, ReactNode, Ref } from 'react';
 import { Button } from './primitives';
 
+export function BrandMark() {
+  return (
+    <>
+      <span className="ui-app-sidebar-brand-mark" aria-hidden="true">
+        <i />
+        <i />
+        <i />
+      </span>
+      <span>
+        corner<span className="ui-app-sidebar-brand-period">.</span>
+      </span>
+    </>
+  );
+}
+
 export type WorkspaceHeaderProps = Omit<ComponentProps<'header'>, 'title'> & {
   title: ReactNode;
   actions?: ReactNode;
@@ -50,14 +65,7 @@ export function WorkspaceMobileBar({
         role={homeLink ? 'link' : undefined}
         onClick={homeLink ? undefined : onHome}
       >
-        <span className="ui-app-sidebar-brand-mark" aria-hidden="true">
-          <i />
-          <i />
-          <i />
-        </span>
-        <span>
-          corner<span className="ui-app-sidebar-brand-period">.</span>
-        </span>
+        <BrandMark />
       </Button>
       {actions && <div className="ui-workspace-mobile-bar-actions">{actions}</div>}
     </header>

@@ -62,6 +62,16 @@ export function createAuth(config: Config, fetcher: typeof fetch = fetch): Corne
     if (received.length) cookies.set(request, [...(cookies.get(request) ?? []), ...received]);
     return response;
   }
+  function withCookies(request: Request, response: Response): Response {
+    const pending = cookies.get(request);
+    if (pending?.length) {
+      // Fetch/redirect responses may have immutable headers.
+      response = new Response(response.body, { status: response.status, statusText: response.statusText, headers: response.headers });
+      for (const cookie of pending) response.headers.append('Set-Cookie', cookie);
+    }
+    cookies.delete(request);
+    return response;
+  }
   return {
     async handler(request) {
       const url = new URL(request.url);
@@ -85,7 +95,7 @@ export function createAuth(config: Config, fetcher: typeof fetch = fetch): Corne
         const { token: _token, ...rest } = data as Record<string, unknown>;
         data = { ...rest, ...(_token === null ? { token: null } : {}) };
       }
-      return new Response(JSON.stringify(data), { status: response.status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
+      return withCookies(request, new Response(JSON.stringify(data), { status: response.status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } }));
     },
     async principal(request) {
       if (!outboundCookies(request)) return null;
@@ -102,25 +112,12 @@ export function createAuth(config: Config, fetcher: typeof fetch = fetch): Corne
       if (config.neonAuthRequireEmailVerification && !user.emailVerified) return null;
       return { userId: user.id, name: user.name, email: user.email, sessionId: session.id };
     },
-    withCookies(request, response) {
-      const pending = cookies.get(request);
-      if (pending?.length) {
-        // Fetch/redirect responses may have immutable headers.
-        response = new Response(response.body, { status: response.status, statusText: response.statusText, headers: response.headers });
-        for (const cookie of pending) response.headers.append('Set-Cookie', cookie);
-      }
-      cookies.delete(request);
-      return response;
-    },
+    withCookies,
   };
 }
 
-export async function getPrincipal(auth: CornerAuth, request: Request): Promise<Principal | null> {
-  return auth.principal(request);
-}
-
 export async function requirePrincipal(auth: CornerAuth, request: Request): Promise<Principal> {
-  const principal = await getPrincipal(auth, request);
+  const principal = await auth.principal(request);
   if (!principal) throw new ApiError(401, 'SIGN_IN_REQUIRED', 'Sign in to your Corner account to continue.');
   return principal;
 }

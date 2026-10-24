@@ -21,7 +21,7 @@ import {
   SidebarInset, SidebarProvider,
   Textarea, Toggle, ToggleGroup, ToggleGroupItem, createToastManager, Toaster, useSidebar,
   WorkspaceHeader, WorkspaceMobileBar,
-  MobileNavigation,
+  type MobileNavigation,
 } from '@packages/ui';
 import ProfileForm from '../profile-form';
 import ImportWorkspace from '../import-workspace';
@@ -43,15 +43,20 @@ type Overlay = { kind: 'recipe'; recipe: Recipe } | { kind: 'recipeForm'; recipe
 const isNutritionView = (v: View): v is 'planner' | 'recipes' | 'groceries' | 'studio' =>
   v === 'planner' || v === 'recipes' || v === 'groceries' || v === 'studio';
 type ApiPayload = { state?: AppState; revision?: number; aiAvailable?: boolean; recipe?: Recipe; code?: string; error?: string | { message?: string; code?: string } };
-const navGroups: { label?: string; items: { id: View; label: string; icon: typeof Home }[] }[] = [
-  { items: [{ id: 'today', label: 'Today', icon: Home }, { id: 'agent', label: 'My agent', icon: Sparkles }] },
-  { label: 'Nutrition', items: [
-    { id: 'planner', label: 'Meal planner', icon: CalendarDays },
-    { id: 'recipes', label: 'Recipes', icon: UtensilsCrossed },
-    { id: 'groceries', label: 'Grocery list', icon: ShoppingBasket },
-    { id: 'studio', label: 'Recipe studio', icon: UtensilsCrossed },
+const sidebarGroups = [
+  { items: [
+    { id: 'today' as const, label: 'Today', href: viewPaths.today, icon: <Home size={18} strokeWidth={1.8} /> },
+    { id: 'agent' as const, label: 'My agent', href: viewPaths.agent, icon: <Sparkles size={18} strokeWidth={1.8} /> },
   ] },
-  { label: 'Training', items: [{ id: 'workouts', label: 'Workouts', icon: Dumbbell }] },
+  { label: 'Nutrition', items: [
+    { id: 'planner' as const, label: 'Meal planner', href: viewPaths.planner, icon: <CalendarDays size={18} strokeWidth={1.8} /> },
+    { id: 'recipes' as const, label: 'Recipes', href: viewPaths.recipes, icon: <UtensilsCrossed size={18} strokeWidth={1.8} /> },
+    { id: 'groceries' as const, label: 'Grocery list', href: viewPaths.groceries, icon: <ShoppingBasket size={18} strokeWidth={1.8} /> },
+    { id: 'studio' as const, label: 'Recipe studio', href: viewPaths.studio, icon: <UtensilsCrossed size={18} strokeWidth={1.8} /> },
+  ] },
+  { label: 'Training', items: [
+    { id: 'workouts' as const, label: 'Workouts', href: viewPaths.workouts, icon: <Dumbbell size={18} strokeWidth={1.8} /> },
+  ] },
 ];
 const macroNames: Record<keyof Macros, string> = { calories: 'Calories', protein: 'Protein', carbs: 'Carbs', fat: 'Fat' };
 const num = (n: number, decimals = 0) => Number.isFinite(n) ? n.toLocaleString('en-US', { maximumFractionDigits: decimals }) : '0';
@@ -280,7 +285,7 @@ function CornerWorkspace({ initialState, preview, displayName, initialRevision =
       brand={{ id: 'today', label: 'Corner home', href: viewPaths.today }}
       selectedId={view} onSelect={navigate}
       renderLink={({ href, ...props }) => <Link {...props} to={href!} />}
-      groups={navGroups.map(group => ({ label: group.label, items: group.items.map(({ icon: Icon, ...item }) => ({ ...item, href: viewPaths[item.id], icon: <Icon size={18} strokeWidth={1.8} /> })) }))}
+      groups={sidebarGroups}
       profile={{ name: state.settings.name || displayName || 'Your workspace', initial: firstName.charAt(0).toUpperCase(), icon: <Settings2 size={16} />, label: `Open settings for ${state.settings.name || displayName || 'Your workspace'}`, selected: view === 'settings', href: viewPaths.settings, onSelect: () => navigate('settings') }}
       note={preview ? 'Preview · changes stay in this session' : undefined}
       mobileNavigation={mobileNavigation}

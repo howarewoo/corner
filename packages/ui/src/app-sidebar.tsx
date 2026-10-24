@@ -6,7 +6,7 @@ import {
   Sidebar, SidebarContent, SidebarFooter, SidebarGroup, SidebarGroupLabel,
   SidebarHeader, SidebarMenu, SidebarMenuButton, SidebarMenuItem, useSidebar,
 } from './catalog/sidebar';
-
+import { BrandMark } from './workspace-header';
 type SidebarEntry<Id extends string> = { id: Id; label: string; href?: string; icon?: React.ReactNode };
 export type MobileNavigationItem<Id extends string> = {
   id: Id;
@@ -46,13 +46,15 @@ export function AppSidebar<Id extends string>({
   const { isMobile, setOpenMobile } = useSidebar();
   const navigation = React.useRef<HTMLElement>(null);
   const link = (href: string) => renderLink ? renderLink({ href }) : <a href={href} />;
-  function select(event: React.MouseEvent<HTMLElement>, target: Id, href?: string) {
+  function handleSelect(event: React.MouseEvent<HTMLElement>, action: () => void, href?: string) {
     if (href && (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)) return;
     if (href && renderLink) { setOpenMobile(false); return; }
     event.preventDefault();
-    onSelect(target);
+    action();
     setOpenMobile(false);
   }
+  const select = (event: React.MouseEvent<HTMLElement>, target: Id, href?: string) =>
+    handleSelect(event, () => onSelect(target), href);
   if (isMobile && mobileNavigation) {
     return (
       <nav
@@ -92,6 +94,7 @@ export function AppSidebar<Id extends string>({
       </nav>
     );
   }
+  const visibleGroups = groups.filter(group => group.items.length > 0);
   return <Sidebar variant="floating" id={id} aria-label={label}
     mobileTitle={label} mobileDescription="Choose a section to open."
     mobileContentProps={{
@@ -106,8 +109,7 @@ export function AppSidebar<Id extends string>({
           role={brand.href ? 'link' : undefined}
           render={brand.href ? link(brand.href) : undefined}
           onClick={event => select(event, brand.id, brand.href)}>
-          <span className="ui-app-sidebar-brand-mark" aria-hidden="true"><i /><i /><i /></span>
-          <span>corner<span className="ui-app-sidebar-brand-period">.</span></span>
+          <BrandMark />
         </Button>
         {isMobile && <Button variant="ghost" size="icon" aria-label={`Close ${label.toLowerCase()}`} onClick={() => setOpenMobile(false)}><X size={18} /></Button>}
       </div>
@@ -119,7 +121,7 @@ export function AppSidebar<Id extends string>({
       </div>}
     </SidebarHeader>
     <SidebarContent><nav ref={navigation} aria-label={label}>
-      {groups.filter(group => group.items.length > 0).map((group, index) => <SidebarGroup key={group.label || index}>
+      {visibleGroups.map((group, index) => <SidebarGroup key={group.label || index}>
         {group.label && <SidebarGroupLabel render={<h2 />}>{group.label}</SidebarGroupLabel>}
         <SidebarMenu>{group.items.map(entry => <SidebarMenuItem key={entry.id}>
           <SidebarMenuButton isActive={selectedId === entry.id} aria-current={selectedId === entry.id ? 'page' : undefined}
@@ -129,11 +131,11 @@ export function AppSidebar<Id extends string>({
           </SidebarMenuButton>
         </SidebarMenuItem>)}</SidebarMenu>
       </SidebarGroup>)}
-      {!groups.some(group => group.items.length) && empty && <div className="ui-app-sidebar-empty" role="status"><p>{empty.message}</p><Button variant="secondary" size="sm" onClick={empty.onAction}>{empty.actionLabel}</Button></div>}
+      {!visibleGroups.length && empty && <div className="ui-app-sidebar-empty" role="status"><p>{empty.message}</p><Button variant="secondary" size="sm" onClick={empty.onAction}>{empty.actionLabel}</Button></div>}
     </nav></SidebarContent>
     {(note || profile || footer) && <SidebarFooter>
       {note && <p className="ui-app-sidebar-note" role="status">{note}</p>}
-      {profile && <SidebarMenu><SidebarMenuItem><SidebarMenuButton size="lg" isActive={profile.selected} aria-current={profile.selected ? 'page' : undefined} aria-label={profile.label} render={profile.href ? link(profile.href) : undefined} onClick={event => { if (profile.href && (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)) return; if (!(profile.href && renderLink)) { event.preventDefault(); profile.onSelect(); } setOpenMobile(false); }}><Avatar><AvatarFallback>{profile.initial}</AvatarFallback></Avatar><span>{profile.name}</span>{profile.icon}</SidebarMenuButton></SidebarMenuItem></SidebarMenu>}
+      {profile && <SidebarMenu><SidebarMenuItem><SidebarMenuButton size="lg" isActive={profile.selected} aria-current={profile.selected ? 'page' : undefined} aria-label={profile.label} render={profile.href ? link(profile.href) : undefined} onClick={event => handleSelect(event, profile.onSelect, profile.href)}><Avatar><AvatarFallback>{profile.initial}</AvatarFallback></Avatar><span>{profile.name}</span>{profile.icon}</SidebarMenuButton></SidebarMenuItem></SidebarMenu>}
       {footer && <div className="ui-app-sidebar-footer-info"><span className="ui-app-sidebar-footer-icon">{footer.icon}</span><div><strong>{footer.title}</strong><span>{footer.description}</span></div></div>}
     </SidebarFooter>}
   </Sidebar>;
