@@ -93,6 +93,8 @@ Successful **push-to-staging** CI wakes `.github/workflows/staging.yml`, invokin
 
 Apply the packaged migrator only to staging and update native Preview `staging` under `corner` using the identical bundle/assets and isolated credentials. Probe the stable origin with Access headers scoped only to that origin. Record a separate GitHub `staging` ledger, task `corner-preview`, kind `corner-staging-preview`, not a production receipt. No production approval or traffic switch occurs. Public success does not prove inbox delivery or human review.
 
+Keep the latest `staging-schema` attempt's migrations as a required candidate prefix, independently of the serving-code baseline from the `staging` deployment ledger. If migration succeeds but deployment is interrupted, the next candidate must still qualify against the code actually serving the Preview. Live deployment identity must match that ledger before qualification, migration, and the Preview update; an unrecorded deployment or lost provider response requires operator reconciliation, not a blind retry or bootstrap.
+
 #### Approve an exact production candidate
 
 Merge a release PR **staging → main** with a merge commit, then select a successful **push-to-main** CI artifact. Dispatch **Approved production release** on `main` with `run_id`, full `source_sha`, and actual manual review:

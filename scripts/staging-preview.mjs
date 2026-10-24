@@ -115,13 +115,14 @@ function command(binary, args, options = {}) {
   return result.stdout;
 }
 
-async function cloudflare(path) {
+async function cloudflare(path, { allowMissing = false } = {}) {
   const account = need(process.env.CLOUDFLARE_ACCOUNT_ID, 'Cloudflare account required');
   const token = need(process.env.CLOUDFLARE_API_TOKEN, 'Cloudflare deployment token required');
   const response = await fetch(`https://api.cloudflare.com/client/v4/accounts/${account}/${path}`, {
     headers: { Authorization: `Bearer ${token}` },
     signal: AbortSignal.timeout(60000),
   });
+  if (allowMissing && response.status === 404) return null;
   need(response.ok, `Cloudflare readback failed (HTTP ${response.status})`);
   const result = await response.json();
   need(result.success, 'Cloudflare readback failed');
@@ -204,12 +205,46 @@ export async function deployPreview({
     'Pinned Wrangler differs from the qualified artifact',
   );
   const histories = await github.all('deployments?environment=staging-schema&task=corner-preview');
-  const previous = histories[0];
-  if (previous)
+  const schema = histories[0];
+  if (schema)
     need(
-      previous.payload?.kind === kind && previous.payload.phase === 'schema-attempted',
+      schema.payload?.kind === kind && schema.payload.phase === 'schema-attempted',
       'Invalid Preview schema history',
     );
+  const deployments = await github.all('deployments?environment=staging&task=corner-preview');
+  const previous = deployments[0];
+  if (previous)
+    need(
+      previous.payload?.kind === kind &&
+        ['deployed', 'complete'].includes(previous.payload.phase) &&
+        previous.payload.workerName === workerName &&
+        previous.payload.previewName === previewName &&
+        previous.payload.origin === config.origin &&
+        typeof previous.payload.deploymentId === 'string',
+      'Invalid Preview deployment history',
+    );
+  const serving = async () => {
+    const live = await cf(
+      `workers/workers/${workerName}/previews/${previewName}/deployments/latest`,
+      { allowMissing: true },
+    );
+    need(
+      previous ? live?.id === previous.payload.deploymentId : live === null,
+      'Live Preview deployment differs from its ledger; reconcile before retrying',
+    );
+  };
+  await serving();
+  if (schema) {
+    const attempted = await load(schema.payload, join(work, 'schema'));
+    need(
+      attempted.manifest.migrations.every(
+        (migration, index) =>
+          candidate.manifest.migrations[index]?.name === migration.name &&
+          candidate.manifest.migrations[index]?.sha256 === migration.sha256,
+      ),
+      'Candidate does not preserve CURRENT attempted migration history',
+    );
+  }
   const prior = previous ? await load(previous.payload, join(work, 'previous')) : null;
   const qualification = await qualify({
     candidate: candidate.directory,
@@ -221,7 +256,7 @@ export async function deployPreview({
     qualification.passed &&
       qualification.candidateDigest === candidate.digest &&
       qualification.previousDigest === (prior?.digest ?? null),
-    'Qualification does not bind current Preview schema',
+    'Qualification does not bind candidate and serving Preview code',
   );
   const reverify = async () =>
     need(
@@ -236,6 +271,7 @@ export async function deployPreview({
     'Enable corner Preview URLs before deploying the native Preview',
   );
   const production = JSON.stringify(await cf(`workers/scripts/${workerName}/deployments`));
+  await serving();
   const payload = {
     format: 1,
     kind,
@@ -257,6 +293,7 @@ export async function deployPreview({
   );
   await reverify();
   await current();
+  await serving();
   const packaged = JSON.parse(
     await readFile(join(candidate.directory, candidate.manifest.configurationEntry), 'utf8'),
   );

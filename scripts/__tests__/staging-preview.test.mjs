@@ -84,6 +84,7 @@ async function scenario(t, overrides = {}) {
     digest,
     manifest: {
       migrationEntry: 'migration/dist/migrate.mjs',
+      migrations: [],
       wranglerVersion: createRequire(new URL('../../apps/server/package.json', import.meta.url))(
         'wrangler/package.json',
       ).version,
@@ -98,8 +99,10 @@ async function scenario(t, overrides = {}) {
     loadArtifact: async () => candidate,
     qualify: async () => ({ passed: true, candidateDigest: digest, previousDigest: null }),
     verify: async () => ({ digest }),
-    cf: async (path) =>
-      path.endsWith('/subdomain') ? { previews_enabled: true } : { deployments: [] },
+    cf: async (path) => {
+      if (path.endsWith('/deployments/latest')) return null;
+      return path.endsWith('/subdomain') ? { previews_enabled: true } : { deployments: [] };
+    },
     execute: () => {
       effects.push('migration');
       throw new Error('migration failed');
@@ -139,7 +142,114 @@ test('migration failure leaves a schema journal without deploying a Preview', as
 });
 
 test('native Preview routing must be enabled before any staging schema effect', async (t) => {
-  const f = await scenario(t, { cf: async () => ({ previews_enabled: false }) });
+  const f = await scenario(t, {
+    cf: async (path) => (path.endsWith('/deployments/latest') ? null : { previews_enabled: false }),
+  });
   await assert.rejects(deployPreview(f.options), /Enable corner Preview URLs/);
   assert.deepEqual(f.effects, []);
+});
+
+async function interruptedDeployment(t) {
+  const f = await scenario(t);
+  const load = f.options.loadArtifact;
+  const candidate = await load();
+  const migration = { name: '001.sql', sha256: '1'.repeat(64) };
+  const attemptedMigration = { name: '002.sql', sha256: '2'.repeat(64) };
+  candidate.manifest.migrations = [migration, attemptedMigration];
+  const serving = {
+    ...candidate,
+    directory: join(f.options.work, 'serving-a'),
+    digest: 'c'.repeat(64),
+    manifest: { ...candidate.manifest, migrations: [migration] },
+  };
+  const attempted = {
+    ...candidate,
+    directory: join(f.options.work, 'attempted-b'),
+    digest: 'd'.repeat(64),
+  };
+  const payload = {
+    kind: 'corner-staging-preview',
+    workerName: 'corner',
+    previewName: 'staging',
+    origin,
+    deploymentId: 'deployment-a',
+  };
+  f.options.github.all = async (path) =>
+    path.includes('environment=staging-schema&')
+      ? [{ payload: { ...payload, phase: 'schema-attempted', artifactId: 'b' } }]
+      : [{ payload: { ...payload, phase: 'complete', artifactId: 'a' } }];
+  f.options.loadArtifact = async ({ reference }) => {
+    if (reference.artifactId === 'a') return serving;
+    if (reference.artifactId === 'b') return attempted;
+    return candidate;
+  };
+  const cf = f.options.cf;
+  f.options.cf = async (path, options) =>
+    path.endsWith('/deployments/latest') ? { id: 'deployment-a' } : cf(path, options);
+  return { ...f, candidate, serving, attempted };
+}
+
+test('interrupted B schema attempt preserves A as C compatibility baseline', async (t) => {
+  const f = await interruptedDeployment(t);
+  let qualified = false;
+  f.options.qualify = async ({ candidate, previous, bootstrap }) => {
+    qualified = true;
+    assert.equal(candidate, f.candidate.directory);
+    assert.equal(previous, f.serving.directory);
+    assert.equal(bootstrap, false);
+    return { passed: true, candidateDigest: digest, previousDigest: f.serving.digest };
+  };
+  await assert.rejects(deployPreview(f.options), /migration failed/);
+  assert.equal(qualified, true);
+  assert.deepEqual(f.effects, ['schema-attempted', 'migration']);
+});
+
+test('C cannot remove or rewrite B attempted migrations while A serves', async (t) => {
+  for (const rewrite of [false, true]) {
+    const f = await interruptedDeployment(t);
+    f.candidate.manifest = {
+      ...f.candidate.manifest,
+      migrations: rewrite
+        ? [f.candidate.manifest.migrations[0], { name: '002.sql', sha256: 'e'.repeat(64) }]
+        : f.serving.manifest.migrations,
+    };
+    f.options.qualify = async () => assert.fail('must reject before qualification');
+    await assert.rejects(deployPreview(f.options), /CURRENT attempted migration history/);
+    assert.deepEqual(f.effects, []);
+  }
+});
+
+test('C incompatible with still-serving A cannot migrate after a B schema attempt', async (t) => {
+  const f = await interruptedDeployment(t);
+  f.options.qualify = async ({ previous }) => {
+    assert.equal(previous, f.serving.directory);
+    throw new Error('A cannot use C schema');
+  };
+  await assert.rejects(deployPreview(f.options), /A cannot use C schema/);
+  assert.deepEqual(f.effects, []);
+});
+
+test('unrecorded live Preview cannot bootstrap or migrate', async (t) => {
+  const f = await scenario(t, { cf: async () => ({ id: 'unrecorded' }) });
+  await assert.rejects(deployPreview(f.options), /Live Preview deployment differs/);
+  assert.deepEqual(f.effects, []);
+});
+
+test('live drift from serving ledger is rejected initially and after qualification', async (t) => {
+  for (const driftAt of [1, 2]) {
+    const f = await interruptedDeployment(t);
+    const cf = f.options.cf;
+    let reads = 0;
+    f.options.cf = async (path, options) => {
+      if (path.endsWith('/deployments/latest') && ++reads >= driftAt) return { id: 'drift' };
+      return cf(path, options);
+    };
+    f.options.qualify = async () => ({
+      passed: true,
+      candidateDigest: digest,
+      previousDigest: f.serving.digest,
+    });
+    await assert.rejects(deployPreview(f.options), /Live Preview deployment differs/);
+    assert.deepEqual(f.effects, []);
+  }
 });
