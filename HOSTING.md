@@ -23,16 +23,16 @@ In **Workers & Pages → corner-web → Settings → Builds**, use:
 | Setting | Value |
 | --- | --- |
 | Production branch | `main` |
-| Root directory | `/` (repository root, not `apps/web`) |
-| Build command | `pnpm run build:web:worker` |
-| Production deploy command | `pnpm run deploy:web` |
-| Preview deploy command | `pnpm run preview:web` |
+| Root directory | `apps/web` |
+| Build command | `npm run build` |
+| Production deploy command | `npx wrangler deploy` |
+| Preview deploy command | `npx wrangler preview` |
 | Build environment | `NODE_VERSION=24.21.0`, `PNPM_VERSION=10.33.2` |
-| Dependency installation | Root `pnpm install --frozen-lockfile`; preserve the workspace lockfile |
+| Dependency installation | `pnpm install --frozen-lockfile` (discovers the root workspace lockfile from `apps/web`) |
 | Runtime service binding | `SERVER` → `corner-server`, supplied by `apps/web/wrangler.jsonc` |
 | Runtime secrets | None on `corner-web`; keep the four secrets below on `corner-server` only |
 
-The build/deploy commands select `apps/web/wrangler.jsonc` explicitly and use the repository's pinned Wrangler from the server workspace; the frontend build does not start or deploy the backend or apply migrations. `pnpm run build:web:worker` only builds/dry-runs. Keep the dashboard root at `/` for the shared workspace lockfile and dependencies; the configuration itself belongs to the web app. Do not use bare root `npx wrangler deploy`, which neither selects an app configuration nor guarantees the pinned tool version.
+The app-directory root lets the default Wrangler commands discover `apps/web/wrangler.jsonc` and the web workspace's pinned Wrangler. `npm run build` first runs the web `prebuild` script, which uses root Turbo to build only its shared workspace dependencies, then type-checks and builds the frontend. It does not build/deploy the backend or apply migrations. A branch-specific build trigger must use `npx wrangler preview`, never the production deploy command. Keep the shared root lockfile; do not create an app-local lockfile. For local commands from the repository root, `pnpm run build:web:worker`, `pnpm run deploy:web`, and `pnpm run preview:web` still select the web configuration explicitly.
 
 Attach the frontend's exact HTTPS custom domain to **`corner-web`** in Cloudflare. Set production backend `CORNER_ORIGIN` to that **frontend origin** and register the same origin with production Neon Auth. Service-binding requests preserve the original URL, Origin, cookies, and response cookies. Production `workers.dev` and version URLs stay disabled. Branch Previews use their separately configured nonproduction backend below.
 
