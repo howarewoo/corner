@@ -1,11 +1,11 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "corner-server",
+  "name": "corner",
   "main": "src/worker.ts",
   "compatibility_date": "2026-10-19",
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": false,
-  "preview_urls": false,
+  "preview_urls": true,
   "version_metadata": {
     "binding": "CF_VERSION_METADATA",
   },

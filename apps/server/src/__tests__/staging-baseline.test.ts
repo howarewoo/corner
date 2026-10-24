@@ -116,6 +116,7 @@ test('schema drift and unsupported objects refuse atomically without ledger writ
     'DROP INDEX mutation_receipts_user_revision',
     'CREATE VIEW unexpected_view AS SELECT 1 AS value',
     'ALTER TABLE workspace_state ENABLE ROW LEVEL SECURITY',
+    'ALTER TABLE workspace_state ADD CONSTRAINT unexpected_check CHECK (version >= 0)',
     "CREATE TYPE unexpected_enum AS ENUM ('value')",
     'ALTER TABLE corner_schema_migrations ADD COLUMN unexpected TEXT',
     `CREATE TABLE "user" (id TEXT PRIMARY KEY); INSERT INTO "user" VALUES ('copied-private-user')`,
@@ -138,7 +139,7 @@ test('schema drift and unsupported objects refuse atomically without ledger writ
 });
 
 test('nonempty application tables, missing history, and edited source checksums refuse', async () => {
-  for (const change of ['rows', 'checksum', 'missing', 'unknown', 'source-drift']) {
+  for (const change of ['rows', 'checksum', 'missing', 'unknown', 'source-drift', 'default-grants']) {
     const f = await fixture();
     try {
       if (change === 'rows')
@@ -152,6 +153,10 @@ test('nonempty application tables, missing history, and edited source checksums 
         await f.source.query("UPDATE corner_schema_migrations SET name='000_unknown.sql'");
       if (change === 'source-drift')
         await f.source.query('ALTER TABLE workspace_state ALTER COLUMN version SET DEFAULT 7');
+      if (change === 'default-grants')
+        await f.source.query(
+          `ALTER DEFAULT PRIVILEGES IN SCHEMA "${f.schemas[0]}" GRANT SELECT ON TABLES TO PUBLIC`,
+        );
       const before = (await f.source.query('SELECT * FROM corner_schema_migrations')).rows;
       await assert.rejects(baselineStaging(f.options), { message: 'STAGING_BASELINE_REFUSED' });
       assert.equal(
