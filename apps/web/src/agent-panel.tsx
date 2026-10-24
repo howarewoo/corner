@@ -97,8 +97,8 @@ export function AgentConnection({
     const generation = sessionLifetime();
     const result = await connectionQuery.refetch();
     if (generation !== sessionLifetime()) return;
-    if (result.error) setError(errorMessage(result.error));
-    else onChangedRef.current?.();
+    setError(result.error ? errorMessage(result.error) : '');
+    if (!result.error) onChangedRef.current?.();
   }, [connectionQuery.refetch]);
   useEffect(() => () => { sequence.current += 1; }, []);
   async function connect() {

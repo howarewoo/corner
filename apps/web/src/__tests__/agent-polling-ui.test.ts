@@ -34,7 +34,7 @@ function json(value: unknown, status = 200) {
   return new Response(JSON.stringify({ json: value }), { status, headers: { 'Content-Type': 'application/json' } });
 }
 
-test('rendered active request shows poll failures, recovers, and stops observing a terminal run', async t => {
+test('rendered agent recovers from poll and connection refresh failures and stops observing a terminal run', async t => {
   const generated = join(project, 'tests/.generated');
   await mkdir(generated, { recursive: true });
   const directory = await mkdtemp(join(generated, 'agent-polling-ui-'));
@@ -86,14 +86,18 @@ test('rendered active request shows poll failures, recovers, and stops observing
   });
   let mode: 'running' | 'failure' | 'recovered' | 'terminal' = 'running';
   let detailCalls = 0;
+  let connectionFailure = false;
   const failure = 'Your request could not be refreshed. Please try again.';
   t.mock.method(globalThis, 'fetch', async (request: string | URL | Request) => {
     const url = new URL(typeof request === 'string' ? request : request instanceof URL ? request.href : request.url);
     assert.equal(url.origin, 'https://corner.test');
     if (url.pathname === '/api/rpc/agent/list') return json({ runs: [running] });
-    if (url.pathname === '/api/rpc/ai/connection') return json({
-      available: false, connected: false, enabled: true, state: 'disconnected', model: null, models: [],
-    });
+    if (url.pathname === '/api/rpc/ai/connection') {
+      if (connectionFailure) return json({ defined: true, code: 'SERVICE_UNAVAILABLE', status: 503, message: 'Connection refresh failed.' }, 503);
+      return json({
+        available: true, connected: true, enabled: true, state: 'connected', model: null, models: [],
+      });
+    }
     if (url.pathname === '/api/rpc/agent/get') {
       detailCalls += 1;
       if (mode === 'failure') return json({ defined: true, code: 'SERVICE_UNAVAILABLE', status: 503, message: failure }, 503);
@@ -134,4 +138,15 @@ test('rendered active request shows poll failures, recovers, and stops observing
   });
   assert.equal(detailCalls, terminalDetailCalls, 'Terminal detail must no longer have an active polling consumer.');
   assert.match(text(renderer!.root), /Request cancelled\. No proposal was applied/);
+  const refreshConnection = () => renderer!.root.findAllByType('button')
+    .find(button => button.props['aria-label'] === 'Refresh AI connection')!;
+  assert.match(text(renderer!.root), /Connected and ready/);
+  connectionFailure = true;
+  await act(async () => { refreshConnection().props.onClick(); });
+  assert.match(text(renderer!.root), /Connection refresh failed/);
+  connectionFailure = false;
+  assert.equal(refreshConnection().props.disabled, false);
+  await act(async () => { refreshConnection().props.onClick(); });
+  assert.doesNotMatch(text(renderer!.root), /Connection refresh failed/);
+  assert.match(text(renderer!.root), /Connected and ready/);
 });
