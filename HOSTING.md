@@ -8,135 +8,129 @@ This guide does not create a cloud account, register a domain, configure SMTP, o
 
 ### Runtime and prerequisites
 
-`corner-web` serves `apps/web/dist` through `apps/web/wrangler.jsonc` and forwards `/api`, `/api/*`, and `/auth/callback` to the separately deployed **`corner-server`** through the `SERVER` service binding. The browser uses one public origin: no cross-origin cookies, browser backend URL, or CORS configuration is needed. The backend preserves canonical-origin validation and response security headers; missing API endpoints never become SPA HTML. The existing server release artifact also retains its asset support for backend qualification.
+Each environment has a fixed two-Worker deployment. Only the backend holds credentials:
 
-Workers always run in **hosted** mode. They do not read repository `.env` files, generate local keys, initialize process-wide agent recovery, or start new inference. Request-scoped `pg` pools close before the request finishes; existing PostgreSQL transactions, owner locks, and mutation receipts still protect writes across isolates. This is not support for distributed background AI tasks. Do not run the old Node process against the same database during cutover.
+| Environment | Frontend | Backend (`SERVER` service binding) | Git source |
+| --- | --- | --- | --- |
+| Staging | `corner-web-staging` | `corner-server-staging` | `staging` |
+| Production | `corner-web` | `corner-server` | `main` |
 
-You need a Cloudflare account with a domain/zone you control, a Neon Postgres/Auth project, Node 24, and the pinned pnpm dependencies. No D1, KV, R2, Hyperdrive, container, or paid inference binding is required. The app connects directly to the **pooled Neon PostgreSQL URL** using Workers' Node compatibility; use a separate direct URL only for migrations.
+One exact HTTPS custom-domain origin per environment serves assets, `/api/*`, and `/auth/callback`. The backend validates that canonical origin; no browser backend URL or cross-origin cookie setup is needed. Frontend bindings contain no database/Auth credentials. `workers.dev`, version URLs, and feature-branch Previews remain disabled. Hosted ChatGPT connections stay disabled.
+
+Workers use request-scoped PostgreSQL pools and the existing owner locks, transactions, and mutation receipts. They never initialize process-wide agent recovery, read repository environment files, or start inference. Stop the old Node process before moving its database to Workers.
+
+Prerequisites: a Cloudflare account/domain, the existing Neon project with production and schema-only staging branches, independent managed Auth/configuration for staging, Node 24, and pinned pnpm dependencies. No new paid Cloudflare binding or Neon plan upgrade is assumed. Schema-only branches consume Neon's root-branch quota; confirm available capacity before provisioning.
 
 ### Cloudflare dashboard setup
 
-The frontend Worker is **`corner-web`** (`apps/web/wrangler.jsonc`); it expects the separately deployed backend to be named **`corner-server`**. Deploy the server first in the same Cloudflare account. Only the server holds database/Auth credentials and application keys.
+Disable Cloudflare Git Builds and branch Preview triggers for **all four Workers**. GitHub owns both components' immutable releases; an independent frontend build would escape pair qualification and recovery. Remove the old `wrangler preview` and direct frontend deploy build commands, not just their repository scripts.
 
-In **Workers & Pages → corner-web → Settings → Builds**, use:
+Attach production and staging custom domains to their respective frontend Workers. Do not expose a backend route/domain. If a provider requires an existing frontend before attaching its domain, bootstrap the pair with its public boundary closed, then attach the domain and explicitly recheck the recorded deployment. Bootstrap/public failure is incomplete, not success.
 
-| Setting | Value |
-| --- | --- |
-| Production branch | `main` |
-| Root directory | `apps/web` |
-| Build command | `npm run build` |
-| Production deploy command | `npx wrangler deploy` |
-| Preview deploy command | `npx wrangler preview` |
-| Build environment | `NODE_VERSION=24.21.0`, `PNPM_VERSION=10.33.2` |
-| Dependency installation | `pnpm install --frozen-lockfile` (discovers the root workspace lockfile from `apps/web`) |
-| Runtime service binding | `SERVER` → `corner-server`, supplied by `apps/web/wrangler.jsonc` |
-| Runtime secrets | None on `corner-web`; keep the four secrets below on `corner-server` only |
+Use Cloudflare Access to admit only approved testers to the **entire staging hostname**, including assets, APIs, callbacks, and reset paths. Configure a narrowly scoped service-token policy for automated checks. Keep production outside that staging Access application. Test unauthenticated denial, approved-tester access, and unrelated-identity denial; Corner's own account/session checks still apply after Access.
 
-The app-directory root lets the default Wrangler commands discover `apps/web/wrangler.jsonc` and the web workspace's pinned Wrangler. `npm run build` first runs the web `prebuild` script, which uses root Turbo to build only its shared workspace dependencies, then type-checks and builds the frontend. It does not build/deploy the backend or apply migrations. A branch-specific build trigger must use `npx wrangler preview`, never the production deploy command. Keep the shared root lockfile; do not create an app-local lockfile. For local commands from the repository root, `pnpm run build:web:worker`, `pnpm run deploy:web`, and `pnpm run preview:web` still select the web configuration explicitly.
+The same-account design assumes trusted repository writers and environment administrators. Workers edit tokens may authorize an account rather than one named Worker: fixed script targets are an accident guard, **not provider-enforced isolation from malicious CI**. Keep staging and production tokens in their separate GitHub environments, not repository-wide secrets. A stronger hostile-writer boundary requires a separately approved account/security design.
 
-Attach the frontend's exact HTTPS custom domain to **`corner-web`** in Cloudflare. Set production backend `CORNER_ORIGIN` to that **frontend origin** and register the same origin with production Neon Auth. Service-binding requests preserve the original URL, Origin, cookies, and response cookies. Production `workers.dev` and version URLs stay disabled. Branch Previews use their separately configured nonproduction backend below.
+### Persistent staging database and Auth
 
-Keep automatic Cloudflare Git builds **disabled on `corner-server`**: its protected release workflow below owns database migrations and backend promotion. An existing backend Worker without a Corner production ledger is not a completed bootstrap; the release workflow refuses to overwrite it. Reconcile its ownership/history under operator control before first release. This restriction applies to the backend, not the independently built frontend.
+Provision one **schema-only `staging` branch in the existing Neon project**, from the intended production schema. Never use a data-copy branch, clone production accounts/sessions/health records, or reset/recreate staging on each merge. Retain synthetic test accounts and records across deployments.
 
-### Isolated branch Previews
+Clear staging's actual expiration: the Neon branch update API accepts `expires_at: null`; read the branch back and verify no deadline. The `staging` exception in `neon.ts` avoids assigning a TTL but does not clear an existing deadline. Neon paid branch protection is optional defense-in-depth, not a prerequisite or implicit plan upgrade. Git protection and Neon expiration are separate controls.
 
-Cloudflare Worker Previews require the `previews` block in `apps/web/wrangler.jsonc`. Production binds `SERVER` to `corner-server`; Previews explicitly bind it to **`corner-server-preview`**. Assets and compatibility settings stay at the top level. `preview_urls: false` controls production version URLs, not the separate Worker Previews feature. Use `pnpm run preview:web` for branch builds, not the production deploy command.
+A schema-only branch omits migration-history rows. **Do not run the ordinary bootstrap migration blindly.** Before enabling staging Auth or permitting any staging writes:
 
-Cloudflare Preview service bindings call the target Worker's production deployment; they do **not** select a matching backend branch Preview. Therefore `corner-server-preview` is a dedicated nonproduction Worker, selected by `--env preview` in `apps/server/wrangler.jsonc`. Frontend branches share its test accounts/data, but never intentionally share production accounts/data. There is no production-backend fallback.
+1. Build the server. Privately inject a read-only source connection as `STAGING_BASELINE_SOURCE_URL`, the staging **direct** URL as `DATABASE_URL_UNPOOLED`, its exact hostname as `STAGING_DATABASE_HOST`, and a separate disposable PostgreSQL connection as `CORNER_TEST_DATABASE_URL`.
+2. Run `pnpm run db:baseline:staging`. It does not load `.env` files. The source transaction is read-only; target migration locks prevent competing application migrations. The reference database receives only a temporary schema rolled back afterward.
+3. The operator verifies source/target identities and the schema-only creation record. The tool checks source migration checksums, the target schema against both source and checked-in SQL, empty application/Auth tables, and absent/empty migration metadata. It inserts **only verified migration names/checksums**, atomically. Unsupported drift or objects fail closed.
+4. This initial baseliner deliberately supports only the checked-in `001_corner.sql` prefix. A later production schema needs an explicitly reviewed validator update; do not bypass rejection, invent history, drop tables, or import production rows.
+5. Provision/verify staging's independent managed Auth service only after the empty baseline succeeds. Register only staging's exact public origin, configure test delivery, OTP verification, and `NEON_AUTH_REQUIRE_EMAIL_VERIFICATION=true`. Verify there are no inherited production users/sessions or credentials. If Neon cannot provide that isolation, stop cutover rather than reuse production Auth.
 
-One-time setup, separate from the protected production release workflow:
+Create staging application keys once and retain them: at least 32 cryptographically random characters for `BETTER_AUTH_SECRET` and 32 random bytes encoded as base64 for `CORNER_TOKEN_ENCRYPTION_KEY`. Never reuse production keys, database URLs, Auth endpoints, email recipients, or local model grants. Do not refresh staging from production later; apply subsequent checked-in migrations normally.
 
-1. Provision an **empty nonproduction Neon database with its own managed Auth service**, preferably a separate project. Do not clone production accounts, sessions, or health records. The existing schema-only PR database workflow does not configure an application/Auth preview and is not a substitute. If starting from a schema-only copy, resolve migration-history baselining explicitly rather than blindly applying bootstrap migrations.
-2. Run `pnpm run build:server:preview`. In a controlled job with **only the nonproduction direct URL** injected as `DATABASE_URL_UNPOOLED`, run `node apps/server/dist/migrate.js --apply`. This direct command does not load root `.env` files. Never run a preview migration against production.
-3. Run `pnpm run deploy:server:preview` to create/update only `corner-server-preview`. Keep its public `workers.dev`/version URLs disabled; the frontend reaches it through the service binding. Before configuration is complete, it fails closed.
-4. Supply the nonproduction pooled `DATABASE_URL`, nonproduction `NEON_AUTH_BASE_URL`, and fresh independent `BETTER_AUTH_SECRET` / `CORNER_TOKEN_ENCRYPTION_KEY` with `pnpm --filter server exec wrangler secret put <SECRET_NAME> --env preview`. These are five separate settings including the origin list below; never copy production keys or upload `DATABASE_URL_UNPOOLED`.
-5. Build the frontend with `pnpm run build:web:worker`, then create its branch Preview with `pnpm run preview:web`. Register the returned **exact HTTPS Preview origin** with the **nonproduction** Neon Auth service. Store approved origins as a comma-separated `CORNER_PREVIEW_ORIGINS` secret using `pnpm --filter server exec wrangler secret put CORNER_PREVIEW_ORIGINS --env preview`. This list is not sensitive, but using a secret preserves account-specific hostnames across code deployments. Include no paths, trailing slashes, wildcards, or production origin. Register and allow each additional branch/deployment URL separately; remove it from both places when retired.
-6. Align `NEON_AUTH_REQUIRE_EMAIL_VERIFICATION` with the nonproduction Auth policy (checked in as `true`), configure its test email sender, and verify signup, verification, save/reload, sign-out, and password recovery on the Preview URL.
-
-The preview-only backend entrypoint accepts only explicitly listed HTTPS request origins and passes the matched origin to the unchanged hosted runtime. A missing list returns `503`; an unapproved origin returns `400`. An allowed origin cannot submit cross-origin writes to another allowed Preview. Production retains its single canonical-origin boundary. Protect public Preview URLs with Cloudflare Access when needed, and use synthetic test data.
-
-`pnpm run build:workers` dry-runs production and nonproduction backend bundles plus the frontend. `pnpm run smoke:workers` exercises both topologies locally with separate disposable schemas and local Auth fixtures. It does not deploy resources, configure live secrets/domains, or prove real inbox delivery.
-
-References: [Worker Previews configuration](https://developers.cloudflare.com/workers/previews/configuration/), [service-binding limitations](https://developers.cloudflare.com/workers/previews/resources/#limitations).
-
+References: [schema-only branches](https://neon.com/docs/guides/branching-schema-only), [branch expiration and removal](https://neon.com/docs/guides/branch-expiration), [Cloudflare Access service tokens](https://developers.cloudflare.com/cloudflare-one/access-controls/service-credentials/service-tokens/).
 
 ### Configure the origin and secrets
 
-1. Before backend bootstrap, configure its Worker `name` as `corner-server` in `apps/server/wrangler.jsonc` so the backend release artifact targets the service expected by the frontend. Reserve one exact HTTPS custom-domain origin for the frontend. Keep the checked-in compatibility settings, native `CF_VERSION_METADATA` binding, and assets policy. Backend automated releases deliberately do not create routes/domains or enable `workers.dev`/preview URLs. Deploy `corner-web` with its domain and `SERVER` binding to make public verification reachable; public verification cannot pass before that gateway exists. A failed public check leaves a deployed receipt for subsequent protected validation, not a false successful release.
+Production uses `CORNER_PRODUCTION_ORIGIN`, `CORNER_PRODUCTION_CONFIG_JSON`, and `CORNER_PRODUCTION_BINDINGS_REVISION`. Staging uses the corresponding `CORNER_STAGING_*` names. The origin is the exact registered HTTPS frontend origin, without a trailing slash; configuration JSON contains only `CORNER_ORIGIN` and `NEON_AUTH_REQUIRE_EMAIL_VERIFICATION: "true"`. The bindings revision is an operator-maintained nonsecret change record, advanced for Auth, secrets, or routing changes—not detection of unreported out-of-band edits.
 
-2. Register that exact origin with Neon Auth (`neon neon-auth domain add https://corner.your-domain.com`). Configure production custom SMTP and email verification using **OTP** in Neon. The checked-in verification setting is `true` and must agree with the branch policy.
+Put public configuration variables where the plan job can read them. Configure `CLOUDFLARE_ACCOUNT_ID` for the appropriate environment. Each effectful environment holds its own `CLOUDFLARE_API_TOKEN` and direct `DATABASE_URL_UNPOOLED`. Staging additionally holds `CORNER_STAGING_ACCESS_CLIENT_ID` and `CORNER_STAGING_ACCESS_CLIENT_SECRET`; these never belong in browser code or artifacts.
 
-3. Preserve the four runtime secrets in private storage: pooled `DATABASE_URL`, full managed `NEON_AUTH_BASE_URL`, `BETTER_AUTH_SECRET`, and `CORNER_TOKEN_ENCRYPTION_KEY`. Create application keys once: at least 32 cryptographically random characters for the session secret and exactly 32 random bytes encoded as base64 for the encryption key. Reuse existing keys when moving an installation. Never put the direct migration URL in Worker bindings.
+First bootstrap additionally needs pooled `DATABASE_URL` and protected `CORNER_WORKER_SECRETS_JSON`, containing **exactly** `DATABASE_URL`, `NEON_AUTH_BASE_URL`, `BETTER_AUTH_SECRET`, and `CORNER_TOKEN_ENCRYPTION_KEY`. Its pooled URL must agree with `DATABASE_URL`. A temporary owner-only secret file is deleted after backend creation. Ordinary releases inherit the backend's four required secret bindings; the direct migration connection is never a Worker binding.
 
-   The bootstrap workflow reads these four values from protected `CORNER_WORKER_SECRETS_JSON` and creates the Worker using a temporary owner-only secrets file, deleted afterward. Do not pre-create an untracked Worker by running `wrangler secret put`: bootstrap refuses an existing Worker without a Corner production ledger. Normal releases inherit required secret bindings from the existing Worker. Cloudflare remains the runtime secret store; keep encrypted backups separately.
+Preserve existing installation keys during production cutover. Never pre-create an untracked Worker with `wrangler secret put`: bootstrap refuses either existing component without a paired ledger. Existing backend-only artifacts/receipts and manually deployed Workers need explicit operator reconciliation before adoption; they are not silently relabeled as qualified pairs. Do not delete a live installation to satisfy bootstrap.
 
-   Keep all secrets out of Wrangler `vars`, GitHub configuration variables, arguments, logs, `VITE_` settings, and published artifacts. Do not copy production secrets to local `.dev.vars` for smoke checks.
+Keep credentials out of Wrangler `vars`, CLI arguments, logs, repository variables, `VITE_` values, and packaged files. No PR CI job needs live cloud credentials. Freeze effective configuration during planning/promotion and make a fresh plan after changes.
 
 ### Build, migrate, and release
 
-Main CI installs the frozen lockfile, runs the full verification profile with disposable PostgreSQL/local Auth fixtures, builds all workspaces and the Worker, and packages the already-built bytes. A release artifact contains Worker code, web assets, checksummed SQL, a standalone Node migrator/data validator, deployment configuration, manifest digests, and a successful standalone qualification report. It contains no private environment files. CI uploads `corner-release-<full-source-SHA>`; CI itself never deploys.
+PRs, `staging`, and `main` run the full CI profile with disposable PostgreSQL and local HTTPS Auth fixtures. Successful pushes to either persistent branch package the already-built **frontend and backend**, assets, checksummed SQL, standalone migrator/data validator, canonical deployment configurations, digests, and standalone qualification report. `corner-release-<full-source-SHA>` is retained for 90 days; preserve artifacts referenced by active/recovery deployments longer. CI does not deploy.
 
-The former backend rebuild-and-deploy command is removed. Backend production promotion must consume a specific successful **push-to-main** CI run and its exact retained artifact. It checks GitHub repository/run/artifact identities, archive digest, manifest inventory, every payload digest, previous-release provenance, and that the installed pinned Wrangler matches the artifact's recorded tool version. Missing/expired previous artifacts fail; they do not select bootstrap. The independent frontend uses the Cloudflare Builds settings above.
+Artifacts use format 2 and reject backend-only format 1. Verification rejects missing/unlisted files, symlinks, traversal, digest mismatches, altered service targets, or a mismatching pinned Wrangler. Promotion changes only fixed environment names/path references outside the immutable package; it never rebuilds application code. Frontend `SERVER` always targets that environment's backend.
 
-The immutable artifact and `X-Corner-Version` identity qualify the **backend** release. Public checks also exercise the currently deployed frontend's assets and gateway, but do not attest that its bytes came from the backend artifact. Frontend Cloudflare Builds has its own source revision and deployment history; backend rollback does not roll back the frontend. Review compatible frontend/backend revisions before promotion or recovery.
+#### One-time protected configuration and cutover order
 
-#### One-time protected configuration
+These are explicit operator actions, **not effects of opening or updating the implementation PR**:
 
-After complete workflows land and full main CI passes, use the explicit full-check and protected-environment configuration procedure in [README.md](README.md#targeted-verification-and-merge-protection). There is no targeted-gate activation. `production` and `production-validation` require an eligible human reviewer, may allow the owner, and admit only main. Actual environment approval history is checked before effects; an auto-created unprotected environment is insufficient.
+1. Land the Neon/Workers foundation and this change on `main` through the existing draft PR; do not create staging from the older npm-based main. Keep merges/deployments paused during cutover.
+2. Disable old Cloudflare Builds/Preview and Neon preview provisioning integrations. Establish database/Auth isolation, expiration removal, staging Access, and environment credentials above.
+3. Create persistent Git `staging` from that landed main revision and obtain successful full push CI on **both exact tips**. The first automatic staging attempt cannot infer bootstrap and may fail safely until setup is complete.
+4. Run the explicit dry run and then `pnpm run ci:configure -- --reviewer howarewoo --apply`, as described in [README.md](README.md#targeted-verification-and-merge-protection). It protects both branches, configures staging-only automatic deployment and main-only human production environments, reads enforcement back, and **only then** switches the GitHub default to staging and disables automatic branch deletion.
+5. Dispatch **Deploy persistent staging** on `staging` with its exact successful CI `run_id`, current `source_sha`, and `bootstrap=true`. Bootstrap creates both staging Workers after migrations. Attach/verify the staged domain if necessary; use `validate_deployment_id` to recheck a repaired public boundary. Complete the real approved-tester/account/save/recovery scenario before accepting staging for review.
+6. Confirm production's existing ownership/ledger or perform an explicitly approved first paired bootstrap. Require production approval before any migration or Worker switch. Verify the live deployment/account scenario before recording production operational completion.
+7. Inventory old `preview/pr-*` Neon branches and obsolete Cloudflare Preview resources by exact project/owner/reference. Delete only verified unused preview resources under explicit operator authorization, never production or staging. Revoke obsolete preview-only credentials after confirming no remaining consumer.
 
-Configure these **nonsecret repository variables**:
+Until these gates are complete, source implementation is not a claim that staging exists or production is protected.
 
-| Variable | Meaning |
-| --- | --- |
-| `CORNER_PRODUCTION_ORIGIN` | Exact registered HTTPS custom-domain origin |
-| `CORNER_PRODUCTION_CONFIG_JSON` | JSON object containing only `CORNER_ORIGIN` and `NEON_AUTH_REQUIRE_EMAIL_VERIFICATION: "true"` |
-| `CORNER_PRODUCTION_BINDINGS_REVISION` | Operator-maintained nonsecret revision, e.g. `production-1`; advance for secret/Auth/routing changes |
-| `CLOUDFLARE_ACCOUNT_ID` | Account owning this Worker |
+#### Automatic staging
 
-Set protected **production environment secrets** `CLOUDFLARE_API_TOKEN` and direct `DATABASE_URL_UNPOOLED`. Use a least-privilege Cloudflare token authorized to read/edit the selected account's Worker. Bootstrap additionally needs pooled `DATABASE_URL` and `CORNER_WORKER_SECRETS_JSON`, with exactly the four runtime secret keys above; their pooled URL must agree. No real credentials are required in PR CI. The bindings revision is a human change record, not automatic detection of unreported out-of-band changes; freeze configuration while approval/promotion is pending and prepare a new plan after changing it.
+The completed successful **push-to-staging** CI event wakes `staging.yml`. Its plan and effects share a noncanceling serialized job. It rejects PR/foreign/wrong-branch/failed CI and superseded staging heads. Initial creation is explicit; ordinary runs never infer bootstrap or recreate the database.
 
-#### Approve an exact candidate
+After qualifying against the deployed staging artifact, it uploads both versions, journals the schema attempt, migrates only staging, deploys the exact backend then frontend versions, and checks the stable origin using its Access service token. Success records `complete` automatically; no production environment or human approval is consumed. This proves public checks, not inbox delivery or human review. A newer staging merge can supersede a queued candidate; an already-running serialized deployment is not canceled during migrations.
 
-Dispatch **Approved production release** on `main`, selecting `run_id` and full `source_sha`. Set `bootstrap=true` only for first Worker creation with no existing production baseline. Ordinary promotion never creates the Worker. Before dispatch, actually review the candidate revision's affected flow at desktop/phone widths and keyboard focus, then supply nonsecret `manual_review` JSON:
+#### Approve an exact production candidate
+
+Merge a release PR **staging → main** with a merge commit, then select a successful **push-to-main** CI artifact. Dispatch **Approved production release** on `main` with `run_id`, full `source_sha`, and actual manual review:
 
 ```json
 {
-  "sourceSha": "<exact-candidate-SHA>",
+  "sourceSha": "<exact-main-candidate-SHA>",
   "reviewer": "<dispatch-actor-login>",
   "affectedFlow": "Meal planner save and reload",
   "desktopWidth": 1280,
   "phoneWidth": 390,
-  "keyboardFocus": "passed"
+  "keyboardFocus": "passed",
+  "stagingReview": {
+    "sourceSha": "<reviewed-staging-SHA>",
+    "deploymentId": "<reviewed-staging-ledger-ID>"
+  }
 }
 ```
 
-These fields record a **human assertion**, not an automated browser result. Desktop width must be at least 1024; phone width 320–480. Include no account identifiers, screenshots, cookies, or personal records in the text.
+Review evidence records a **human assertion**, not an automated proof or a claim that the staging SHA equals the release merge SHA. Check the staging-to-main diff and review relevant merge changes. For a justified direct-to-main emergency hotfix or first bootstrap without staging review, replace `stagingReview` with a specific `hotfixReason`; never invent a staging visit. Desktop width must be at least 1024, phone width 320–480. Include no private account identifiers, screenshots, cookies, or health records.
 
-Before approval, a production-credential-free job qualifies candidate and current production artifacts on disposable PostgreSQL: start the previous schema/Worker, save a record, migrate, read the old workspace, write candidate food/request/grocery/training records, then make the old Worker read and mutate the entire document without loss and have the candidate read it again. Applied SQL cannot be rewritten or removed.
+After the release merge, synchronize main back into staging before the next release. For diverged branches, base a temporary sync branch on current staging, merge main into it, pass CI, and merge its PR into staging; direct main-to-staging PRs can otherwise fail strict up-to-date protection. Use merge commits for both promotion and synchronization.
 
-Review the plan's exact artifact/source/digests, baseline/schema IDs, configuration and manual evidence, then approve `production`. Effects are serialized. A different baseline/schema journal or execution attempt invalidates the plan. Normal promotion uploads the prebuilt Worker with `--no-bundle`, journals the schema attempt, runs the packaged migrator, and switches 100% traffic to the exact returned version ID. There is no application rebuild. Temporary Wrangler state lives outside the verified artifact; payload digests are rechecked at effect boundaries. Bootstrap separately migrates and creates the first Worker with the preserved secrets.
+A production-credential-free plan qualifies the candidate and current pair on disposable PostgreSQL: save records through the previous pair, migrate, exercise old frontend/new backend, write candidate food/request/grocery/training records, then verify new frontend/old backend and the recovered pair read/mutate them without loss. Representative fixtures are not proof for every possible future document. Applied SQL cannot be removed or rewritten.
 
-Production migrations use only `DATABASE_URL_UNPOOLED` on the controlled runner; no Worker request writes schema. Back up and exercise changes on an isolated branch first. The database-preview workflow remains schema-only/database-only; it does not provide application/Auth previews.
+Review exact source/artifact/digests, baseline/schema IDs, runtime revision and human evidence, then approve `production`. Serialized effects recheck the baseline and execution run/attempt. Both versions upload before the schema journal and packaged migration; backend traffic switches first, a `backend-deployed` receipt preserves partial progress, and frontend traffic switches second. Only confirmed native version IDs and public checks produce public success. There is no atomic cross-Worker switch; qualification covers the intermediate combinations.
 
 ### Verify, operate, and recover
 
-Public checks verify the exact native `X-Corner-Version` at `/api/health`, canonical origin/assets/reset deep links, security headers, and anonymous/cross-origin boundaries. Health alone does not prove database/Auth availability, actual inbox delivery, or recovery. Release states remain distinct: `schema-attempted`, `deployed`, `public-passed`, then either routine `complete` or protected `operational-validated`.
+Public checks require both `X-Corner-Version` and `X-Corner-Frontend-Version` identities, canonical origin/assets/reset links, security headers, and anonymous/cross-origin boundaries. Health does not prove database/Auth availability, inbox delivery, Access policy completeness, or human review.
 
-First release, recovery, and changes outside ordinary web/UI paths—including Auth/origin/routing/secrets/persistence/schema/compatibility changes—require the real account, verification-code, save/reload, sign-out, isolation, and password-reset scenario in **Verify the deployment** below. Dispatch **Record production operational validation** on `main` with the exact current `deployment_id` and nonsecret JSON containing matching `sourceSha`, `versionId`, dispatch actor as `reviewer`, and `accountAccess`, `saveReload`, `recovery`, `authOriginRoutingSecretsPersistence` each `"passed"`. A protected reviewer approves it, public checks run again, and only then is the current version recorded operationally validated. A stale deployment or incomplete assertion fails. This records human evidence, not simulated real-email success.
+States remain distinct: `schema-attempted`, `backend-deployed`, `deployed`, `public-passed`, then staging/routine production `complete` or production `operational-validated`. Migration failure leaves traffic unchanged and retains the possible schema advance. Frontend failure retains backend-only progress; public failure leaves the deployed pair incomplete.
 
-Routine completion reuses verification ownership rules **per changed path**: auth/session/bootstrap clients, dependency manifests, and build/configuration controls are not ordinary UI. Combining ordinary web and shared-UI source alone remains routine. This is a path policy, not semantic diff analysis: classify new boundary surfaces explicitly and advance the bindings revision for Auth/routing/configuration changes.
+First production release, recovery, and nonroutine Auth/origin/routing/secrets/persistence/schema changes require **Verify the deployment** below. Dispatch **Record production operational validation** on `main` for the exact current deployment with matching `sourceSha`, `versionId`, `frontendVersionId`, dispatch actor as `reviewer`, and `accountAccess`, `saveReload`, `recovery`, `authOriginRoutingSecretsPersistence` each `"passed"`. A protected human approves; public checks rerun before human completion is recorded.
 
-Workers Logs are enabled, but automatic invocation logs are disabled to avoid retaining reset-link query tokens. Do not log cookies, request bodies, credentials, or health-related records. Inspect failures using Cloudflare's dashboard without publishing private logs.
+For staging public-boundary repair without code/schema changes, dispatch **Deploy persistent staging** on `staging` with only `validate_deployment_id` set to the exact current deployed/public-passed ID. Access-authenticated checks must pass again before `complete`; this grants no production approval. A backend-only record cannot be completed this way. Routine production completion uses the existing conservative per-path classifier, not semantic diff analysis.
 
-Keep Neon backups and matching application keys; Workers have no durable local data directory. Never use generic Worker history rollback as proof of database compatibility. Dispatch the release workflow with explicit `rollback_deployment_id` pointing to a completed, qualified Corner production record; leave normal candidate inputs empty and bind manual review to the target SHA. Recovery requalifies the target against the **current attempted schema artifact**, requires matching configuration, and scans current persisted workspace documents read-only in bounded batches through the target validator. Unknown migration/data loss, missing validators/artifacts, or incompatible configuration block recovery. Code recovery never reverses SQL; database restore is a separately controlled backup operation.
+Recovery explicitly selects `rollback_deployment_id` from that environment's completed qualified ledger. Both historical Worker IDs and artifact bytes must remain available; expired artifacts/versions block recovery. Requalification uses the **current attempted schema**, requires matching effective/deployment configuration, verifies the recorded live pair, and scans persisted workspace documents read-only through the target validator. It restores code only, never SQL or old data.
 
-The document scan is a consistent snapshot, not write-exclusive: it does not validate writes occurring afterward. For recovery across potentially incompatible state/schema formats, quiesce and drain writers before the scan and keep them stopped through cutover; if that boundary cannot be established, use forward repair instead. The workflow does not implement an automatic write pause, and representative compatibility fixtures are not a proof for every possible future document.
+The document scan is a snapshot, not an automatic writer pause. For potentially incompatible schema/state recovery, quiesce and drain writers through cutover; if that boundary cannot be established, use forward repair. Unknown provider responses or live version drift require operator inspection of both actual Worker deployments and schema/traffic ledgers—not invented receipts, blind retry, or bootstrap over an existing Worker. A partial first bootstrap without a previous complete pair is an operator-reconciliation case.
 
-On a migration failure, traffic does not switch; the schema-attempt journal remains. On public failure, deployment remains recorded but incomplete; repair the public boundary and use protected operational validation, or choose an explicitly qualified recovery. On a lost provider response, inspect actual Cloudflare version/traffic and the schema/deployment ledger before acting; never invent a successful receipt or retry bootstrap over an untracked Worker. Resolve that unknown external state under controlled operator recovery before preparing another release. Retain artifacts referenced by production/recovery records beyond ordinary CI retention; an expired reference intentionally blocks automation.
+Never reset persistent staging as a routine repair. Back up production/staging databases and matching keys independently. Database restore is a separate controlled operation with explicit data-loss decisions. Retain old SQLite backups. Disable automatic invocation logs to avoid retaining reset query tokens; never log private request bodies, cookies, or records.
 
-Before Node-to-Workers cutover, stop new work and shut down the old process; do not run it against the same database or transfer live in-memory tasks. Hosted AI remains disabled, including when old local grants exist.
-
-References: [Workers Static Assets](https://developers.cloudflare.com/workers/static-assets/), [PostgreSQL connectivity](https://developers.cloudflare.com/workers/tutorials/postgres/), [Worker secrets](https://developers.cloudflare.com/workers/configuration/secrets/), [custom domains](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/), [rollback](https://developers.cloudflare.com/workers/configuration/versions-and-deployments/rollbacks/).
+References: [Workers Static Assets](https://developers.cloudflare.com/workers/static-assets/), [PostgreSQL connectivity](https://developers.cloudflare.com/workers/tutorials/postgres/), [Worker secrets](https://developers.cloudflare.com/workers/configuration/secrets/), [custom domains](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/), [version recovery](https://developers.cloudflare.com/workers/configuration/versions-and-deployments/rollbacks/).
 
 ## Single-server Docker/Caddy deployment
 

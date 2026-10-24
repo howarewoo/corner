@@ -16,10 +16,12 @@ async function fixture(t, migration = 'CREATE TABLE example (id int);') {
     'assets/index.html': '<html>artifact</html>',
     'migration/dist/migrate.mjs': 'export async function migrate() { throw new Error("fixture is not executable qualification"); }',
     'migration/migrations/001_example.sql': migration,
-    'wrangler.json': JSON.stringify({ name: 'corner', main: 'worker/worker.js', no_bundle: true, compatibility_date: '2026-10-19', compatibility_flags: ['nodejs_compat'], assets: { directory: 'assets' } }),
+    'wrangler.json': JSON.stringify({ name: 'corner-server', main: 'worker/worker.js', no_bundle: true, compatibility_date: '2026-10-19', compatibility_flags: ['nodejs_compat'], workers_dev: false, preview_urls: false, assets: { directory: 'assets' }, version_metadata: { binding: 'CF_VERSION_METADATA' } }),
+    'frontend/worker.js': 'export default { fetch() { return new Response("frontend"); } };',
+    'frontend/wrangler.json': JSON.stringify({ name: 'corner-web', main: 'worker.js', no_bundle: true, compatibility_date: '2026-10-19', compatibility_flags: ['nodejs_compat'], workers_dev: false, preview_urls: false, assets: { directory: '../assets' }, services: [{ binding: 'SERVER', service: 'corner-server' }], version_metadata: { binding: 'CF_VERSION_METADATA' } }),
   };
   for (const [name, bytes] of Object.entries(payload)) { await mkdir(join(candidate, name, '..'), { recursive: true }); await writeFile(join(candidate, name), bytes); }
-  const manifest = { format: 1, sourceSha: 'a'.repeat(40), lockfileSha256: 'b'.repeat(64), nodeVersion: 'v24.15.0', wranglerVersion: '4.152.0', configurationEntry: 'wrangler.json', configurationSha256: hash(payload['wrangler.json']), workerEntry: 'worker/worker.js', workerName: 'corner', migrationEntry: 'migration/dist/migrate.mjs', files: Object.fromEntries(Object.entries(payload).map(([name, bytes]) => [name, hash(bytes)])), migrations: [{ name: '001_example.sql', sha256: hash(migration) }] };
+  const manifest = { format: 2, sourceSha: 'a'.repeat(40), lockfileSha256: 'b'.repeat(64), nodeVersion: 'v24.15.0', wranglerVersion: '4.152.0', configurationEntry: 'wrangler.json', configurationSha256: hash(payload['wrangler.json']), workerEntry: 'worker/worker.js', workerName: 'corner-server', frontendName: 'corner-web', frontendEntry: 'frontend/worker.js', frontendConfigurationEntry: 'frontend/wrangler.json', frontendConfigurationSha256: hash(payload['frontend/wrangler.json']), migrationEntry: 'migration/dist/migrate.mjs', files: Object.fromEntries(Object.entries(payload).map(([name, bytes]) => [name, hash(bytes)])), migrations: [{ name: '001_example.sql', sha256: hash(migration) }] };
   await writeFile(join(candidate, 'manifest.json'), JSON.stringify(manifest));
   return { directory, candidate, manifest };
 }
@@ -86,4 +88,15 @@ test('removing or rewriting a qualified prior migration fails compatibility befo
   const report = join(directory, 'qualification.json');
   await assert.rejects(qualifyArtifact({ candidate, previous: prior.candidate, report }), /removed or rewrote/);
   await assert.rejects(readFile(report), /ENOENT/);
+});
+
+test('frontend binding changes cannot escape the qualified backend, even with matching payload digests', async t => {
+  const { candidate, manifest } = await fixture(t);
+  const config = JSON.parse(await readFile(join(candidate, manifest.frontendConfigurationEntry), 'utf8'));
+  config.services[0].service = 'unqualified-backend';
+  const bytes = JSON.stringify(config);
+  await writeFile(join(candidate, manifest.frontendConfigurationEntry), bytes);
+  manifest.frontendConfigurationSha256 = manifest.files[manifest.frontendConfigurationEntry] = hash(bytes);
+  await writeFile(join(candidate, 'manifest.json'), JSON.stringify(manifest));
+  await assert.rejects(verifyArtifact(candidate), /frontend configuration or backend binding/);
 });

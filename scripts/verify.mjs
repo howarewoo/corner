@@ -21,7 +21,7 @@ export function classifyChanges(paths) {
     if (documentation) profile = 'docs';
     else if (!control && path.startsWith('apps/design/')) profile = 'design';
     else if (!control && path.startsWith('packages/ui/src/')) profile = 'ui';
-    else if (!control && path.startsWith('apps/web/src/') && !/(^|\/)(main|api|account-access|agent-panel)\.[^.]+$/.test(path) && !/(auth|session|connection|proxy|runtime-config)/i.test(path)) profile = 'web';
+    else if (!control && path.startsWith('apps/web/src/') && !/(^|\/)(main|api|account-access|agent-panel|worker)\.[^.]+$/.test(path) && !/(auth|session|connection|proxy|runtime-config)/i.test(path)) profile = 'web';
     else if (!control && path.startsWith('apps/web/tests/') && !/(account|connection|vite)/i.test(path)) profile = 'web';
     selected.add(profile);
     reasons.push(`${path}: ${profile}${control ? ' (verification policy)' : ''}`);

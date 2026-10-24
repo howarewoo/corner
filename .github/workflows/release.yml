@@ -10,14 +10,14 @@ on:
         description: Exact candidate main SHA (not used for rollback)
         type: string
       bootstrap:
-        description: Explicit first Worker creation; never an artifact fallback
+        description: Explicit first Worker-pair creation; never an artifact fallback
         type: boolean
         default: false
       rollback_deployment_id:
         description: Explicit completed qualified production deployment ID to recover
         type: string
       manual_review:
-        description: 'Nonsecret JSON: sourceSha, reviewer (dispatch actor), affectedFlow, desktopWidth, phoneWidth, keyboardFocus:"passed"'
+        description: 'Nonsecret JSON: sourceSha, reviewer, affectedFlow, desktopWidth, phoneWidth, keyboardFocus:"passed", and stagingReview:{sourceSha,deploymentId} or hotfixReason'
         type: string
         required: true
 
@@ -106,7 +106,7 @@ jobs:
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
-      - name: Recheck approved baseline, migrate, and promote exact Worker version
+      - name: Recheck approved baseline, migrate, and promote exact Worker pair
         run: node scripts/release.mjs promote
         env:
           GH_TOKEN: ${{ github.token }}

@@ -7,6 +7,7 @@ import { verifyRun, validateConfiguration, validateReceipt, assertBaseline, roll
 
 const source = 'a'.repeat(40), previousSource = 'b'.repeat(40), candidateDigest = 'c'.repeat(64), previousDigest = 'd'.repeat(64), configurationSha256 = 'e'.repeat(64);
 const versionId = '12345678-1234-1234-1234-123456789012', oldVersion = 'abcdefab-abcd-abcd-abcd-abcdefabcdef';
+const frontendVersionId = '22345678-1234-1234-1234-123456789012', oldFrontendVersion = 'bbcdefab-abcd-abcd-abcd-abcdefabcdef';
 const configuration = JSON.stringify({ CORNER_ORIGIN: 'https://corner.example.com', NEON_AUTH_REQUIRE_EMAIL_VERIFICATION: 'true' });
 const saved = { ...process.env };
 process.env.CORNER_PRODUCTION_BINDINGS_REVISION = 'test-config-1';
@@ -17,15 +18,17 @@ process.env.GITHUB_ACTOR = 'reviewer';
 delete process.env.CORNER_PRODUCTION_ORIGIN;
 const config = validateConfiguration(configuration);
 const report = { format: 1, sourceSha: source, candidateDigest, previousDigest, bootstrap: false, passed: true };
-const receipt = { format: 1, kind: 'corner-production', phase: 'complete', runId: '1', artifactId: '2', sourceSha: previousSource, candidateDigest: previousDigest, configurationSha256, runtimeConfigurationDigest: config.digest, versionId: oldVersion, qualification: { ...report, sourceSha: previousSource, candidateDigest: previousDigest } };
-const manifest = { sourceSha: source, configurationSha256, configurationEntry: 'wrangler.json', workerEntry: 'worker/worker.js', migrationEntry: 'migration/dist/migrate.mjs', workerName: 'corner', migrations: [{ name: '001_corner.sql', sha256: 'f'.repeat(64) }] };
+const receipt = { format: 2, kind: 'corner-production', phase: 'complete', runId: '1', artifactId: '2', sourceSha: previousSource, candidateDigest: previousDigest, configurationSha256, frontendConfigurationSha256: configurationSha256, runtimeConfigurationDigest: config.digest, versionId: oldVersion, frontendVersionId: oldFrontendVersion, qualification: { ...report, sourceSha: previousSource, candidateDigest: previousDigest } };
+const manifest = { sourceSha: source, configurationSha256, frontendConfigurationSha256: configurationSha256, configurationEntry: 'wrangler.json', workerEntry: 'worker/worker.js', migrationEntry: 'migration/dist/migrate.mjs', workerName: 'corner-server', frontendName: 'corner-web', frontendEntry: 'frontend/worker.js', frontendConfigurationEntry: 'frontend/wrangler.json', migrations: [{ name: '001_corner.sql', sha256: 'f'.repeat(64) }] };
 manifest.wranglerVersion = JSON.parse(await readFile(new URL('../../apps/server/node_modules/wrangler/package.json', import.meta.url), 'utf8')).version;
-const review = JSON.stringify({ sourceSha: source, reviewer: 'reviewer', affectedFlow: 'Meal planner save and reload', desktopWidth: 1280, phoneWidth: 390, keyboardFocus: 'passed' });
+const review = JSON.stringify({ sourceSha: source, reviewer: 'reviewer', affectedFlow: 'Meal planner save and reload', desktopWidth: 1280, phoneWidth: 390, keyboardFocus: 'passed', stagingReview: { sourceSha: previousSource, deploymentId: '5' } });
 const work = await mkdtemp(join(tmpdir(), 'corner-release-tests-'));
-const packagedConfig = { name: 'corner', main: manifest.workerEntry, no_bundle: true, assets: { directory: 'assets', binding: 'ASSETS' }, workers_dev: false, preview_urls: false };
+const packagedConfig = { name: 'corner-server', main: manifest.workerEntry, no_bundle: true, assets: { directory: 'assets', binding: 'ASSETS' }, workers_dev: false, preview_urls: false };
 for (const revision of [source, previousSource]) {
   await mkdir(join(work, revision));
   await writeFile(join(work, revision, 'wrangler.json'), JSON.stringify(packagedConfig));
+  await mkdir(join(work, revision, 'frontend'));
+  await writeFile(join(work, revision, manifest.frontendConfigurationEntry), JSON.stringify({ name: 'corner-web', main: 'worker.js', no_bundle: true, assets: { directory: '../assets' }, services: [{ binding: 'SERVER', service: 'corner-server' }] }));
 }
 after(async () => { await rm(work, { recursive: true, force: true }); for (const key of Object.keys(process.env)) if (!(key in saved)) delete process.env[key]; Object.assign(process.env, saved); });
 const run = { id: 1, event: 'push', head_branch: 'main', status: 'completed', conclusion: 'success', path: '.github/workflows/ci.yml', head_sha: source, head_repository: { full_name: 'owner/corner' } };
@@ -35,14 +38,23 @@ function fixture(overrides = {}) {
   payload.manualReview = JSON.parse(review);
   payload.executionRunAttempt = '1';
   const github = {
-    baseline: async () => ({ id: 10, payload: receipt }), schema: async () => null,
+    baseline: async () => records.at(-1)?.phase === 'backend-deployed' ? { id: 20 + records.length, payload: records.at(-1) } : { id: 10, payload: receipt }, schema: async () => null,
     approval: async environment => ({ runId: '90', attempt: '1', environment, reviewer: 'protected-owner' }),
     api: async path => { if (path.startsWith('deployments/')) return { id: 11, environment: 'production-plan', payload }; if (path.includes('/artifacts?')) return { artifacts: [{ id: 2, name: `corner-release-${source}`, expired: false }] }; if (path.startsWith('actions/runs/')) return run; if (path.startsWith('compare/')) return { status: 'ahead', files: [{ filename: 'apps/web/src/main.tsx' }] }; throw new Error(`Unexpected API ${path}`); },
     artifact: async reference => ({ directory: join(work, reference.sourceSha), manifest: { ...manifest, sourceSha: reference.sourceSha }, digest: reference.sourceSha === source ? candidateDigest : previousDigest, qualification: { ...report, sourceSha: reference.sourceSha, candidateDigest: reference.sourceSha === source ? candidateDigest : previousDigest } }),
     record: async payload => { effects.push(payload.phase); records.push(payload); return { id: 20 + records.length, payload }; },
   };
-  const execute = (binary, args) => { effects.push(args.includes('upload') ? 'upload' : args.includes('--apply') ? 'migrate' : 'deploy'); return `Worker Version ID: ${versionId}\n`; };
-  const cf = async (path, { missing = false } = {}) => missing ? null : path.endsWith('/settings') ? { bindings: ['DATABASE_URL', 'NEON_AUTH_BASE_URL', 'BETTER_AUTH_SECRET', 'CORNER_TOKEN_ENCRYPTION_KEY'].map(name => ({ name, type: 'secret_text' })) } : { deployments: [{ versions: [{ version_id: effects.includes('deploy') ? versionId : oldVersion, percentage: 100 }] }] };
+  const execute = (binary, args) => {
+    const frontend = args.some(value => String(value).includes('wrangler-frontend'));
+    effects.push(args.includes('upload') ? frontend ? 'upload-frontend' : 'upload' : args.includes('--apply') ? 'migrate' : frontend ? 'deploy-frontend' : 'deploy');
+    return `Worker Version ID: ${frontend ? frontendVersionId : versionId}\n`;
+  };
+  const cf = async (path, { missing = false } = {}) => {
+    if (missing) return null;
+    if (path.endsWith('/settings')) return { bindings: ['DATABASE_URL', 'NEON_AUTH_BASE_URL', 'BETTER_AUTH_SECRET', 'CORNER_TOKEN_ENCRYPTION_KEY'].map(name => ({ name, type: 'secret_text' })) };
+    const frontend = path.includes('corner-web');
+    return { deployments: [{ versions: [{ version_id: frontend ? effects.includes('deploy-frontend') ? frontendVersionId : oldFrontendVersion : effects.includes('deploy') ? versionId : oldVersion, percentage: 100 }] }] };
+  };
   return { github, payload, effects, records, options: { github, planId: '11', configuration, work, execute, cf, verify: async () => ({ digest: candidateDigest }), checkPublic: async () => { effects.push('public'); }, ...overrides } };
 }
 
@@ -79,6 +91,7 @@ test('web auth and build changes require operational completion', async () => {
     [['apps/web/vite.config.ts'], 'public-passed'],
     [['packages/ui/package.json'], 'public-passed'],
     [['apps/server/src/worker.ts'], 'public-passed'],
+    [['apps/web/src/worker.ts'], 'public-passed'],
     [['apps/server/migrations/002.sql'], 'public-passed'],
   ];
   for (const [files, phase] of cases) {
@@ -127,7 +140,7 @@ test('plan persists exact real artifact and baseline qualification before approv
 test('migration failure journals schema attempt and prevents traffic/public checks', async () => {
   const f = fixture(); f.options.execute = (binary, args) => { if (args.includes('--apply')) { f.effects.push('migration-failed'); throw new Error('migration failed'); } f.effects.push('upload'); return `Worker Version ID: ${versionId}`; };
   await assert.rejects(promote(f.options), /migration failed/);
-  assert.deepEqual(f.effects, ['upload', 'schema-attempted', 'migration-failed']);
+  assert.deepEqual(f.effects, ['upload', 'upload', 'schema-attempted', 'migration-failed']);
 });
 test('upload failure cannot migrate or deploy', async () => {
   const f = fixture(); f.options.execute = () => { throw new Error('upload failed'); };
@@ -137,9 +150,10 @@ test('routine promotion uploads exact prebuilt config, migrates once, deploys ex
   const f = fixture(); const commands = [];
   const execute = f.options.execute; f.options.execute = (binary, args, options) => { commands.push([binary, args]); return execute(binary, args, options); };
   const result = await promote(f.options);
-  assert.deepEqual(f.effects, ['upload', 'schema-attempted', 'migrate', 'deploy', 'deployed', 'public', 'public-passed', 'complete']);
+  assert.deepEqual(f.effects, ['upload', 'upload-frontend', 'schema-attempted', 'migrate', 'deploy', 'backend-deployed', 'deploy-frontend', 'deployed', 'public', 'public-passed', 'complete']);
   assert.equal(result.payload.versionId, versionId);
-  assert(commands[0][1].includes('--no-bundle')); assert(commands[2][1].includes(`${versionId}@100%`));
+  assert.equal(result.payload.frontendVersionId, frontendVersionId);
+  assert(commands[0][1].includes('--no-bundle')); assert(commands[3][1].includes(`${versionId}@100%`));
   assert(!commands.some(([, args]) => args.includes('build') || args.includes('triggers')));
   const configurationPath = commands[0][1][commands[0][1].indexOf('--config') + 1];
   assert.notEqual(dirname(configurationPath), join(work, source), 'Wrangler metadata must remain outside the payload.');
@@ -202,7 +216,7 @@ test('bootstrap validates all required bindings before any production mutation',
   } finally { if (before === undefined) delete process.env.CORNER_WORKER_SECRETS_JSON; else process.env.CORNER_WORKER_SECRETS_JSON = before; }
 });
 test('explicit bootstrap migrates before first creation and remains operationally incomplete', async () => {
-  const f = fixture(); f.github.baseline = async () => null;
+  const f = fixture(); f.github.baseline = async () => f.records.at(-1)?.phase === 'backend-deployed' ? { id: 20 + f.records.length, payload: f.records.at(-1) } : null;
   Object.assign(f.payload, { bootstrap: true, baselineId: null, operatorRequired: true, qualification: { ...report, bootstrap: true, previousDigest: null } });
   const before = { database: process.env.DATABASE_URL, worker: process.env.CORNER_WORKER_SECRETS_JSON };
   process.env.DATABASE_URL = 'postgresql://synthetic.invalid/unused';
@@ -210,8 +224,9 @@ test('explicit bootstrap migrates before first creation and remains operationall
   const invocations = [];
   f.options.execute = (binary, args) => {
     invocations.push(args);
-    f.effects.push(args.includes('--apply') ? 'migrate' : 'deploy');
-    return `Current Version ID: ${versionId}`;
+    const frontend = args.some(value => String(value).includes('wrangler-frontend'));
+    f.effects.push(args.includes('--apply') ? 'migrate' : frontend ? 'deploy-frontend' : 'deploy');
+    return `Current Version ID: ${frontend ? frontendVersionId : versionId}`;
   };
   try {
     const cf = f.options.cf;
@@ -232,7 +247,7 @@ test('explicit bootstrap migrates before first creation and remains operationall
 });
 test('missing inherited secret bindings and live version drift block before migration', async () => {
   const f = fixture();
-  f.options.cf = async path => path.endsWith('/settings') ? { bindings: [] } : { deployments: [{ versions: [{ version_id: oldVersion, percentage: 100 }] }] };
+  f.options.cf = async path => path.endsWith('/settings') ? { bindings: [] } : { deployments: [{ versions: [{ version_id: path.includes('corner-web') ? oldFrontendVersion : oldVersion, percentage: 100 }] }] };
   await assert.rejects(promote(f.options), /missing required/); assert.deepEqual(f.effects, []);
   f.options.cf = async () => ({ deployments: [{ versions: [{ version_id: versionId, percentage: 100 }] }] });
   await assert.rejects(promote(f.options), /drifted/); assert.deepEqual(f.effects, []);
@@ -240,7 +255,7 @@ test('missing inherited secret bindings and live version drift block before migr
 test('protected operational recovery rechecks exact version, records public evidence and then human evidence separately', async () => {
   const f = fixture();
   f.github.baseline = async () => ({ id: 10, payload: { ...receipt, phase: 'deployed', origin: config.origin } });
-  const evidence = JSON.stringify({ sourceSha: previousSource, versionId: oldVersion, reviewer: 'reviewer', accountAccess: 'passed', saveReload: 'passed', recovery: 'passed', authOriginRoutingSecretsPersistence: 'passed' });
+  const evidence = JSON.stringify({ sourceSha: previousSource, versionId: oldVersion, frontendVersionId: oldFrontendVersion, reviewer: 'reviewer', accountAccess: 'passed', saveReload: 'passed', recovery: 'passed', authOriginRoutingSecretsPersistence: 'passed' });
   const result = await validateOperational({ github: f.github, deploymentId: '10', evidence, checkPublic: async (origin, version) => { assert.equal(origin, config.origin); assert.equal(version, oldVersion); f.effects.push('public'); } });
   assert.deepEqual(f.effects, ['public', 'public-passed', 'operational-validated']);
   assert.equal(result.payload.evidence.kind, 'human-attestation-not-automated-proof');
@@ -294,4 +309,104 @@ test('post-upload payload changes block before migrations or traffic changes', a
   const f = fixture(); f.options.verify = async () => ({ digest: previousDigest });
   await assert.rejects(promote(f.options), /Immutable payload changed/);
   assert.deepEqual(f.effects, ['upload']);
+});
+
+test('frontend failure retains backend progress and cannot claim a deployed pair', async () => {
+  const f = fixture();
+  const execute = f.options.execute;
+  f.options.execute = (binary, args, options) => {
+    if (args.includes('deploy') && args.some(value => String(value).includes('wrangler-frontend'))) throw new Error('frontend switch failed');
+    return execute(binary, args, options);
+  };
+  await assert.rejects(promote(f.options), /frontend switch failed/);
+  assert.equal(f.records.at(-1).phase, 'backend-deployed');
+  assert.equal(f.records.at(-1).versionId, versionId);
+  assert.equal(f.records.at(-1).frontendVersionId, oldFrontendVersion);
+  assert.equal(f.records.at(-1).pendingFrontendVersionId, frontendVersionId);
+  assert(!f.records.some(row => ['deployed', 'public-passed', 'complete'].includes(row.phase)));
+});
+
+test('frontend drift blocks a coordinated release before uploads or migration', async () => {
+  const f = fixture();
+  const cf = f.options.cf;
+  f.options.cf = async (path, options) => path.includes('corner-web') ? { deployments: [{ versions: [{ version_id: frontendVersionId, percentage: 100 }] }] } : cf(path, options);
+  await assert.rejects(promote(f.options), /drifted/);
+  assert.deepEqual(f.effects, []);
+});
+
+test('staging accepts only current successful staging CI and fixed nonproduction targets, without production approval', async () => {
+  const before = { ...process.env };
+  try {
+    process.env.CORNER_RELEASE_ENVIRONMENT = 'staging';
+    process.env.CORNER_STAGING_BINDINGS_REVISION = 'test-config-1';
+    process.env.CORNER_STAGING_ACCESS_CLIENT_ID = 'synthetic-access-id';
+    process.env.CORNER_STAGING_ACCESS_CLIENT_SECRET = 'synthetic-access-secret';
+    assert.throws(() => verifyRun(run, source), /push-to-staging/);
+    verifyRun({ ...run, head_branch: 'staging' }, source);
+    assert.throws(() => validateReceipt(receipt), /paired release receipt/);
+    const f = fixture();
+    Object.assign(f.payload, { kind: 'corner-staging', manualReview: null });
+    f.github.baseline = async () => f.records.at(-1)?.phase === 'backend-deployed' ? { id: 20 + f.records.length, payload: f.records.at(-1) } : { id: 10, payload: { ...receipt, kind: 'corner-staging' } };
+    f.github.approval = async () => { throw new Error('Production approval must never be queried for staging'); };
+    const api = f.github.api;
+    f.github.api = async path => path === 'git/ref/heads/staging' ? { object: { sha: source } } : path === 'deployments/11' ? { environment: 'staging-plan', payload: f.payload } : api(path);
+    const result = await promote(f.options);
+    assert.equal(result.payload.phase, 'complete');
+    assert.equal(result.payload.approval.kind, 'automatic-staging');
+    const serverConfig = JSON.parse(await readFile(join(work, 'wrangler-deploy.json'), 'utf8'));
+    const frontendConfig = JSON.parse(await readFile(join(work, 'wrangler-frontend.json'), 'utf8'));
+    assert.equal(serverConfig.name, 'corner-server-staging');
+    assert.equal(frontendConfig.name, 'corner-web-staging');
+    assert.deepEqual(frontendConfig.services, [{ binding: 'SERVER', service: 'corner-server-staging' }]);
+    f.effects.length = 0;
+    f.github.api = async path => path === 'git/ref/heads/staging' ? { object: { sha: previousSource } } : { environment: 'staging-plan', payload: f.payload };
+    await assert.rejects(promote(f.options), /Superseded/);
+    assert.deepEqual(f.effects, []);
+    await assert.rejects(plan({ ...f.options, sourceSha: source }), /Superseded/);
+  } finally {
+    for (const key of Object.keys(process.env)) if (!(key in before)) delete process.env[key];
+    Object.assign(process.env, before);
+  }
+});
+
+test('production manual review requires staging evidence or an explicit emergency exception', () => {
+  const value = JSON.parse(review);
+  delete value.stagingReview;
+  assert.throws(() => manualAttestation(JSON.stringify(value), source, 'reviewer'), /reviewed staging/);
+  value.hotfixReason = 'Urgent production authentication repair';
+  assert.equal(manualAttestation(JSON.stringify(value), source, 'reviewer').hotfixReason, value.hotfixReason);
+});
+
+test('a repaired staging boundary completes only the exact recorded pair and never requests production approval', async () => {
+  const before = { ...process.env };
+  try {
+    process.env.CORNER_RELEASE_ENVIRONMENT = 'staging';
+    process.env.CORNER_STAGING_ACCESS_CLIENT_ID = 'synthetic-access-id';
+    process.env.CORNER_STAGING_ACCESS_CLIENT_SECRET = 'synthetic-access-secret';
+    const f = fixture();
+    const current = { id: 40, payload: { ...receipt, kind: 'corner-staging', phase: 'deployed', origin: config.origin } };
+    f.github.baseline = async () => current;
+    f.github.approval = async () => { throw new Error('No production authority'); };
+    let observed;
+    await assert.rejects(validateOperational({ github: f.github, deploymentId: '39' }), /exact current/);
+    const result = await validateOperational({ github: f.github, deploymentId: '40', checkPublic: async (origin, backend, _fetch, frontend, access) => {
+      observed = { origin, backend, frontend };
+      assert.equal(access['CF-Access-Client-Id'], 'synthetic-access-id');
+    } });
+    assert.deepEqual(observed, { origin: config.origin, backend: oldVersion, frontend: oldFrontendVersion });
+    assert.equal(result.payload.phase, 'complete');
+    assert.equal(result.payload.evidence, undefined, 'Automated public recheck is not a human account attestation.');
+    current.payload.phase = 'backend-deployed';
+    await assert.rejects(validateOperational({ github: f.github, deploymentId: '40' }), /exact current/);
+  } finally {
+    for (const key of Object.keys(process.env)) if (!(key in before)) delete process.env[key];
+    Object.assign(process.env, before);
+  }
+});
+
+test('public checks refuse a stale frontend even when the backend version is correct', async () => {
+  const fetcher = async url => new URL(url).pathname.includes('sign-up')
+    ? Response.json({ code: 'ORIGIN_NOT_ALLOWED' }, { status: 403 })
+    : Response.json({ ok: true }, { headers: { 'X-Corner-Version': versionId, 'X-Corner-Frontend-Version': oldFrontendVersion } });
+  await assert.rejects(publicChecks(config.origin, versionId, fetcher, frontendVersionId), /frontend version identity/);
 });

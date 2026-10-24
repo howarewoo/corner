@@ -1,8 +1,26 @@
+# Persistent staging and qualified Worker pairs
+
+Added the persistent staging source workflow: ordinary feature PRs target staging, release PRs merge staging into main, and emergency main hotfixes merge back. Explicit admin configuration requires exact-tip full CI on both branches, protects both against deletion/force pushes, retains main-only human production approval, then switches the default to staging and disables automatic branch deletion.
+
+Removed per-feature Neon/Cloudflare preview automation and proxy code. Stable staging uses fixed staging Worker names, an approved-testers-only Access hostname, persistent synthetic records, and a schema-only branch in the existing Neon project with independent Auth/keys. The explicit initial baseline verifies empty copied schemas and checksummed migration history before ledger-only writes; it currently supports the initial `001_corner.sql` prefix.
+
+Immutable format-2 artifacts now contain both Worker bundles/configurations/assets. Promotion qualifies both components, records backend-only partial progress, verifies both native version identities, and recovers a compatible pair without reversing SQL. Staging follows successful current-head staging CI; production remains separately approved. Public-boundary repair can recheck the exact staging pair without consuming production approval.
+
+Observed on Node 24.21.0 with disposable PostgreSQL 17 and local HTTPS Auth fixtures: workspace type checks/builds and both Worker dry runs passed; 11/11 server and 4/4 web test files passed; 56 native tooling regressions passed; lint passed with 47 existing warnings; all four current workflows passed actionlint. Actual production HTTP, paired workerd, and credential-free development-stack smokes passed. The development snapshot initially lacked compiled server output/workspace dependency links and selected an unsupported terminal Node; completing those isolated prerequisites and selecting Node 24 corrected the checks without application changes.
+
+Local packaged bootstrap and intermediate/recovery-path smokes passed using the current payload in both release slots. This exercises pair/migration/recovery mechanics, **not compatibility with a distinct historical production release**. Worker smokes emitted private-safe `CORNER_DATABASE_CONNECTION_FAILED` diagnostics despite passing account/persistence assertions; clean live-provider logs are not established.
+
+Functional review exposed a frontend gateway completion-policy hole; the added regression reproduced an erroneous routine `complete`, and the shared classifier now treats the frontend Worker as a runtime boundary requiring protected production operational validation. Branch guidance also requires post-release synchronization and a CI-qualified sync branch when persistent branches diverge.
+
+No live GitHub default/protection change, staging creation, Neon provisioning/migration, Access/domain/secret change, Worker deployment, feature-preview deletion, real inbox delivery, or model inference was performed. [HOSTING.md](HOSTING.md#one-time-protected-configuration-and-cutover-order) records the ordered live cutover and evidence gates. The historical preview and independently deployed frontend entries below are superseded operating models, not current instructions.
+
+---
+
 # Isolated Cloudflare branch Previews
 
 Added the required frontend `previews` configuration and pinned `preview:web` command. Branch Previews bind `SERVER` only to the dedicated `corner-server-preview` Worker; production continues to target `corner-server`. The backend's named `preview` environment uses a preview-only entrypoint and separately supplied Neon database/Auth/key secrets. An exact HTTPS-origin allowlist selects the existing hosted runtime's origin without weakening production's canonical-origin or write/session checks.
 
-Preview origins must also be registered with the nonproduction managed Auth service. Branch Previews share nonproduction accounts/data, not production resources. Missing origin configuration fails closed; unknown origins, wildcard/suffix/port mismatches, HTTP origins, and writes across different approved Preview origins remain rejected. [HOSTING.md](HOSTING.md#isolated-branch-previews) documents backend setup, isolated migrations/secrets, and separate production/Preview dashboard commands.
+Preview origins also needed registration with the nonproduction managed Auth service. This historical topology shared nonproduction accounts/data, not production resources; current staging setup is documented in [HOSTING.md](HOSTING.md#persistent-staging-database-and-auth).
 
 Observed on Node 24.21.0: all three Worker bundle dry runs, workspace type checks, lint (48 existing warnings), 11/11 server and 3/3 web test files, and 45 native CI/release regressions passed. Actual local workerd smokes passed for production and isolated-preview topologies with real service bindings, disposable PostgreSQL schemas, and local HTTPS Auth fixtures, including signup/cookies, saved writes/retries, sign-out, hosted AI restrictions, multiple approved Preview origins, and cross-origin rejection.
 

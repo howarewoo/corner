@@ -60,16 +60,13 @@ The build compiles `@packages/shared`, then builds `server` and `web` as separat
 | `pnpm run smoke:dev` | Actual two-app development proxy, session, and shared-catalog checks |
 | `pnpm start` | The compiled production server and built web app |
 | `pnpm run db:migrate` | Apply checked-in PostgreSQL migrations through `DATABASE_URL_UNPOOLED`, after a build |
-| `pnpm run build:workers` | Build all workspaces and dry-run frontend, production backend, and isolated preview backend bundles |
-| `pnpm run build:web:worker` | Build the web workspace and dry-run only the `corner-web` bundle |
-| `pnpm run deploy:web` | Deploy only `corner-web`, binding its API gateway to `corner-server` |
-| `pnpm run preview:web` | Deploy a branch Preview of `corner-web`, bound only to `corner-server-preview` |
-| `pnpm run build:server:preview` | Build the server/web dependencies and dry-run the isolated preview backend |
-| `pnpm run deploy:server:preview` | Deploy only the nonproduction `corner-server-preview` Worker |
+| `pnpm run db:baseline:staging` | Explicit verified migration-history baseline for a new empty schema-only staging branch; build first, private operator environment required |
+| `pnpm run build:workers` | Build all workspaces and dry-run the backend/frontend pair without deployment |
+| `pnpm run build:web:worker` | Build the web workspace and dry-run only the `corner-web` bundle; not an independent deployment path |
 | `pnpm run verify -- --plan` | Show conservative changed-path selection without running checks |
 | `pnpm run verify` | Run selected local checks; `-- --full` forces the complete qualification |
 | `pnpm run test:ci` | Native Node CI, release, and artifact regression tests |
-| `pnpm run smoke:workers` | Production and isolated-preview Worker topologies with real service bindings, disposable PostgreSQL, and HTTPS Auth fixtures, after `build:workers` |
+| `pnpm run smoke:workers` | Actual paired workerd runtime with service bindings, disposable PostgreSQL, and HTTPS Auth fixtures, after `build:workers` |
 
 For a focused build, use `pnpm run build --filter=server` or `pnpm run build --filter=web`. Turbo also builds their shared dependency. Each app declares its own dependencies; domain models and validation are imported through `@packages/shared/<module>` rather than relative paths into the other app.
 
@@ -187,7 +184,7 @@ Hosted mode requires an HTTPS origin, the Neon Postgres/Auth URLs, and independe
 
 Neon owns password recovery, verification codes, session expiry, and managed service rate limits. Corner retains its code-entry, reset-password, loading, and error screens, and requires a live managed session before every protected request. No real inbox delivery is implied by an enabled policy.
 
-For **Cloudflare Workers**, follow [HOSTING.md → Cloudflare Workers](HOSTING.md#cloudflare-workers). Deploy the frontend as `corner-web` using `apps/web/wrangler.jsonc` and the [dashboard build settings](HOSTING.md#cloudflare-dashboard-setup); it forwards same-origin API requests to the separate `corner-server` Worker through a service binding. `pnpm run build:web:worker` builds/dry-runs the frontend and `pnpm run deploy:web` publishes only that production Worker. Branch builds use `pnpm run preview:web` with the [isolated preview backend](HOSTING.md#isolated-branch-previews), never a production-backend fallback. Backend main CI packages a tested Worker, web assets, and standalone migrator; the approved backend release workflow promotes that exact artifact without rebuilding. Configure the frontend's canonical custom domain and preserve the server's application keys; backend bootstrap and operational validation are explicit. `pnpm run build:workers` builds/dry-runs all Worker bundles without publishing.
+For **Cloudflare Workers**, follow [HOSTING.md → Cloudflare Workers](HOSTING.md#cloudflare-workers). One immutable artifact contains both `corner-web` and `corner-server`; GitHub promotes the qualified pair without rebuilding. Persistent staging uses `corner-web-staging` and `corner-server-staging`, an Access-protected stable origin, and a schema-only branch in the same Neon project with independent Auth/keys. Feature branches are tested locally; no feature app/database previews are provisioned. Disable old independent Cloudflare Builds/Preview triggers. `pnpm run build:workers` builds/dry-runs both bundles without publishing. Live provisioning, protection changes, migrations, and preview-resource deletion follow the separate [cutover gates](HOSTING.md#one-time-protected-configuration-and-cutover-order).
 
 For a **server you control**, the same guide covers one Corner container behind Caddy. `scripts/init-hosted.mjs` creates independent private keys without printing or overwriting them; it does not create a cloud server or configure DNS or SMTP.
 
@@ -226,30 +223,32 @@ All non-documentation rows also run repository-wide lint.
 
 The required check is the unconditional `Test, build, and smoke check workspaces` job. This uses normal GitHub Actions repository-writer trust, not a workflow-specific unspoofable GitHub App gate. PR verification never receives Neon or production credentials. Dependency caches follow GitHub's branch/merge-ref isolation; no default-branch workflow dispatch executes PR code. Superseded PR runs cancel; successful command timings are retained as advisory artifacts, not authorization receipts.
 
-After merging the complete workflows and a successful full main run, privately supply an appropriately authorized repository-admin `GH_TOKEN`, then configure the full required check and protected production environments explicitly:
+After the complete foundation/workflows land on `main`, create persistent `staging` from that landed revision and obtain successful full push CI on both exact branch tips. Privately supply an authorized repository-admin `GH_TOKEN`, then inspect and apply the policy:
 
 ```bash
 pnpm run ci:configure -- --reviewer howarewoo
 pnpm run ci:configure -- --reviewer howarewoo --apply
 ```
 
-Without `--apply`, configuration only prints its proposal. Applying configures reviewer-protected, main-only `production` and `production-validation` environments and strict/admin-enforced full-CI protection, preserving unrelated required checks and review rules. It requires an actual successful full job on the exact current main revision; skipped or stale runs do not qualify. Unsupported repository/environment permissions fail rather than silently weaken protection. No settings change occurs merely by opening this PR.
+Without `--apply`, configuration prints the full proposal without writing. Applying configures PR-required, strict/admin-enforced full-CI protections on **main and staging**, rejects deletion/force pushes, and preserves unrelated checks and stronger review requirements. The default adds no independent PR-approval minimum; owner deployment approval is allowed. Existing linear-history requirements conflict with long-lived merge commits and require explicit operator resolution before any mutation. `staging` deploys only from staging without human approval; `production` and `production-validation` remain human-reviewed and **main-only**, regardless of the GitHub default. After read-back succeeds, the final repository change sets default `staging` and disables automatic branch deletion. Skipped/stale CI, unsupported permissions, or unsafe read-back block activation. No live setting changes merely by opening this PR.
 
 `--report` appends profile/command elapsed times as JSONL, not a qualification receipt. Compare at least three docs/web/full runs with the same runner and cache conditions; report the median, cold-install cost, and runner cost separately. No speed SLA or CI saving is inferred from a plan preview or Turbo cache hit.
 
-Main always runs the full profile, then packages and exercises the standalone payload before uploading `corner-release-<sourceSHA>` with 90-day retention. Keep artifacts referenced by current/recovery deployments available; missing or expired artifacts block promotion. CI does not deploy. Release controls and operator evidence are described in [HOSTING.md](HOSTING.md#build-migrate-and-release).
+Both persistent branches always run the full profile, then package/exercise the standalone two-Worker payload before uploading `corner-release-<sourceSHA>` with 90-day retention. Keep artifacts referenced by current/recovery deployments available; missing/expired references block promotion. CI itself does not deploy. [HOSTING.md](HOSTING.md#build-migrate-and-release) owns automatic staging, production approval, verification states, and recovery.
 
 The provider contract is implemented against the official documentation above. A real account must complete consent before live subscription inference can be verified. Browser visual verification and Docker execution are reported separately in the release notes; automated success should not be mistaken for those checks.
 
-### Pull-request database branches
+### Persistent branch workflow
 
-[The Neon preview workflow](.github/workflows/neon-preview.yml) requires the GitHub repository variable `NEON_PROJECT_ID` and repository secret `NEON_API_KEY`, authorized to create and delete branches in that project. Corner's project is `weathered-tooth-40264904`. Never put a database connection URL in a repository variable or publish it as a job output.
+After the explicit live cutover, **`staging` is the default integration branch; `main` is production**. Start ordinary feature branches from staging and target feature PRs there. Test features locally with the existing full verification profile; there are no per-PR Neon branches or Cloudflare app previews.
 
-A metadata-only PR workflow wakes a serialized default-branch reconciler; a schedule and manual dispatch also reconcile all live PRs. Same-repository, non-Dependabot open PRs create or reuse `preview/pr-<number>`; closed/ineligible PRs remove only that exact owned preview namespace. The reconciler re-reads live PR state before each effect instead of trusting event payloads. Already-expired branches are a successful cleanup no-op; other API failures remain failures.
+Promote a reviewed release through a **staging → main** PR using a merge commit. Keep staging after promotion: repository automatic deletion is disabled and both persistent branches reject normal deletion/force pushes. Release is separately human-approved; merging main is not a deployment approval. Review records the actual staging SHA/deployment; do not treat a release merge SHA as the same revision.
 
-Previews copy only the `production` schema, not account or health records, and use Neon's plan-default idle suspension (`suspend_timeout_seconds: 0`); Free plans reject an explicit interval. Expiration is 14 days from initial creation; synchronization does not reset data or renew the deadline. [Schema-only branches](https://neon.com/docs/guides/branching-schema-only) consume Neon's root-branch quota. Fork and Dependabot PRs are skipped, and no PR application code, dependencies, or artifacts are executed with the API key.
+After **every release**, synchronize **main → staging** with a merge commit before the next release. Emergency production fixes may target main directly with an explicit release-review exception, then require the same synchronization. If the branches have diverged, create a temporary sync branch from current staging, merge main into it, resolve conflicts, pass CI, and merge that PR into staging. This satisfies strict up-to-date protection without bypassing it. Never squash/rebase-replace persistent history. These protections prevent normal/automatic deletion, not an administrator deliberately removing the policy.
 
-This workflow manages database branches only: it does not deploy a preview app, configure preview Auth, or run Corner migrations. Schema-only copies omit migration-history rows too; future migration automation needs an explicit baseline strategy for the copied schema rather than blindly applying the bootstrap migration.
+The foundation/current PR still targets main to establish the new baseline. Do not retarget it to a staging branch created from the older main. See [operator cutover order](HOSTING.md#one-time-protected-configuration-and-cutover-order) before switching defaults.
+
+Old feature-preview provisioning workflows are removed. Existing provider resources are not deleted by a source update; inventory and explicitly retire only verified unused `preview/pr-*` Neon branches and obsolete Cloudflare Previews after stable staging passes its live gates. Preserve production, staging, backups, and unrelated resources.
 
 ### Main source areas
 

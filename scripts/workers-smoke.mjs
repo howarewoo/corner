@@ -11,25 +11,22 @@ import { publicChecks } from './release.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const require = createRequire(new URL('../apps/server/package.json', import.meta.url));
-const { unstable_startWorker, unstable_getMiniflareWorkerOptions } = await import(require.resolve('wrangler'));
+const { unstable_getMiniflareWorkerOptions } = await import(require.resolve('wrangler'));
 const { Agent, fetch: fixtureFetch } = await import(require.resolve('undici'));
 const options = {};
 for (let index = 2; index < process.argv.length; index += 2) {
   const flag = process.argv[index];
-  if (!['--config', '--frontend-config', '--frontend-preview-config', '--migration-entry', '--previous-config', '--previous-migration-entry'].includes(flag) || !process.argv[index + 1] || options[flag]) throw new Error(`Invalid smoke option: ${flag}`);
+  if (!['--config', '--frontend-config', '--migration-entry', '--previous-config', '--previous-frontend-config', '--previous-migration-entry'].includes(flag) || !process.argv[index + 1] || options[flag]) throw new Error(`Invalid smoke option: ${flag}`);
   options[flag] = resolve(process.argv[index + 1]);
 }
-if (Boolean(options['--previous-config']) !== Boolean(options['--previous-migration-entry'])) throw new Error('Previous Worker and migrator must be supplied together.');
-if (options['--frontend-config'] && options['--frontend-preview-config']) throw new Error('Select production or preview frontend smoke, not both.');
-const frontendConfig = options['--frontend-config'] ?? options['--frontend-preview-config'];
-const preview = Boolean(options['--frontend-preview-config']);
-if (frontendConfig && (options['--config'] || options['--previous-config'])) throw new Error('Frontend smoke uses the current checkout builds only.');
+if (Boolean(options['--previous-config']) !== Boolean(options['--previous-migration-entry']) || Boolean(options['--previous-config']) !== Boolean(options['--previous-frontend-config'])) throw new Error('Previous Worker pair and migrator must be supplied together.');
+if (!options['--frontend-config']) throw new Error('Select the frontend configuration for the Worker pair.');
+const frontendConfig = options['--frontend-config'];
 if (!options['--config']) await access(join(root, 'apps/web/dist/index.html'));
 const candidateMigrator = options['--migration-entry'] ? await import(pathToFileURL(options['--migration-entry']).href) : undefined;
 const previousMigrator = options['--previous-migration-entry'] ? await import(pathToFileURL(options['--previous-migration-entry']).href) : undefined;
 const directory = await mkdtemp(join(tmpdir(), 'corner-workers-smoke-'));
-const origin = preview ? 'https://feature-corner-web.example.test' : 'https://corner.example.test';
-const otherPreviewOrigin = 'https://other-corner-web.example.test';
+const origin = 'https://corner.example.test';
 let backend;
 let worker;
 let dispatcher;
@@ -37,8 +34,7 @@ try {
   backend = await startSmokeServices(directory, origin, previousMigrator?.migrate ?? candidateMigrator?.migrate, candidateMigrator?.createDatabase);
   dispatcher = new Agent({ connect: { ca: await readFile(backend.certificate) } });
   const bindings = {
-    CORNER_ORIGIN: preview ? 'https://production.example.test' : origin,
-    ...(preview ? { CORNER_PREVIEW_ORIGINS: `${origin}, ${otherPreviewOrigin}` } : {}),
+    CORNER_ORIGIN: origin,
     DATABASE_URL: backend.databaseUrl,
     NEON_AUTH_BASE_URL: backend.authUrl,
     NEON_AUTH_REQUIRE_EMAIL_VERIFICATION: 'false',
@@ -46,36 +42,40 @@ try {
     CORNER_TOKEN_ENCRYPTION_KEY: Buffer.alloc(32, 42).toString('base64'),
   };
   let workerNumber = 0;
-  const startWorker = async config => {
-    const original = JSON.parse(await readFile(config, 'utf8'));
-    const runtimeConfig = join(directory, `worker-${workerNumber++}.json`);
-    // Wrangler writes temporary build metadata beside its config, even with persist:false.
-    // Relocate only path references; execute the original Worker and asset bytes.
-    await writeFile(runtimeConfig, JSON.stringify({
-      ...original,
-      main: resolve(dirname(config), original.main),
-      assets: { ...original.assets, directory: resolve(dirname(config), original.assets.directory) },
-    }));
-    return unstable_startWorker({
-      config: runtimeConfig,
-      bindings: Object.fromEntries(Object.entries(bindings).map(([name, value]) => [name, { type: 'secret_text', value }])),
-      dev: {
-        server: { hostname: '127.0.0.1', port: 0 }, inspector: false,
-        origin: { secure: true }, inferOriginFromRoutes: false,
-        watch: false, persist: false, logLevel: 'error',
-        // Only this local fixture uses a private CA. Production TLS stays verified.
-        outboundService: async request => {
+  const startWorker = async (serverConfig, webConfig) => {
+    const miniflareRequire = createRequire(require.resolve('wrangler'));
+    const { Miniflare, convertV4MiniflareOptions } = await import(miniflareRequire.resolve('miniflare'));
+    const workers = [];
+    for (const [config, defaultBundle, isServer] of [
+      [webConfig, join(root, 'apps/web/.wrangler/worker/worker.js'), false],
+      [serverConfig, join(root, 'apps/server/dist/worker/worker.js'), true],
+    ]) {
+      const original = JSON.parse(await readFile(config, 'utf8'));
+      const bundle = original.no_bundle ? resolve(dirname(config), original.main) : defaultBundle;
+      const localConfig = join(directory, `worker-${workerNumber++}.json`);
+      await writeFile(localConfig, JSON.stringify({
+        ...original, main: bundle, no_bundle: true,
+        assets: { ...original.assets, directory: resolve(dirname(config), original.assets.directory) },
+      }));
+      const { workerOptions, externalWorkers } = unstable_getMiniflareWorkerOptions(localConfig);
+      delete workerOptions.modulesRules;
+      workers.push({
+        ...workerOptions, name: original.name, modules: true, modulesRoot: dirname(bundle), scriptPath: bundle,
+        bindings: isServer ? bindings : {},
+        ...(isServer ? { outboundService: async request => {
           assert.equal(new URL(request.url).origin, new URL(backend.authUrl).origin, 'The smoke must never contact a real provider.');
           return fixtureFetch(request.url, { method: request.method, headers: request.headers, body: request.body, duplex: 'half', redirect: 'manual', dispatcher });
-        },
-      },
-    });
+        } } : {}),
+      }, ...externalWorkers);
+    }
+    const runtime = new Miniflare(convertV4MiniflareOptions({ workers, host: '127.0.0.1', port: 0 }));
+    return { ready: runtime.ready, fetch: (...args) => runtime.dispatchFetch(...args), dispose: () => runtime.dispose() };
   };
   let priorCookie;
   let priorState;
   if (previousMigrator) {
     // Prior schema and Worker must genuinely function before upgrading that schema.
-    worker = await startWorker(options['--previous-config']);
+    worker = await startWorker(options['--previous-config'], options['--previous-frontend-config']);
     await worker.ready;
     assert.deepEqual(await (await worker.fetch(new URL('/api/health', origin))).json(), { ok: true });
     const signup = await worker.fetch(new URL('/api/auth/sign-up/email', origin), { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Prior', email: 'prior@example.test', password: 'synthetic-prior-version-password' }), signal: AbortSignal.timeout(20_000) });
@@ -95,47 +95,21 @@ try {
     await worker.dispose();
     await candidateMigrator.migrate(backend.database);
   }
-  if (frontendConfig) {
-    const miniflareRequire = createRequire(require.resolve('wrangler'));
-    const { Miniflare, convertV4MiniflareOptions } = await import(miniflareRequire.resolve('miniflare'));
-    const workers = [];
-    for (const [config, bundle, isServer] of [
-      [frontendConfig, join(root, 'apps/web/.wrangler/worker/worker.js'), false],
-      [join(root, 'apps/server/wrangler.jsonc'), join(root, preview ? 'apps/server/dist/worker-preview/worker-preview.js' : 'apps/server/dist/worker/worker.js'), true],
-    ]) {
-      const original = JSON.parse(await readFile(config, 'utf8'));
-      const selected = preview ? (isServer ? original.env?.preview : original.previews) : original;
-      if (!selected) throw new Error(`Missing preview configuration in ${config}.`);
-      const name = isServer ? (preview ? selected.name : 'corner-server') : original.name;
-      const localConfig = join(directory, `${name}.json`);
-      await writeFile(localConfig, JSON.stringify({
-        ...original, ...selected, name, main: bundle,
-        assets: { ...original.assets, directory: resolve(dirname(config), original.assets.directory) },
-      }));
-      const { workerOptions, externalWorkers } = unstable_getMiniflareWorkerOptions(localConfig);
-      // These are Wrangler's already-bundled JS outputs, not raw source modules.
-      delete workerOptions.modulesRules;
-      workers.push({
-        ...workerOptions, name, modules: true, modulesRoot: dirname(bundle), scriptPath: bundle,
-        bindings: isServer ? bindings : {},
-        ...(isServer ? { outboundService: async request => {
-          assert.equal(new URL(request.url).origin, new URL(backend.authUrl).origin, 'The smoke must never contact a real provider.');
-          return fixtureFetch(request.url, { method: request.method, headers: request.headers, body: request.body, duplex: 'half', redirect: 'manual', dispatcher });
-        } } : {}),
-      }, ...externalWorkers);
-    }
-    const runtime = new Miniflare(convertV4MiniflareOptions({ workers, host: '127.0.0.1', port: 0 }));
-    worker = { ready: runtime.ready, fetch: (...args) => runtime.dispatchFetch(...args), dispose: () => runtime.dispose() };
-  } else {
-    worker = await startWorker(options['--config'] ?? join(root, 'apps/server/wrangler.jsonc'));
+  if (previousMigrator) {
+    // Backend-first deployment must work before the frontend switches.
+    worker = await startWorker(options['--config'], options['--previous-frontend-config']);
+    await worker.ready;
+    const oldFrontend = await worker.fetch(new URL('/', origin));
+    assert.equal(oldFrontend.status, 200);
+    const saved = await worker.fetch(new URL('/api/state', origin), { headers: { Cookie: priorCookie } });
+    assert.equal(saved.status, 200);
+    assert.deepEqual(await saved.json(), priorState, 'Old frontend binding must reach the new backend without losing prior records.');
+    await worker.dispose();
   }
+  worker = await startWorker(options['--config'] ?? join(root, 'apps/server/wrangler.jsonc'), frontendConfig);
   await worker.ready;
   const call = (path, options = {}) => worker.fetch(new URL(path, origin), { ...options, signal: AbortSignal.timeout(20_000) });
   const post = (path, body, headers = {}) => call(path, { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body) });
-  if (preview) {
-    assert.equal((await call(`${otherPreviewOrigin}/api/health`)).status, 200, 'Each explicitly allowed preview origin must work.');
-    assert.equal((await post('/api/auth/sign-up/email', {}, { Origin: otherPreviewOrigin })).status, 403, 'Different allowed previews must still fail cross-origin writes.');
-  }
   if (priorCookie) {
     const response = await call('/api/state', { headers: { Cookie: priorCookie } });
     assert.equal(response.status, 200, await response.clone().text());
@@ -148,7 +122,9 @@ try {
   if (workerConfig.version_metadata?.binding === 'CF_VERSION_METADATA') {
     assert.match(version ?? '', /^[a-f0-9-]{36}$/i);
   }
-  await publicChecks(origin, version, (url, options) => worker.fetch(url, options));
+  const frontendVersion = health.headers.get('X-Corner-Frontend-Version');
+  assert.match(frontendVersion ?? '', /^[a-f0-9-]{36}$/i);
+  await publicChecks(origin, version, (url, options) => worker.fetch(url, options), frontendVersion);
   assert.equal((await call('https://wrong.example.test/api/health')).status, 400);
   assert.equal((await call('/', { method: 'POST' })).status, 405);
   const page = await call('/account/reset-password');
@@ -193,19 +169,28 @@ try {
     }
     const candidateWritten = await state(alice);
     await worker.dispose();
-    worker = await startWorker(options['--previous-config']);
+    worker = await startWorker(options['--previous-config'], frontendConfig);
     await worker.ready;
     assert.deepEqual(await state(alice), candidateWritten, 'Previous Worker must read the entire candidate-written document losslessly.');
+    assert.equal((await call('/')).status, 200, 'Recovery must support current frontend with previous backend.');
     const oldWrite = await post('/api/mutate', { requestId: 'previous-version-write-123', mutation: { type: 'settings.save', data: { ...candidateWritten.state.settings, name: 'Written by previous Worker' } } }, { Cookie: alice });
     assert.equal(oldWrite.status, 200, await oldWrite.clone().text());
     const previousWritten = await state(alice);
     assert.equal(previousWritten.revision, candidateWritten.revision + 1);
     assert.deepEqual(previousWritten.state, { ...candidateWritten.state, settings: { ...candidateWritten.state.settings, name: 'Written by previous Worker' } }, 'Previous mutation must preserve candidate-written fields.');
     await worker.dispose();
-    worker = await startWorker(options['--config']);
+    worker = await startWorker(options['--config'], options['--previous-frontend-config']);
     await worker.ready;
     assert.deepEqual(await state(alice), previousWritten, 'Candidate must read the previous Worker mutation without loss.');
     assert.equal((await state(bob)).state.settings.name, 'Bob');
+    await worker.dispose();
+    worker = await startWorker(options['--previous-config'], options['--previous-frontend-config']);
+    await worker.ready;
+    assert.deepEqual(await state(alice), previousWritten, 'Recovered previous pair must preserve current records.');
+    await worker.dispose();
+    worker = await startWorker(options['--config'], frontendConfig);
+    await worker.ready;
+    assert.deepEqual(await state(alice), previousWritten, 'Redeployed candidate pair must preserve recovery writes.');
   }
   const connection = await (await call('/api/ai/connection', { headers: { Cookie: alice } })).json();
   assert.equal(connection.enabled, false);
@@ -214,7 +199,7 @@ try {
   assert.equal((await post('/api/agent/runs', { requestId: 'workers-plan-request-123', prompt: 'Plan my training', referenceDate: '2026-10-23' }, { Cookie: alice })).status, 503);
   assert.equal((await post('/api/auth/sign-out', {}, { Cookie: alice })).status, 200);
   assert.equal((await call('/api/state', { headers: { Cookie: alice } })).status, 401);
-  process.stdout.write(`Passed ${preview ? 'isolated preview' : 'production'} Workers assets, canonical origin, secure account cookies, isolated PostgreSQL writes/retries, sign-out, and hosted AI gate.\nNo live cloud, account email, or model requests were made.\n`);
+  process.stdout.write(`Passed paired Workers assets, both version identities, canonical origin, secure account cookies, isolated PostgreSQL writes/retries, sign-out, and hosted AI gate${previousMigrator ? ', including intermediate and recovery combinations' : ''}.\nNo live cloud, account email, or model requests were made.\n`);
 } finally {
   await worker?.dispose();
   await dispatcher?.close();

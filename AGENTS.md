@@ -63,6 +63,14 @@ PR and main CI always install the frozen lockfile and run `pnpm run verify -- --
 
 All runtime smoke scripts use actual disposable PostgreSQL schemas and a local HTTPS Better Auth fixture; no real email/model request is made. Better Auth is a test-only dependency. Development smoke runs only the web/API/shared development tasks, not the independent design catalog, and rejects root `.env`, `.env.local`, `.env.development`, and `.env.development.local` files. Use a clean checkout/snapshot; never remove or rename a user's configuration to make it run. Keep owned-process/schema cleanup rather than killing unrelated listeners.
 
+## Persistent integration and releases
+
+After the explicit live cutover in [HOSTING.md](HOSTING.md#one-time-protected-configuration-and-cutover-order), start ordinary feature branches from `staging` and target feature PRs there. `staging` is persistent/default; `main` is production. The foundation PR must first land on main; do not infer that live defaults/protections already changed from this documentation alone.
+
+Promote staging to main with a merge commit, then synchronize main back into staging after every release and emergency main hotfix. If diverged, use a temporary sync branch based on current staging, merge main into it, and pass CI before its PR merges into staging; never bypass strict up-to-date checks. Never delete, force-push, or replace either persistent branch. Feature branches use local checks, not per-feature Neon or Cloudflare previews. Staging retains synthetic records on its own schema-only Neon branch in the existing project, independent Auth/keys, and an approved-testers-only stable origin.
+
+Both Workers are qualified/promoted as one immutable pair. Disable independent Cloudflare Builds/Preview triggers; production always requires explicit protected approval. GitHub administration, cloud provisioning, migrations, and deletion of old preview resources are separate live operator actions, not authority implied by editing source or updating a PR.
+
 ## Boundaries and pitfalls
 
 - Package names follow their folders: `apps/<name>/package.json` uses `<name>`; `packages/<name>/package.json` uses `@packages/<name>`.

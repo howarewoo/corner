@@ -7,9 +7,8 @@ import { WorkspaceStore } from './store.js';
 import { SubscriptionProvider } from './subscription.js';
 import { PlanningAgent } from './planning-agent.js';
 import { connectionDTO, createAIRouter } from './ai-routes.js';
-import { authenticatePreview, type PreviewEnvironment } from './worker-preview.js';
 
-export type WorkerEnvironment = PreviewEnvironment & {
+export type WorkerEnvironment = {
   ASSETS: { fetch(request: Request): Promise<Response> };
   CF_VERSION_METADATA?: { id: string; tag?: string; timestamp?: string };
   CORNER_ORIGIN: string;
@@ -86,16 +85,4 @@ async function fetchApplication(request: Request, env: WorkerEnvironment): Promi
     }
 }
 
-export default {
-  async fetch(request: Request, env: WorkerEnvironment): Promise<Response> {
-    if (env.CORNER_PREVIEW !== undefined) {
-      if (env.CORNER_PREVIEW !== 'true') return secure(new Response('Preview unavailable.', { status: 503 }), true);
-      const authenticated = await authenticatePreview(request, env);
-      if (authenticated instanceof Response) return secure(authenticated, true);
-      const response = await fetchApplication(authenticated, { ...env, CORNER_ORIGIN: env.CORNER_PREVIEW_ORIGIN! });
-      response.headers.set('X-Corner-Preview-Sha', env.CORNER_PREVIEW_SHA!);
-      return response;
-    }
-    return fetchApplication(request, env);
-  },
-};
+export default { fetch: fetchApplication };

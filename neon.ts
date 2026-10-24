@@ -5,6 +5,11 @@ export default defineConfig({
   auth: true,
   // Branch policy: per-branch tuning
   branch: (branch) => {
+    if (branch.name === "staging") {
+      // Omission must not be relied on to clear an existing expiry: operators
+      // must clear expires_at before adopting an existing staging branch.
+      return {};
+    }
     if (branch.isDefault) {
       // Default branch: no overrides, uses project defaults
       return {};

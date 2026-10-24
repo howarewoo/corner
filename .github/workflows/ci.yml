@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, staging]
   pull_request:
 
 permissions:
@@ -61,7 +61,7 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-      - name: Package the exact main revision without rebuilding
+      - name: Package the exact pushed revision without rebuilding
         if: github.event_name == 'push'
         run: >-
           pnpm run release:package -- "$RUNNER_TEMP/release/candidate"
