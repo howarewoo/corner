@@ -794,14 +794,12 @@ function history(state: AppState, referenceDate: string, days: number) {
       durationMinutes: item.durationMinutes,
       sessionRpe: item.sessionRpe,
       notes: item.notes.slice(0, 800),
-      exercises: item.exercises
-        .slice(0, 12)
-        .map((exercise) => ({
-          name: exercise.name,
-          catalogId: exercise.catalogId,
-          loadType: exercise.loadType,
-          sets: exercise.sets.filter((set) => set.completed).slice(0, 8),
-        })),
+      exercises: item.exercises.slice(0, 12).map((exercise) => ({
+        name: exercise.name,
+        catalogId: exercise.catalogId,
+        loadType: exercise.loadType,
+        sets: exercise.sets.filter((set) => set.completed).slice(0, 8),
+      })),
     }));
   return {
     nutrition,

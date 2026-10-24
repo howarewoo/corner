@@ -617,13 +617,11 @@ export default function AgentPanel({
       pending = true;
       try {
         const updated = await Promise.all(
-          runningIds
-            .split('|')
-            .map((id) =>
-              api<{ run: AgentRun }>(`/api/agent/runs/${encodeURIComponent(id)}`, {
-                signal: controller.signal,
-              }),
-            ),
+          runningIds.split('|').map((id) =>
+            api<{ run: AgentRun }>(`/api/agent/runs/${encodeURIComponent(id)}`, {
+              signal: controller.signal,
+            }),
+          ),
         );
         if (!controller.signal.aborted)
           setRuns((current) =>
