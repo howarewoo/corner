@@ -1,9 +1,11 @@
 @import 'tailwindcss/theme.css' layer(theme);
 @import 'tailwindcss/utilities.css' layer(utilities);
 @import 'tw-animate-css';
+@import 'shadcn/tailwind.css';
 @source './catalog';
 @source './primitives.tsx';
 @source '../../../apps/design/src';
+@source '../../../apps/web/src';
 @custom-variant dark (&:where([data-corner-theme='dark'], [data-corner-theme='dark'] *));
 
 @theme inline {

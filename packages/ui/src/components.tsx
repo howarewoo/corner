@@ -1,4 +1,16 @@
 export * from "./primitives";
+export {
+  AppSidebar,
+  type AppSidebarProps,
+  type MobileNavigationItem,
+  type MobileNavigation,
+} from "./app-sidebar";
+export {
+  WorkspaceHeader,
+  WorkspaceMobileBar,
+  type WorkspaceHeaderProps,
+  type WorkspaceMobileBarProps,
+} from "./workspace-header";
 export * from "./catalog/alert-dialog";
 export * from "./catalog/aspect-ratio";
 export * from "./catalog/avatar";

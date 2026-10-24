@@ -3,6 +3,7 @@
 import { useMemo, useState } from 'react';
 import { getMealPlanSummary } from '@packages/shared/meal-plan-summary';
 import type { AppState, Macros } from '@packages/shared/types';
+import { Card, ToggleGroup, ToggleGroupItem } from '@packages/ui';
 import './meal-planner-summary.css';
 
 const metrics = [
@@ -24,13 +25,22 @@ export default function MealPlannerSummary({ state, weekStart }: { state: AppSta
   const planned = mode === 'weekly' ? summary.planned : summary.averagePlanned;
   const target = mode === 'weekly' ? summary.target : summary.averageTarget;
   const targetsSet = state.settings.setup?.nutritionTargetsSet ?? (state.settings.training.calories > 0 && state.settings.rest.calories > 0);
-  return <section className="panel meal-plan-summary" aria-label="Planned nutrition and targets">
+  return <Card className="panel meal-plan-summary corner-ui" aria-label="Planned nutrition and targets">
     <div className="meal-plan-summary-heading">
       <div><h2>Plan & targets</h2><p>Your planned meals, alongside your nutrition goals.</p></div>
-      <div className="meal-plan-summary-mode" role="group" aria-label="Nutrition summary period">
-        <button type="button" aria-pressed={mode === 'weekly'} onClick={() => setMode('weekly')}>Weekly total</button>
-        <button type="button" aria-pressed={mode === 'daily'} onClick={() => setMode('daily')}>Daily average</button>
-      </div>
+      <ToggleGroup
+        className="meal-plan-summary-mode"
+        variant="outline"
+        size="sm"
+        value={[mode]}
+        onValueChange={val => {
+          if (val[0]) setMode(val[0] as 'weekly' | 'daily');
+        }}
+        aria-label="Nutrition summary period"
+      >
+        <ToggleGroupItem value="weekly">Weekly total</ToggleGroupItem>
+        <ToggleGroupItem value="daily">Daily average</ToggleGroupItem>
+      </ToggleGroup>
     </div>
     <div className="meal-plan-summary-metrics" aria-live="polite" aria-atomic="true">
       {metrics.map(metric => <div className="meal-plan-summary-metric" key={metric.key}>
@@ -43,11 +53,11 @@ export default function MealPlannerSummary({ state, weekStart }: { state: AppSta
       <span><b>{summary.plannedMealCount}</b> planned {summary.plannedMealCount === 1 ? 'meal' : 'meals'} · <b>{summary.plannedDayCount} of 7</b> days have meals</span>
       <span>{mode === 'daily' ? 'Averages use all 7 days, including empty days.' : targetsSet ? 'Targets add up all 7 days of your training schedule.' : 'Weekly totals include all planned meals.'} Nutrition is estimated.</span>
     </div>
-  </section>;
+  </Card>;
 }
 
 export function PlannerDayMacros({ planned, target, targetsSet = true }: { planned: Macros; target: Macros; targetsSet?: boolean }) {
-  return <div className="planner-day-total planner-day-macros" role="group" aria-label="Planned nutrition and daily targets">
+  return <div className="planner-day-total planner-day-macros corner-ui" role="group" aria-label="Planned nutrition and daily targets">
     <span className="planner-day-macros-label">{targetsSet ? 'Planned / target' : 'Planned nutrition'}</span>
     <strong>{number(planned.calories)} <span>kcal planned</span></strong>
     <small>{targetsSet ? `Target ${number(target.calories)} kcal` : 'Targets not set'}</small>

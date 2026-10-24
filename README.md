@@ -25,7 +25,7 @@ pnpm run dev
 
 Turborepo builds the shared package first, then starts the web app, API server, and shared-code watcher. The browser uses port **3000**; the API listens separately on **3001**. Vite proxies `/api` and `/auth/callback` to the API while preserving the browser origin for account sessions and consent callbacks. The server no longer starts Vite itself.
 
-Open **http://127.0.0.1:3000**. Use that exact address for the subscription callback. Create an account with an email, a name, and a password of at least 12 characters. With verification disabled in Neon, signup signs you in immediately. If verification is enabled, enter the email code and then sign in. Choose **Start fresh** or **Bring an export**.
+Open **http://127.0.0.1:3000**. Use that exact address for the subscription callback. Create an account with an email, a name, and a password of at least 12 characters. With verification disabled in Neon, signup signs you in immediately. If verification is enabled, enter the email code and then sign in. Once authenticated, the app opens directly without onboarding. Profile preferences, optional nutrition targets, and workspace import are available in **Settings**.
 
 The account form uses Neon's `@neondatabase/auth` SDK (`signUp.email` and `signIn.email`) through Corner's same-origin `/api/auth` proxy. After authentication, `/api/session` reads the current managed user server-side. Session tokens stay in HttpOnly cookies; no browser Auth URL or `VITE_` credentials are needed. The setup command targets Codex agent tooling; choose your editor's supported `--agent` value instead if needed. `--no-config` preserves the checked-in `neon.ts`, which already enables Auth.
 
@@ -80,9 +80,11 @@ Every non-documentation verification profile runs repository-wide lint, includin
 
 `apps/design` is the internal, backend-free component catalog. Run `pnpm --filter design dev` and open **http://127.0.0.1:3002**. `pnpm run dev` also starts this app alongside the product stack. Build only the catalog with `pnpm run build --filter=design`; serve its built assets with `pnpm --filter design preview`.
 
-Shared React controls live in `packages/ui`, exposed as `@packages/ui`. They adapt current Base UI-backed shadcn compositions to Corner's forest/sage palette and flat tonal surfaces. Prioritize these primitives and their shipped styles for product UI changes. The product and catalog share canonical light tokens; the catalog opts into global semantic aliases and a dark theme, while migrated product controls scope aliases locally. Workspace notifications and relocated account/menu controls use shared primitives; unrelated legacy controls remain unchanged.
+Shared React controls live in `packages/ui`, exposed as `@packages/ui`. They adapt current Base UI-backed shadcn compositions to Corner's forest/sage palette and flat tonal surfaces. Prioritize these primitives and shipped styles for product UI changes. The product and catalog share canonical light tokens, `AppSidebar`, and `WorkspaceHeader`; account, profile, nutrition, training, and agent controls use the shared primitives. Feature layouts and domain visualizations stay app-owned. The catalog opts into global semantic aliases and a dark theme; the product scopes light aliases with `.corner-ui`.
 
-Use the live specimens and their source as the implementation reference. The [catalog coverage record](apps/design/README.md) identifies the complete current shadcn inventory, provenance, theme contract, composition distinctions, and ownership. The catalog itself uses the shared Base UI-backed Sidebar.
+Use the live specimens and their source as the implementation reference. The [catalog coverage record](apps/design/README.md) identifies the complete current shadcn inventory, provenance, theme contract, composition distinctions, and ownership. Both apps and the Sidebar specimen use the same parameterized shared navigation composition rather than app-specific sidebar markup or styling.
+
+Browser navigation uses [React Router](https://reactrouter.com/start/declarative/installation). Product pages have bookmarkable paths: `/` (Today), `/agent`, `/workouts`, `/planner`, `/recipes`, `/groceries`, `/studio`, and `/settings`. Back/forward navigation preserves the current workspace's local filters and selected date; a reload opens the requested page and reloads saved records. Sign-in gates access without dropping that path; no profile setup is required. The catalog keeps shareable `?component=button`-style links.
 
 ### Docker option
 
@@ -101,7 +103,7 @@ Application smoke checks use real PostgreSQL with a disposable local HTTPS auth 
 ## Your first plan
 
 1. **Create your own account.** Managed Neon sign-in is independent of the AI connection. Verification policy and recovery delivery are configured in Neon.
-2. **Set up your profile.** Enter goals, experience, available days and session length, equipment, constraints, food preferences, and shopping preferences. Workout loads can use lb or kg. Nutrition targets are optional; unset targets remain clearly marked.
+2. **Optionally edit your profile in Settings.** Enter goals, experience, available days and session length, equipment, constraints, food preferences, and shopping preferences whenever you are ready. Workout loads can use lb or kg. Nutrition targets are optional; unset targets remain clearly marked.
 3. **Plan and track manually, or connect the agent.** Recipes, meals, groceries, food logs, workouts, sets, and progress work without an AI connection.
 4. **Open My agent → Continue with ChatGPT.** Review OpenAI's consent screen and authorize plan usage if your account supports it. Corner then loads the models available to that account.
 5. **Ask for a specific next step.** The agent can ask for missing information, give an explanation, or prepare a proposal. Inspect the proposed recipes, meals, targets, and workouts before choosing **Apply changes**.
@@ -150,7 +152,7 @@ Disconnect stops local use and attempts remote revocation. If remote revocation 
 
 ## Bring your current Corner plan
 
-In the original Corner Site, open **Settings → Export my data** and download the JSON export. In a new standalone account, choose **Bring an export**, select that file, review its record counts, and confirm the import.
+In the original Corner Site, open **Settings → Export my data** and download the JSON export. In a new standalone account, open **Settings → Import workspace**, select that file, review its record counts, type **IMPORT**, and confirm the import.
 
 Import preserves recipe IDs, dates, nutrition snapshots, workout history, units, and recorded values. It never copies a Sites account ID or claims an account by matching a name or email. Import is restricted to an empty workspace and checks its revision so it cannot overwrite records added during the import review. Older exports without training data receive empty training collections.
 
@@ -248,7 +250,7 @@ This workflow manages database branches only: it does not deploy a preview app, 
 
 | Folder | Responsibility |
 | --- | --- |
-| `apps/web/src/` | React account/setup UI, meal planner, recipes, workouts, and agent review |
+| `apps/web/src/` | React account UI, profile/import settings, meal planner, recipes, workouts, and agent review |
 | `apps/server/src/` | Managed Auth boundary, PostgreSQL persistence, HTTP routes, model connection, and planning agent |
 | `packages/shared/src/` | Shared models, validation, nutrition/training calculations, proposal rules, and exercise data |
 | `apps/web/tests/` | Rendered account/connection controls and development configuration checks |

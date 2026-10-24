@@ -3,7 +3,16 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { Check, Loader2, Sparkles } from 'lucide-react';
 import { FOOD_DESCRIPTION_MAX_LENGTH, FoodDescriptionSchema, FoodEstimateResultSchema, type EstimatedFood, type FoodEstimateResult } from '@packages/shared/food-estimate';
-
+import {
+  Alert,
+  AlertDescription,
+  Badge,
+  Button,
+  Field,
+  FieldDescription,
+  FieldLabel,
+  Textarea,
+} from '@packages/ui';
 type EstimatePayload = {
   estimate?: unknown;
   code?: string;
@@ -144,11 +153,12 @@ export default function FoodEstimator({ disabled, aiAvailable, onApply }: FoodEs
     onApply(result);
   }
 
-  return <section className="food-estimator" aria-label="Estimate nutrition from a food description">
-    <label className="field" htmlFor={fieldId}>
-      <span>Food and portions</span>
-      <textarea
+  return <section className="food-estimator corner-ui" aria-label="Estimate nutrition from a food description">
+    <Field className="field">
+      <FieldLabel htmlFor={fieldId}>Food and portions</FieldLabel>
+      <Textarea
         id={fieldId}
+        name="foodDescription"
         rows={4}
         maxLength={FOOD_DESCRIPTION_MAX_LENGTH}
         value={description}
@@ -157,20 +167,20 @@ export default function FoodEstimator({ disabled, aiAvailable, onApply }: FoodEs
         aria-describedby={`${helpId}${connectionMissing ? ` ${connectionId}` : ''}`}
         placeholder="e.g. 2 large eggs scrambled in 1 tsp olive oil, with 2 slices of whole-wheat toast"
       />
-      <small id={helpId}>Describe the entire amount you ate. Include quantities, preparation, oils or sauces, and the brand when it matters.</small>
-    </label>
+      <FieldDescription id={helpId}>Describe the entire amount you ate. Include quantities, preparation, oils or sauces, and the brand when it matters.</FieldDescription>
+    </Field>
 
-    {connectionMissing && <p className="food-estimator-connection" id={connectionId} role="status">AI estimates need an AI connection. You can still enter nutrition manually.</p>}
+    {connectionMissing && <Alert variant="warning" className="food-estimator-connection" id={connectionId}><AlertDescription>AI estimates need an AI connection. You can still enter nutrition manually.</AlertDescription></Alert>}
 
     <div className="food-estimator-actions">
-      <button type="button" className="button primary" disabled={disabled || connectionMissing || pending || !descriptionValid} aria-busy={pending} onClick={() => void estimateFood()}>
+      <Button type="button" variant="default" disabled={disabled || connectionMissing || pending || !descriptionValid} aria-busy={pending} onClick={() => void estimateFood()}>
         {pending ? <Loader2 size={16} className="spin" /> : <Sparkles size={16} />}
         {pending ? 'Estimating…' : 'Estimate nutrition'}
-      </button>
+      </Button>
       <p>You’ll review the estimate before adding it to your log.</p>
     </div>
 
-    {error && <p className="form-error" role="alert">{error}</p>}
+    {error && <Alert variant="destructive" className="form-error"><AlertDescription>{error}</AlertDescription></Alert>}
 
     <div className="food-estimator-feedback" aria-live="polite" aria-atomic="false">
       {pending && <p className="food-estimator-progress">Checking the food and portion details…</p>}
@@ -180,7 +190,7 @@ export default function FoodEstimator({ disabled, aiAvailable, onApply }: FoodEs
         <ul>{result.questions.map((question, index) => <li key={index}>{question}</li>)}</ul>
       </section>}
       {result?.status === 'estimated' && <section className="food-estimator-result">
-        <p className="food-estimator-caption">Approximate nutrition</p>
+        <Badge variant="outline" className="food-estimator-caption">Approximate nutrition</Badge>
         <h3>{result.name}</h3>
         <p className="food-estimator-amount">{result.amountSummary}</p>
         <dl className="food-estimator-macros">
@@ -192,9 +202,9 @@ export default function FoodEstimator({ disabled, aiAvailable, onApply }: FoodEs
         {result.assumptions.length > 0 && <div className="food-estimator-assumptions"><h4>Assumptions</h4><ul>{result.assumptions.map((assumption, index) => <li key={index}>{assumption}</li>)}</ul></div>}
         <div className="food-estimator-result-footer">
           <p>These totals cover the whole amount described. You can adjust them before saving.</p>
-          <button type="button" className={`button ${applied ? 'logged-button' : 'primary'}`} disabled={disabled || pending || applied} onClick={applyEstimate}><Check size={16} />{applied ? 'Estimate applied' : 'Use estimate'}</button>
+          <Button type="button" variant={applied ? 'secondary' : 'default'} disabled={disabled || pending || applied} onClick={applyEstimate}><Check size={16} />{applied ? 'Estimate applied' : 'Use estimate'}</Button>
         </div>
-        {applied && <p className="food-estimator-applied">Estimate applied. Review the nutrition fields before saving your food entry.</p>}
+        {applied && <Alert variant="success" className="food-estimator-applied"><AlertDescription>Estimate applied. Review the nutrition fields before saving your food entry.</AlertDescription></Alert>}
       </section>}
     </div>
   </section>;

@@ -949,9 +949,9 @@ export function ExpandedSpecimen({ id }: { id: string }) {
             </UI.Button>
           </div>
           <p>
-            The surrounding navigation uses SidebarProvider, Sidebar,
-            SidebarHeader, SidebarContent, SidebarGroup, SidebarMenuButton,
-            SidebarFooter, SidebarTrigger, and SidebarInset.
+            The surrounding navigation is the shared AppSidebar composition,
+            built from SidebarProvider, Sidebar, SidebarHeader, SidebarContent,
+            SidebarGroup, SidebarMenuButton, SidebarFooter, and SidebarInset.
           </p>
           <p className="specimen-note">
             Desktop: {sidebar.open ? "expanded" : "collapsed"}. On phones, the

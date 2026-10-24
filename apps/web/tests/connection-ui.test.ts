@@ -113,7 +113,7 @@ async function renderConnection(t: TestContext, Component: TestConnectionCompone
 
 async function click(control: ReactTestInstance): Promise<void> {
   assert.notEqual(control.props.disabled, true, 'Only an enabled rendered control can be clicked.');
-  await act(async () => { control.props.onClick(); });
+  await act(async () => { control.props.onClick({ button: 0, nativeEvent: {}, preventDefault() {}, stopPropagation() {} }); });
 }
 
 test('rendered ChatGPT connection controls and independent Corner session handling', async t => {
@@ -128,7 +128,8 @@ test('rendered ChatGPT connection controls and independent Corner session handli
   await build({
     entryPoints: [join(project, 'src', 'agent-panel.tsx')], outfile: bundle,
     bundle: true, format: 'esm', platform: 'node', target: 'node24',
-    packages: 'external', loader: { '.css': 'empty' }, jsx: 'automatic',
+    mainFields: ['module', 'main'], external: ['react', 'react/*', 'react-dom', 'react-dom/*', 'lucide-react', '@neondatabase/auth', '@neondatabase/auth/*', '@packages/shared/*'], loader: { '.css': 'empty' }, jsx: 'automatic',
+    banner: { js: "import { createRequire as createNodeRequire } from 'node:module'; const require = createNodeRequire(import.meta.url);" },
     tsconfig: join(project, 'tsconfig.json'), logLevel: 'silent',
   });
   const { AgentConnection } = await import(pathToFileURL(bundle).href) as { AgentConnection: TestConnectionComponent };

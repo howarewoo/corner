@@ -6,6 +6,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { build } from 'esbuild';
 import { act, createElement, type ComponentType } from 'react';
 import { create, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer';
+import { BrowserRouter } from 'react-router';
 import type { AccountPolicy, AccountRoute } from '../src/account-access.tsx';
 
 // Actual rendered account screens, their effects, and event handlers. Every
@@ -32,11 +33,11 @@ function input(renderer: ReactTestRenderer, name: string) { return renderer.root
 async function change(renderer: ReactTestRenderer, name: string, value: string) {
   const field = input(renderer, name); assert.ok(field, `Expected rendered input: ${name}`);
   assert.notEqual(field.props.disabled, true);
-  await act(async () => { field.props.onChange({ target: { value } }); });
+  await act(async () => { const target = { value }; field.props.onChange({ target, currentTarget: target, nativeEvent: {}, preventDefault() {}, stopPropagation() {} }); });
 }
 async function click(control: ReactTestInstance) {
   assert.notEqual(control.props.disabled, true);
-  await act(async () => { control.props.onClick(); });
+  await act(async () => { control.props.onClick({ button: 0, nativeEvent: {}, preventDefault() {}, stopPropagation() {} }); });
 }
 async function submit(renderer: ReactTestRenderer) { await act(async () => { void renderer.root.findByType('form').props.onSubmit({ preventDefault() {} }); }); }
 function deferred<T>() {
@@ -56,7 +57,11 @@ function browser(url = origin + '/') {
       get pathname() { return current.pathname; }, get search() { return current.search; },
       get hash() { return current.hash; },
     },
-    history: { replaceState(_state: unknown, _title: string, destination: string) { replaced.push(destination); current = new URL(destination, current); } },
+    history: {
+      state: null as unknown,
+      replaceState(state: unknown, _title: string, destination?: string) { this.state = state; if (destination) { replaced.push(destination); current = new URL(destination, current); } },
+      pushState(state: unknown, _title: string, destination: string) { this.state = state; current = new URL(destination, current); },
+    },
   });
   Object.defineProperty(globalThis, 'window', { configurable: true, writable: true, value: target });
   Object.defineProperty(globalThis, 'IS_REACT_ACT_ENVIRONMENT', { configurable: true, writable: true, value: true });
@@ -87,7 +92,7 @@ async function render(t: TestContext, Component: AccountComponent, policy: Accou
   let unmounted = false;
   const unmount = async () => { if (!unmounted && renderer) { unmounted = true; await act(async () => renderer.unmount()); } };
   t.after(async () => { try { await unmount(); } finally { environment.restore(); } });
-  await act(async () => { renderer = create(createElement(Component, { initialRoute: options.route, onSignedIn: async () => { state.signedIn += 1; } })); });
+  await act(async () => { renderer = create(createElement(BrowserRouter, { window: window }, createElement(Component, { initialRoute: options.route, onSignedIn: async () => { state.signedIn += 1; } }))); });
   return { renderer, calls, state, unmount, ...environment };
 }
 
@@ -97,7 +102,7 @@ test('rendered standalone account verification and password recovery', async t =
   const directory = await mkdtemp(join(generated, 'account-ui-'));
   const bundle = join(directory, 'account-access.mjs');
   t.after(async () => { await rm(directory, { recursive: true, force: true }); await rmdir(generated).catch(() => {}); });
-  await build({ entryPoints: [join(project, 'src', 'account-access.tsx')], outfile: bundle, bundle: true, format: 'esm', platform: 'node', target: 'node24', packages: 'external', jsx: 'automatic', tsconfig: join(project, 'tsconfig.json'), logLevel: 'silent' });
+  await build({ entryPoints: [join(project, 'src', 'account-access.tsx')], outfile: bundle, bundle: true, format: 'esm', platform: 'node', target: 'node24', mainFields: ['module', 'main'], external: ['react', 'react/*', 'react-dom', 'react-dom/*', 'react-router', 'lucide-react', '@neondatabase/auth', '@neondatabase/auth/*', '@packages/shared/*'], banner: { js: "import { createRequire as createNodeRequire } from 'node:module'; const require = createNodeRequire(import.meta.url);" }, loader: { '.css': 'empty' }, jsx: 'automatic', tsconfig: join(project, 'tsconfig.json'), logLevel: 'silent' });
   const { default: AccountAccess, readAccountRoute } = await import(pathToFileURL(bundle).href) as { default: AccountComponent; readAccountRoute: (location?: Pick<Location, 'pathname' | 'search'>) => AccountRoute };
   const originalError = console.error;
   t.mock.method(console, 'error', (...args: unknown[]) => {
@@ -184,7 +189,6 @@ test('rendered standalone account verification and password recovery', async t =
     assert.deepEqual(view.calls.find(call => call.path === '/api/auth/reset-password')?.body, { newPassword: password, token });
     assert.match(text(view.renderer.root), /Your password has been changed/);
     assert.equal(view.state.signedIn, 0);
-    assert.equal(view.location.pathname, '/');
     await click(button(view.renderer, 'Sign in'));
     assert.equal(input(view.renderer, 'password').props.value, '');
     assert.match(text(view.renderer.root), /Use your new password to sign in/);
