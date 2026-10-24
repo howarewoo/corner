@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { copyFile, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import { verifyArtifact, qualifyArtifact } from '../release-artifact.mjs';
+import { packageArtifact, verifyArtifact, qualifyArtifact } from '../release-artifact.mjs';
 
 const hash = (bytes) => createHash('sha256').update(bytes).digest('hex');
 async function fixture(t, migration = 'CREATE TABLE example (id int);') {
@@ -67,6 +68,61 @@ async function fixture(t, migration = 'CREATE TABLE example (id int);') {
   await writeFile(join(candidate, 'manifest.json'), JSON.stringify(manifest));
   return { directory, candidate, manifest };
 }
+
+test('packaging canonicalizes JSONC comments and trailing commas but rejects malformed configs', async (t) => {
+  const { directory, candidate } = await fixture(t);
+  const sourceRoot = join(directory, 'source');
+  const inputs = {
+    'package.json': '{"type":"module"}',
+    'pnpm-lock.yaml': 'lockfileVersion: "9.0"\n',
+    'packages/shared/dist/index.js': 'export {};',
+    'apps/server/dist/migrate.js':
+      'export function migrate() { throw new Error("packaging fixture"); }',
+    'apps/server/dist/database.js':
+      'export function createDatabase() { throw new Error("packaging fixture"); }',
+    'apps/server/dist/store.js':
+      'export function inspectImport() { throw new Error("packaging fixture"); }',
+    'apps/server/wrangler.jsonc': await readFile(join(candidate, 'wrangler.json')),
+    'apps/web/wrangler.jsonc': await readFile(join(candidate, 'frontend/wrangler.json')),
+  };
+  for (const [name, bytes] of Object.entries(inputs)) {
+    await mkdir(join(sourceRoot, name, '..'), { recursive: true });
+    await writeFile(join(sourceRoot, name), bytes);
+  }
+  for (const app of ['server', 'web']) {
+    await symlink(
+      fileURLToPath(new URL(`../../apps/${app}/node_modules`, import.meta.url)),
+      join(sourceRoot, `apps/${app}/node_modules`),
+      'dir',
+    );
+  }
+  for (const [from, to] of [
+    ['worker/worker.js', 'apps/server/dist/worker/worker.js'],
+    ['frontend/worker.js', 'apps/web/.wrangler/worker/worker.js'],
+    ['assets/index.html', 'apps/web/dist/index.html'],
+    ['migration/migrations/001_example.sql', 'apps/server/migrations/001_example.sql'],
+  ]) {
+    await mkdir(join(sourceRoot, to, '..'), { recursive: true });
+    await copyFile(join(candidate, from), join(sourceRoot, to));
+  }
+  const options = { root: sourceRoot, sourceSha: 'a'.repeat(40) };
+  const plain = await packageArtifact({ ...options, out: join(directory, 'plain') });
+  for (const app of ['server', 'web']) {
+    const path = join(sourceRoot, `apps/${app}/wrangler.jsonc`);
+    const json = JSON.stringify(JSON.parse(await readFile(path, 'utf8')), null, 2);
+    await writeFile(
+      path,
+      `// Wrangler JSONC\n/* format-only change */\n${json.slice(0, -2)},\n}\n`,
+    );
+  }
+  const jsonc = await packageArtifact({ ...options, out: join(directory, 'jsonc') });
+  assert.equal(jsonc.digest, plain.digest, 'JSONC formatting must not change the release payload.');
+  await writeFile(join(sourceRoot, 'apps/web/wrangler.jsonc'), '{"name": }');
+  await assert.rejects(
+    packageArtifact({ ...options, out: join(directory, 'malformed') }),
+    /ValueExpected/,
+  );
+});
 
 test('verification binds exact manifest bytes and all packaged payloads', async (t) => {
   const { candidate, manifest } = await fixture(t);

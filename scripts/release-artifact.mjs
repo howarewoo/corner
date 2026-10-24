@@ -170,6 +170,7 @@ export async function packageArtifact({ root: sourceRoot = root, out, sourceSha 
   if (!/^[a-f0-9]{40}$/.test(sourceSha)) throw new Error('A full source SHA is required.');
   const serverRequire = createRequire(join(sourceRoot, 'apps/server/package.json'));
   const webRequire = createRequire(join(sourceRoot, 'apps/web/package.json'));
+  const { experimental_readRawConfig } = await import(serverRequire.resolve('wrangler'));
   const shared = await readdir(join(sourceRoot, 'packages/shared/dist')).catch(() => []);
   if (!shared.some((name) => name.endsWith('.js')))
     throw new Error('Build shared before packaging.');
@@ -207,9 +208,9 @@ export async function packageArtifact({ root: sourceRoot = root, out, sourceSha 
     sourcemap: false,
     legalComments: 'none',
   });
-  const original = JSON.parse(
-    await readFile(join(sourceRoot, 'apps/server/wrangler.jsonc'), 'utf8'),
-  );
+  const { rawConfig: original } = experimental_readRawConfig({
+    config: join(sourceRoot, 'apps/server/wrangler.jsonc'),
+  });
   const config = {
     name: original.name,
     main: 'worker/worker.js',
@@ -225,9 +226,9 @@ export async function packageArtifact({ root: sourceRoot = root, out, sourceSha 
   await writeFile(join(out, 'wrangler.json'), `${JSON.stringify(config, null, 2)}\n`, {
     flag: 'wx',
   });
-  const frontendOriginal = JSON.parse(
-    await readFile(join(sourceRoot, 'apps/web/wrangler.jsonc'), 'utf8'),
-  );
+  const { rawConfig: frontendOriginal } = experimental_readRawConfig({
+    config: join(sourceRoot, 'apps/web/wrangler.jsonc'),
+  });
   const frontendConfig = {
     name: frontendOriginal.name,
     main: 'worker.js',

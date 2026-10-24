@@ -11,7 +11,9 @@ import { publicChecks } from './release.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const require = createRequire(new URL('../apps/server/package.json', import.meta.url));
-const { unstable_getMiniflareWorkerOptions } = await import(require.resolve('wrangler'));
+const { experimental_readRawConfig, unstable_getMiniflareWorkerOptions } = await import(
+  require.resolve('wrangler')
+);
 const { Agent, fetch: fixtureFetch } = await import(require.resolve('undici'));
 const options = {};
 for (let index = 2; index < process.argv.length; index += 2) {
@@ -78,7 +80,7 @@ try {
       [webConfig, join(root, 'apps/web/.wrangler/worker/worker.js'), false],
       [serverConfig, join(root, 'apps/server/dist/worker/worker.js'), true],
     ]) {
-      const original = JSON.parse(await readFile(config, 'utf8'));
+      const { rawConfig: original } = experimental_readRawConfig({ config });
       const bundle = original.no_bundle ? resolve(dirname(config), original.main) : defaultBundle;
       const localConfig = join(directory, `worker-${workerNumber++}.json`);
       await writeFile(
@@ -230,9 +232,9 @@ try {
   }
   const health = await call('/api/health');
   assert.deepEqual(await health.json(), { ok: true });
-  const workerConfig = JSON.parse(
-    await readFile(options['--config'] ?? join(root, 'apps/server/wrangler.jsonc'), 'utf8'),
-  );
+  const { rawConfig: workerConfig } = experimental_readRawConfig({
+    config: options['--config'] ?? join(root, 'apps/server/wrangler.jsonc'),
+  });
   const version = health.headers.get('X-Corner-Version');
   if (workerConfig.version_metadata?.binding === 'CF_VERSION_METADATA') {
     assert.match(version ?? '', /^[a-f0-9-]{36}$/i);

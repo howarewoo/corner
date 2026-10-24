@@ -1,3 +1,15 @@
+# Wrangler configuration JSONC compatibility
+
+Worker smoke and release packaging now read source Wrangler configurations through the pinned Wrangler raw configuration reader. Comments and trailing commas are supported without adding a dependency or changing the immutable payload format. Generated artifact manifests and configurations retain strict JSON validation and digest checks.
+
+The packaging regression verifies that equivalent JSON and JSONC inputs produce the same artifact digest and that malformed configuration is rejected.
+
+Observed on Node 24.21.0: all 57 native tooling regressions, lint with existing warnings, workspace builds, both Worker bundle dry runs, source paired-Worker smoke, and packaged bootstrap qualification passed. The runtime checks used owned disposable PostgreSQL 17 and local HTTPS Auth fixtures. Both smokes still emitted the previously recorded `CORNER_DATABASE_CONNECTION_FAILED` diagnostics despite passing account/persistence assertions; clean connection diagnostics are not established.
+
+No Cloudflare Git Builds settings, live deployment, production migration, real account email, or model inference was changed or exercised by this repair.
+
+---
+
 # Persistent staging and qualified Worker pairs
 
 Added the persistent staging source workflow: ordinary feature PRs target staging, release PRs merge staging into main, and emergency main hotfixes merge back. Explicit admin configuration requires exact-tip full CI on both branches, protects both against deletion/force pushes, retains main-only human production approval, then switches the default to staging and disables automatic branch deletion.
