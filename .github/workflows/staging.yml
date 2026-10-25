@@ -10,9 +10,11 @@ on:
       run_id:
         description: Exact successful current push-to-staging CI run ID
         type: string
+        required: true
       source_sha:
         description: Exact current staging source SHA
         type: string
+        required: true
 
 permissions:
   contents: read

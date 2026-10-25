@@ -314,49 +314,63 @@ export async function deployPreview({
       },
     }),
   );
+  const outputFile = join(work, 'preview-output.jsonl');
+  await writeFile(outputFile, '', { flag: 'wx', mode: 0o600 });
   const secretFile = join(work, 'preview-secrets.json');
   await writeFile(secretFile, JSON.stringify(secrets), { mode: 0o600 });
-  let output;
   try {
-    output = JSON.parse(
-      execute(
-        'pnpm',
-        [
-          '--filter',
-          'server',
-          'exec',
-          'wrangler',
-          'preview',
-          '--config',
-          cfg,
-          '--worker-name',
-          workerName,
-          '--name',
-          previewName,
-          '--ignore-base-config',
-          '--secrets-file',
-          secretFile,
-          '--tag',
-          sourceSha,
-          '--json',
-        ],
-        { env: { ...environment, WRANGLER_SEND_METRICS: 'false' } },
-      ),
+    execute(
+      'pnpm',
+      [
+        '--filter',
+        'server',
+        'exec',
+        'wrangler',
+        'preview',
+        '--config',
+        cfg,
+        '--worker-name',
+        workerName,
+        '--name',
+        previewName,
+        '--ignore-base-config',
+        '--secrets-file',
+        secretFile,
+        '--tag',
+        sourceSha,
+        '--json',
+      ],
+      {
+        env: {
+          ...environment,
+          WRANGLER_SEND_METRICS: 'false',
+          WRANGLER_OUTPUT_FILE_PATH: outputFile,
+        },
+      },
     );
   } finally {
     await rm(secretFile, { force: true });
   }
-  const preview = output.preview;
-  const deployment = output.deployment;
+  const outputs = (await readFile(outputFile, 'utf8'))
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line))
+    .filter((entry) => entry.type === 'preview');
+  need(outputs.length === 1, 'Exactly one native Preview machine-output record required');
+  const output = outputs[0];
   need(
-    preview?.name === previewName &&
-      preview.urls?.includes(config.origin) &&
-      typeof preview.id === 'string' &&
-      typeof deployment?.id === 'string',
+    output.version === 1 &&
+      output.worker_name === workerName &&
+      output.preview_name === previewName &&
+      output.preview_urls?.includes(config.origin) &&
+      typeof output.preview_id === 'string' &&
+      typeof output.deployment_id === 'string',
     'Native Preview identity or stable URL differs',
   );
-  const live = await cf(`workers/workers/${workerName}/previews/${preview.id}/deployments/latest`);
-  need(live.id === deployment.id, 'Native Preview deployment changed before validation');
+  const live = await cf(
+    `workers/workers/${workerName}/previews/${output.preview_id}/deployments/latest`,
+  );
+  need(live.id === output.deployment_id, 'Native Preview deployment changed before validation');
   const bindings = live.env ?? {};
   need(
     !Object.values(bindings).some((binding) => binding.type === 'service') &&
@@ -372,10 +386,10 @@ export async function deployPreview({
   const deployed = {
     ...payload,
     phase: 'deployed',
-    previewId: preview.id,
-    deploymentId: deployment.id,
-    deploymentUrls: deployment.urls,
-    versionId: deployment.id,
+    previewId: output.preview_id,
+    deploymentId: output.deployment_id,
+    deploymentUrls: output.deployment_urls,
+    versionId: output.deployment_id,
   };
   await record(github, deployed);
   await reverify();
@@ -387,7 +401,7 @@ export async function deployPreview({
     'CF-Access-Client-Id': environment.CORNER_STAGING_ACCESS_CLIENT_ID,
     'CF-Access-Client-Secret': environment.CORNER_STAGING_ACCESS_CLIENT_SECRET,
   };
-  await checkPublic(config.origin, deployment.id, undefined, access);
+  await checkPublic(config.origin, output.deployment_id, undefined, access);
   return record(github, { ...deployed, phase: 'complete' }, 'success');
 }
 
