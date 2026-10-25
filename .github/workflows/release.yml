@@ -10,9 +10,12 @@ on:
         description: Exact candidate main SHA (not used for rollback)
         type: string
       bootstrap:
-        description: Explicit first Worker-pair creation; never an artifact fallback
+        description: Explicit first tracked corner release; never an artifact fallback
         type: boolean
         default: false
+      provisioned_version_id:
+        description: Exact current corner version when bootstrapping an already-provisioned Worker
+        type: string
       rollback_deployment_id:
         description: Explicit completed qualified production deployment ID to recover
         type: string
@@ -69,6 +72,7 @@ jobs:
           RELEASE_RUN_ID: ${{ inputs.run_id }}
           RELEASE_SOURCE_SHA: ${{ inputs.source_sha }}
           RELEASE_BOOTSTRAP: ${{ inputs.bootstrap }}
+          RELEASE_PROVISIONED_VERSION_ID: ${{ inputs.provisioned_version_id }}
           RELEASE_ROLLBACK_ID: ${{ inputs.rollback_deployment_id }}
           RELEASE_MANUAL_REVIEW: ${{ inputs.manual_review }}
 
@@ -106,7 +110,7 @@ jobs:
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
-      - name: Recheck approved baseline, migrate, and promote exact Worker pair
+      - name: Recheck approved baseline, migrate, and promote exact corner Worker
         run: node scripts/release.mjs promote
         env:
           GH_TOKEN: ${{ github.token }}

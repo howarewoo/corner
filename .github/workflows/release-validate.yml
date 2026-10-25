@@ -8,7 +8,7 @@ on:
         type: string
         required: true
       operational_review:
-        description: 'Nonsecret human JSON: sourceSha, versionId, frontendVersionId, reviewer (dispatch actor), accountAccess/saveReload/recovery/authOriginRoutingSecretsPersistence all "passed"'
+        description: 'Nonsecret human JSON: sourceSha, versionId, reviewer (dispatch actor), accountAccess/saveReload/recovery/authOriginRoutingSecretsPersistence all "passed"'
         type: string
         required: true
 

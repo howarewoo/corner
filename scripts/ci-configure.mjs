@@ -11,7 +11,7 @@ const environmentBranches = {
   'production-validation': 'main',
 };
 
-export function protectionBody(current, required, appId) {
+export function protectionBody(current, required, appId, organization) {
   const existing =
     current?.required_status_checks?.checks ??
     (current?.required_status_checks?.contexts ?? []).map((context) => ({ context, app_id: -1 }));
@@ -28,7 +28,7 @@ export function protectionBody(current, required, appId) {
       require_code_owner_reviews: reviews?.require_code_owner_reviews ?? false,
       required_approving_review_count: reviews?.required_approving_review_count ?? 0,
       require_last_push_approval: reviews?.require_last_push_approval ?? false,
-      ...(reviews?.dismissal_restrictions
+      ...(organization && reviews?.dismissal_restrictions
         ? {
             dismissal_restrictions: {
               users: reviews.dismissal_restrictions.users.map((user) => user.login),
@@ -36,7 +36,9 @@ export function protectionBody(current, required, appId) {
             },
           }
         : {}),
-      bypass_pull_request_allowances: { users: [], teams: [], apps: [] },
+      ...(organization
+        ? { bypass_pull_request_allowances: { users: [], teams: [], apps: [] } }
+        : {}),
     },
     restrictions: current?.restrictions
       ? {
@@ -55,7 +57,7 @@ export function protectionBody(current, required, appId) {
   };
 }
 
-function verifyProtection(observed, body, appId, branch) {
+function verifyProtection(observed, body, appId, branch, organization) {
   const reviews = observed?.required_pull_request_reviews;
   const bypass = reviews?.bypass_pull_request_allowances;
   if (
@@ -65,7 +67,7 @@ function verifyProtection(observed, body, appId, branch) {
     observed.allow_deletions?.enabled !== false ||
     !reviews ||
     (bypass && ['users', 'teams', 'apps'].some((key) => bypass[key]?.length)) ||
-    !isDeepStrictEqual(protectionBody(observed, fullContext, appId), body) ||
+    !isDeepStrictEqual(protectionBody(observed, fullContext, appId, organization), body) ||
     !observed.required_status_checks.checks?.some(
       (check) => check.context === fullContext && check.app_id === appId,
     )
@@ -110,6 +112,9 @@ export async function configure({ api, reviewer, apply = false }) {
   const repo = await api('');
   if (!repo.permissions?.admin)
     throw new Error('Repository administration permission is required.');
+  if (!['User', 'Organization'].includes(repo.owner?.type))
+    throw new Error('Cannot establish the repository owner type.');
+  const organization = repo.owner.type === 'Organization';
   const collaborator = await api(`/collaborators/${encodeURIComponent(reviewer)}/permission`);
   if (
     !['admin', 'maintain', 'write', 'read'].includes(collaborator.permission) ||
@@ -167,7 +172,7 @@ export async function configure({ api, reviewer, apply = false }) {
       branch,
       sourceSha: ref.object.sha,
       appId: suite.app.id,
-      protection: protectionBody(current, fullContext, suite.app.id),
+      protection: protectionBody(current, fullContext, suite.app.id, organization),
     });
   }
   const mutations = branchPlans.map((value) => ({
@@ -227,7 +232,13 @@ export async function configure({ api, reviewer, apply = false }) {
   }
   for (const { path, ...options } of mutations) await api(path, options);
   for (const { branch, protection, appId } of branchPlans)
-    verifyProtection(await api(`/branches/${branch}/protection`), protection, appId, branch);
+    verifyProtection(
+      await api(`/branches/${branch}/protection`),
+      protection,
+      appId,
+      branch,
+      organization,
+    );
   for (const [environment, branch] of Object.entries(environmentBranches))
     await verifyEnvironment(api, environment, branch, collaborator.user.id);
   await api('', { method: 'PATCH', body: repositorySettings });

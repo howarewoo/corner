@@ -19,27 +19,21 @@ async function fixture(t, migration = 'CREATE TABLE example (id int);') {
       'export async function migrate() { throw new Error("fixture is not executable qualification"); }',
     'migration/migrations/001_example.sql': migration,
     'wrangler.json': JSON.stringify({
-      name: 'corner-server',
+      name: 'corner',
       main: 'worker/worker.js',
       no_bundle: true,
       compatibility_date: '2026-10-19',
       compatibility_flags: ['nodejs_compat'],
       workers_dev: false,
-      preview_urls: false,
-      assets: { directory: 'assets' },
-      version_metadata: { binding: 'CF_VERSION_METADATA' },
-    }),
-    'frontend/worker.js': 'export default { fetch() { return new Response("frontend"); } };',
-    'frontend/wrangler.json': JSON.stringify({
-      name: 'corner-web',
-      main: 'worker.js',
-      no_bundle: true,
-      compatibility_date: '2026-10-19',
-      compatibility_flags: ['nodejs_compat'],
-      workers_dev: false,
-      preview_urls: false,
-      assets: { directory: '../assets' },
-      services: [{ binding: 'SERVER', service: 'corner-server' }],
+      preview_urls: true,
+      assets: {
+        directory: 'assets',
+        binding: 'ASSETS',
+        run_worker_first: true,
+        html_handling: 'none',
+        not_found_handling: 'none',
+      },
+      observability: { enabled: true, logs: { invocation_logs: false } },
       version_metadata: { binding: 'CF_VERSION_METADATA' },
     }),
   };
@@ -48,7 +42,7 @@ async function fixture(t, migration = 'CREATE TABLE example (id int);') {
     await writeFile(join(candidate, name), bytes);
   }
   const manifest = {
-    format: 2,
+    format: 3,
     sourceSha: 'a'.repeat(40),
     lockfileSha256: 'b'.repeat(64),
     nodeVersion: 'v24.15.0',
@@ -56,11 +50,7 @@ async function fixture(t, migration = 'CREATE TABLE example (id int);') {
     configurationEntry: 'wrangler.json',
     configurationSha256: hash(payload['wrangler.json']),
     workerEntry: 'worker/worker.js',
-    workerName: 'corner-server',
-    frontendName: 'corner-web',
-    frontendEntry: 'frontend/worker.js',
-    frontendConfigurationEntry: 'frontend/wrangler.json',
-    frontendConfigurationSha256: hash(payload['frontend/wrangler.json']),
+    workerName: 'corner',
     migrationEntry: 'migration/dist/migrate.mjs',
     files: Object.fromEntries(Object.entries(payload).map(([name, bytes]) => [name, hash(bytes)])),
     migrations: [{ name: '001_example.sql', sha256: hash(migration) }],
@@ -83,13 +73,13 @@ test('packaging canonicalizes JSONC comments and trailing commas but rejects mal
     'apps/server/dist/store.js':
       'export function inspectImport() { throw new Error("packaging fixture"); }',
     'apps/server/wrangler.jsonc': await readFile(join(candidate, 'wrangler.json')),
-    'apps/web/wrangler.jsonc': await readFile(join(candidate, 'frontend/wrangler.json')),
   };
   for (const [name, bytes] of Object.entries(inputs)) {
     await mkdir(join(sourceRoot, name, '..'), { recursive: true });
     await writeFile(join(sourceRoot, name), bytes);
   }
   for (const app of ['server', 'web']) {
+    await mkdir(join(sourceRoot, `apps/${app}`), { recursive: true });
     await symlink(
       fileURLToPath(new URL(`../../apps/${app}/node_modules`, import.meta.url)),
       join(sourceRoot, `apps/${app}/node_modules`),
@@ -98,7 +88,6 @@ test('packaging canonicalizes JSONC comments and trailing commas but rejects mal
   }
   for (const [from, to] of [
     ['worker/worker.js', 'apps/server/dist/worker/worker.js'],
-    ['frontend/worker.js', 'apps/web/.wrangler/worker/worker.js'],
     ['assets/index.html', 'apps/web/dist/index.html'],
     ['migration/migrations/001_example.sql', 'apps/server/migrations/001_example.sql'],
   ]) {
@@ -107,17 +96,12 @@ test('packaging canonicalizes JSONC comments and trailing commas but rejects mal
   }
   const options = { root: sourceRoot, sourceSha: 'a'.repeat(40) };
   const plain = await packageArtifact({ ...options, out: join(directory, 'plain') });
-  for (const app of ['server', 'web']) {
-    const path = join(sourceRoot, `apps/${app}/wrangler.jsonc`);
-    const json = JSON.stringify(JSON.parse(await readFile(path, 'utf8')), null, 2);
-    await writeFile(
-      path,
-      `// Wrangler JSONC\n/* format-only change */\n${json.slice(0, -2)},\n}\n`,
-    );
-  }
+  const path = join(sourceRoot, 'apps/server/wrangler.jsonc');
+  const json = JSON.stringify(JSON.parse(await readFile(path, 'utf8')), null, 2);
+  await writeFile(path, `// Wrangler JSONC\n/* format-only change */\n${json.slice(0, -2)},\n}\n`);
   const jsonc = await packageArtifact({ ...options, out: join(directory, 'jsonc') });
   assert.equal(jsonc.digest, plain.digest, 'JSONC formatting must not change the release payload.');
-  await writeFile(join(sourceRoot, 'apps/web/wrangler.jsonc'), '{"name": }');
+  await writeFile(path, '{"name": }');
   await assert.rejects(
     packageArtifact({ ...options, out: join(directory, 'malformed') }),
     /ValueExpected/,
@@ -236,16 +220,96 @@ test('removing or rewriting a qualified prior migration fails compatibility befo
   await assert.rejects(readFile(report), /ENOENT/);
 });
 
-test('frontend binding changes cannot escape the qualified backend, even with matching payload digests', async (t) => {
+test('unsafe runtime configuration is rejected even with matching payload digests', async (t) => {
+  for (const mutate of [
+    (config) => {
+      config.services = [{ binding: 'SERVER', service: 'other' }];
+    },
+    (config) => {
+      config.assets.run_worker_first = false;
+    },
+    (config) => {
+      config.assets.binding = 'OTHER';
+    },
+    (config) => {
+      config.assets.html_handling = 'auto-trailing-slash';
+    },
+    (config) => {
+      config.assets.not_found_handling = 'single-page-application';
+    },
+    (config) => {
+      config.version_metadata.binding = 'OTHER';
+    },
+    (config) => {
+      config.observability.logs.invocation_logs = true;
+    },
+    (config) => {
+      config.workers_dev = true;
+    },
+    (config) => {
+      config.preview_urls = false;
+    },
+  ]) {
+    const { candidate, manifest } = await fixture(t);
+    const config = JSON.parse(await readFile(join(candidate, 'wrangler.json'), 'utf8'));
+    mutate(config);
+    const bytes = JSON.stringify(config);
+    await writeFile(join(candidate, 'wrangler.json'), bytes);
+    manifest.configurationSha256 = manifest.files['wrangler.json'] = hash(bytes);
+    await writeFile(join(candidate, 'manifest.json'), JSON.stringify(manifest));
+    await assert.rejects(verifyArtifact(candidate), /deployment configuration/);
+  }
+});
+
+test('old artifact formats require explicit reconciliation', async (t) => {
+  for (const format of [1, 2]) {
+    const { candidate, manifest } = await fixture(t);
+    manifest.format = format;
+    await writeFile(join(candidate, 'manifest.json'), JSON.stringify(manifest));
+    await assert.rejects(verifyArtifact(candidate), /explicit operator reconciliation/);
+  }
+});
+
+test('single-worker manifests reject obsolete fields and payload directories', async (t) => {
   const { candidate, manifest } = await fixture(t);
-  const config = JSON.parse(
-    await readFile(join(candidate, manifest.frontendConfigurationEntry), 'utf8'),
-  );
-  config.services[0].service = 'unqualified-backend';
-  const bytes = JSON.stringify(config);
-  await writeFile(join(candidate, manifest.frontendConfigurationEntry), bytes);
-  manifest.frontendConfigurationSha256 = manifest.files[manifest.frontendConfigurationEntry] =
-    hash(bytes);
+  manifest.frontendName = 'obsolete';
   await writeFile(join(candidate, 'manifest.json'), JSON.stringify(manifest));
-  await assert.rejects(verifyArtifact(candidate), /frontend configuration or backend binding/);
+  await assert.rejects(verifyArtifact(candidate), /format-3/);
+  delete manifest.frontendName;
+  await mkdir(join(candidate, 'frontend'));
+  await writeFile(join(candidate, 'frontend/worker.js'), 'obsolete');
+  manifest.files['frontend/worker.js'] = hash('obsolete');
+  await writeFile(join(candidate, 'manifest.json'), JSON.stringify(manifest));
+  await assert.rejects(verifyArtifact(candidate), /Forbidden payload/);
+});
+
+test('qualified migration inventory must remain the candidate prefix', async (t) => {
+  const { candidate, directory, manifest } = await fixture(t);
+  const prior = await fixture(t);
+  const { digest } = await verifyArtifact(prior.candidate);
+  await writeFile(
+    join(prior.directory, 'qualification.json'),
+    JSON.stringify({
+      format: 1,
+      sourceSha: prior.manifest.sourceSha,
+      candidateDigest: digest,
+      previousDigest: null,
+      bootstrap: true,
+      passed: true,
+    }),
+  );
+  const name = '000_inserted.sql';
+  const bytes = 'SELECT 1;';
+  await writeFile(join(candidate, 'migration/migrations', name), bytes);
+  manifest.files[`migration/migrations/${name}`] = hash(bytes);
+  manifest.migrations.unshift({ name, sha256: hash(bytes) });
+  await writeFile(join(candidate, 'manifest.json'), JSON.stringify(manifest));
+  await assert.rejects(
+    qualifyArtifact({
+      candidate,
+      previous: prior.candidate,
+      report: join(directory, 'qualification.json'),
+    }),
+    /must remain a prefix/,
+  );
 });

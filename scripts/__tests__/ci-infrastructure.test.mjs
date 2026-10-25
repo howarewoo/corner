@@ -38,6 +38,7 @@ test('GitHub list pagination retains owners beyond a full first page', async () 
 
 function configurationFixture({
   defaultBranch = 'main',
+  ownerType = 'Organization',
   failureBranch = 'staging',
   job = 'success',
   runSha = sourceSha,
@@ -50,6 +51,7 @@ function configurationFixture({
   const writes = [];
   const repo = {
     full_name: repository,
+    owner: { type: ownerType },
     default_branch: defaultBranch,
     delete_branch_on_merge: true,
     permissions: { admin: true },
@@ -71,6 +73,12 @@ function configurationFixture({
       }
       const protection = path.match(/^\/branches\/(main|staging)\/protection$/);
       if (protection) {
+        if (
+          ownerType === 'User' &&
+          (body.required_pull_request_reviews.bypass_pull_request_allowances ||
+            body.required_pull_request_reviews.dismissal_restrictions)
+        )
+          throw new Error('Only organization repositories can have users and team restrictions');
         const observed = { ...body };
         for (const key of [
           'enforce_admins',
@@ -262,6 +270,26 @@ test('default staging does not change main-only production human approval and re
     );
 });
 
+test('personal repositories acquire enforced protections and environment gates without organization-only restrictions', async () => {
+  const fixture = configurationFixture({ ownerType: 'User' });
+  await configure({ api: fixture.api, reviewer: 'owner', apply: true });
+  assert.equal(fixture.repo.default_branch, 'staging');
+  for (const protection of fixture.protections.values()) {
+    assert.equal(protection.enforce_admins.enabled, true);
+    assert.equal(protection.required_status_checks.strict, true);
+    assert.equal(protection.allow_deletions.enabled, false);
+    assert.equal(protection.allow_force_pushes.enabled, false);
+  }
+  assert.deepEqual(
+    fixture.policies.get('production').map(({ name }) => name),
+    ['main'],
+  );
+  assert.equal(
+    fixture.environments.get('production').protection_rules[0].reviewers[0].reviewer.id,
+    42,
+  );
+});
+
 test('full-check protection preserves unrelated checks and stronger reviews while removing unsafe bypasses', () => {
   const body = protectionBody(
     {
@@ -283,6 +311,7 @@ test('full-check protection preserves unrelated checks and stronger reviews whil
     },
     fullContext,
     1,
+    true,
   );
   assert.deepEqual(body.required_status_checks.checks, [
     { context: 'External security', app_id: 42 },

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { readFile, writeFile, mkdtemp, mkdir, rm } from 'node:fs/promises';
+import { readFile, writeFile, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -9,17 +9,12 @@ import { createRequire } from 'node:module';
 import { verifyArtifact, qualifyArtifact } from './release-artifact.mjs';
 import { classifyChanges } from './verify.mjs';
 import { releaseTarget } from './release-target.mjs';
+import { loadCiArtifact } from './ci-artifact.mjs';
 
 const sha = /^[a-f0-9]{40}$/;
 const digest = /^[a-f0-9]{64}$/;
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
-const phases = new Set([
-  'backend-deployed',
-  'deployed',
-  'public-passed',
-  'operational-validated',
-  'complete',
-]);
+const phases = new Set(['deployed', 'public-passed', 'operational-validated', 'complete']);
 const hash = (value) => createHash('sha256').update(value).digest('hex');
 class ReleaseError extends Error {}
 const need = (value, message) => {
@@ -58,9 +53,7 @@ export function validateConfiguration(
     'Only public runtime settings are accepted',
   );
   const origin = new URL(value.CORNER_ORIGIN);
-  const workersDev =
-    releaseTarget().staging &&
-    /^corner-web-staging\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.workers\.dev$/.test(origin.host);
+  const workersDev = /^corner\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.workers\.dev$/.test(origin.host);
   need(
     origin.protocol === 'https:' &&
       origin.origin === value.CORNER_ORIGIN &&
@@ -69,7 +62,7 @@ export function validateConfiguration(
       (workersDev || !/(^|\.)workers\.dev$|(^|\.)workers-preview\.com$/.test(origin.hostname)) &&
       origin.hostname.includes('.') &&
       value.NEON_AUTH_REQUIRE_EMAIL_VERIFICATION === 'true',
-    'Release requires a registered HTTPS custom-domain origin (or the fixed staging workers.dev host) and email verification',
+    'Release requires a canonical HTTPS custom-domain or stable corner workers.dev origin and email verification',
   );
   need(
     /^[A-Za-z0-9._-]{1,100}$/.test(revision ?? ''),
@@ -82,27 +75,29 @@ export function validateConfiguration(
     vars: Object.fromEntries(Object.entries(value).sort()),
     bindingsRevision: revision,
   });
-  return { value, origin: origin.origin, workersDev, bindingsRevision: revision, digest: hash(canonical) };
+  return {
+    value,
+    origin: origin.origin,
+    workersDev,
+    bindingsRevision: revision,
+    digest: hash(canonical),
+  };
 }
 export function validateReceipt(receipt) {
   need(
-    receipt?.format === 2 &&
+    receipt?.format === 3 &&
       receipt.kind === releaseTarget().kind &&
       sha.test(receipt.sourceSha) &&
       digest.test(receipt.candidateDigest) &&
       digest.test(receipt.configurationSha256) &&
-      digest.test(receipt.frontendConfigurationSha256) &&
       digest.test(receipt.runtimeConfigurationDigest),
-    'Invalid paired release receipt; reconcile backend-only history explicitly',
+    'Invalid format-3 release receipt; reconcile prior release history explicitly',
   );
   id(receipt.runId);
   id(receipt.artifactId);
   need(
-    phases.has(receipt.phase) &&
-      uuid.test(receipt.versionId) &&
-      (uuid.test(receipt.frontendVersionId) ||
-        (receipt.phase === 'backend-deployed' && receipt.frontendVersionId === null)),
-    'Receipt is not a deployed qualified pair',
+    phases.has(receipt.phase) && receipt.workerName === 'corner' && uuid.test(receipt.versionId),
+    'Receipt is not a deployed qualified Worker',
   );
   need(
     receipt.qualification?.passed === true &&
@@ -124,8 +119,7 @@ export function rollbackEligible(target, current, qualification, runtimeDigest) 
   need(
     target.runtimeConfigurationDigest === runtimeDigest &&
       current.runtimeConfigurationDigest === runtimeDigest &&
-      target.configurationSha256 === current.configurationSha256 &&
-      target.frontendConfigurationSha256 === current.frontendConfigurationSha256,
+      target.configurationSha256 === current.configurationSha256,
     'Rollback configuration differs from CURRENT release',
   );
   need(
@@ -141,7 +135,6 @@ export function requiresOperator(files, bootstrap, previous, candidate, runtimeD
     bootstrap ||
     !previous ||
     previous.configurationSha256 !== candidate.configurationSha256 ||
-    previous.frontendConfigurationSha256 !== candidate.frontendConfigurationSha256 ||
     previous.runtimeConfigurationDigest !== runtimeDigest
   )
     return true;
@@ -283,7 +276,9 @@ export class GitHub {
     const current = records[0] ?? null;
     if (current)
       need(
-        current.payload?.kind === releaseTarget().kind &&
+        current.payload?.format === 3 &&
+          current.payload.workerName === 'corner' &&
+          current.payload?.kind === releaseTarget().kind &&
           current.payload.phase === 'schema-attempted' &&
           digest.test(current.payload.candidateDigest),
         'Invalid release schema journal',
@@ -325,61 +320,21 @@ export class GitHub {
     return record;
   }
   async artifact(reference, destination) {
-    const run = await this.api(`actions/runs/${id(reference.runId)}`);
-    verifyRun(run, reference.sourceSha);
-    need(run.head_repository?.full_name === this.repository, 'Foreign CI repository');
-    const artifact = await this.api(`actions/artifacts/${id(reference.artifactId)}`);
-    need(
-      !artifact.expired &&
-        artifact.name === `corner-release-${reference.sourceSha}` &&
-        String(artifact.workflow_run?.id) === String(run.id) &&
-        artifact.workflow_run?.head_sha === reference.sourceSha,
-      'Artifact provenance mismatch or expired artifact',
-    );
-    const archive = await this.api(`actions/artifacts/${artifact.id}/zip`, { binary: true });
-    need(artifact.digest === `sha256:${hash(archive)}`, 'GitHub artifact archive digest mismatch');
-    await mkdir(destination, { recursive: true });
-    const zip = join(destination, 'download.zip');
-    await writeFile(zip, archive);
-    const names = command('unzip', ['-Z1', zip]).trim().split('\n');
-    const details = command('unzip', ['-Z', '-l', zip]);
-    need(
-      !details.split('\n').some((line) => /^l[rwx-]{9}/.test(line)),
-      'Artifact archive symlinks are forbidden',
-    );
-    need(
-      names.every(
-        (name) =>
-          !name.startsWith('/') &&
-          !name.split('/').includes('..') &&
-          !name.includes('\\') &&
-          /^(candidate\/|qualification\.json$)/.test(name),
-      ),
-      'Unsafe artifact archive',
-    );
-    command('unzip', ['-q', zip, '-d', destination]);
-    const verified = await verifyArtifact(join(destination, 'candidate'));
-    const report = JSON.parse(await readFile(join(destination, 'qualification.json'), 'utf8'));
-    need(
-      verified.manifest.sourceSha === reference.sourceSha &&
-        report.format === 1 &&
-        report.passed === true &&
-        report.candidateDigest === verified.digest &&
-        report.sourceSha === reference.sourceSha &&
-        typeof report.bootstrap === 'boolean' &&
-        (report.bootstrap ? report.previousDigest === null : digest.test(report.previousDigest)),
-      'Artifact qualification or source mismatch',
-    );
-    if (reference.candidateDigest)
-      need(reference.candidateDigest === verified.digest, 'Persisted artifact digest mismatch');
-    return { ...verified, directory: join(destination, 'candidate'), qualification: report };
+    releaseTarget();
+    return loadCiArtifact({
+      api: this.api.bind(this),
+      repository: this.repository,
+      branch: 'main',
+      reference,
+      destination,
+    });
   }
 }
 async function changedFiles(github, previous, source) {
   if (!previous) return [];
   const comparison = await github.api(`compare/${previous.sourceSha}...${source}`);
   need(
-    comparison.status === 'ahead' || (releaseTarget().staging && comparison.status === 'identical'),
+    comparison.status === 'ahead',
     'Normal promotion must be a forward source change; use explicit rollback for recovery',
   );
   if (!Array.isArray(comparison.files) || comparison.files.length >= 300)
@@ -393,6 +348,7 @@ export async function plan({
   runId,
   sourceSha,
   bootstrap = false,
+  provisionedVersionId = null,
   rollbackId,
   configuration,
   attestation,
@@ -402,13 +358,11 @@ export async function plan({
 }) {
   const config = validateConfiguration(configuration);
   const target = releaseTarget();
-  if (target.staging && !rollbackId) {
-    const current = await github.api('git/ref/heads/staging');
-    need(
-      current.object?.sha === sourceSha,
-      'Superseded staging candidate; only the current staging head may deploy',
-    );
-  }
+  need(
+    provisionedVersionId === null ||
+      (bootstrap && typeof provisionedVersionId === 'string' && uuid.test(provisionedVersionId)),
+    'A provisioned Worker version pin is valid only for explicit bootstrap',
+  );
   const baseline = await github.baseline();
   const schemaState = await github.schema();
   const schemaReference = schemaState?.payload ?? baseline?.payload;
@@ -454,7 +408,6 @@ export async function plan({
         sourceSha: current.manifest.sourceSha,
         candidateDigest: current.digest,
         configurationSha256: current.manifest.configurationSha256,
-        frontendConfigurationSha256: current.manifest.frontendConfigurationSha256,
         qualification: current.qualification,
       },
       qualification,
@@ -499,29 +452,28 @@ export async function plan({
     );
     files = await changedFiles(github, baseline?.payload, sourceSha);
   }
-  const review = target.staging ? null : manualAttestation(attestation, reference.sourceSha, actor);
+  const review = manualAttestation(attestation, reference.sourceSha, actor);
   const payload = {
-    format: 2,
+    format: 3,
     kind: target.kind,
+    workerName: target.workerName,
     phase: 'planned',
     sourceSha: reference.sourceSha,
     runId: reference.runId,
     artifactId: reference.artifactId,
     candidateDigest: candidate.digest,
     configurationSha256: candidate.manifest.configurationSha256,
-    frontendConfigurationSha256: candidate.manifest.frontendConfigurationSha256,
     runtimeConfigurationDigest: config.digest,
     origin: config.origin,
     baselineId: baseline ? String(baseline.id) : null,
     bootstrap,
+    provisionedVersionId,
     rollback: Boolean(rollbackId),
     rollbackVersionId: rollbackId ? reference.versionId : null,
-    rollbackFrontendVersionId: rollbackId ? reference.frontendVersionId : null,
     qualification,
     operatorRequired:
-      !target.staging &&
-      (Boolean(rollbackId) ||
-        requiresOperator(files, bootstrap, baseline?.payload, candidate.manifest, config.digest)),
+      Boolean(rollbackId) ||
+      requiresOperator(files, bootstrap, baseline?.payload, candidate.manifest, config.digest),
     bindingsRevision: config.bindingsRevision,
     manualReview: review,
     targetQualification: rollbackId ? reference.qualification : null,
@@ -558,18 +510,19 @@ async function cloudflare(path, { missing = false } = {}) {
   need(body.success, 'Cloudflare read failed');
   return body.result;
 }
-export async function publicChecks(
-  origin,
-  versionId,
-  fetcher = fetch,
-  frontendVersionId,
-  access = {},
-) {
+export async function publicChecks(origin, versionId, fetcher = fetch, access = {}) {
+  const accessHeaders = {};
+  const clientId = access['CF-Access-Client-Id'];
+  const clientSecret = access['CF-Access-Client-Secret'];
+  if (clientId && clientSecret) {
+    accessHeaders['CF-Access-Client-Id'] = clientId;
+    accessHeaders['CF-Access-Client-Secret'] = clientSecret;
+  }
   const call = (path) =>
     fetcher(new URL(path, origin), {
       redirect: 'manual',
       signal: AbortSignal.timeout(30000),
-      headers: { ...access, 'Cache-Control': 'no-cache' },
+      headers: { ...accessHeaders, 'Cache-Control': 'no-cache' },
     });
   const health = await call('/api/health');
   const crossOrigin = await fetcher(new URL('/api/auth/sign-up/email', origin), {
@@ -577,7 +530,7 @@ export async function publicChecks(
     redirect: 'manual',
     signal: AbortSignal.timeout(30000),
     headers: {
-      ...access,
+      ...accessHeaders,
       Origin: 'https://cross-origin.invalid',
       'Content-Type': 'application/json',
     },
@@ -593,16 +546,16 @@ export async function publicChecks(
       (await health.json()).ok === true,
     'Public health or deployed version identity mismatch',
   );
-  if (frontendVersionId)
-    need(
-      health.headers.get('X-Corner-Frontend-Version') === frontendVersionId,
-      'Public frontend version identity mismatch',
-    );
   const protectedResponse = await fetcher(new URL('/api/rpc/workspace/get', origin), {
     method: 'POST',
     redirect: 'manual',
     signal: AbortSignal.timeout(30000),
-    headers: { ...access, Origin: origin, 'Content-Type': 'application/json', 'Cache-Control': 'no-cache' },
+    headers: {
+      ...accessHeaders,
+      Origin: origin,
+      'Content-Type': 'application/json',
+      'Cache-Control': 'no-cache',
+    },
     body: '{}',
   });
   const protectedError = (await protectedResponse.json()).json;
@@ -622,11 +575,6 @@ export async function publicChecks(
         /frame-ancestors 'none'/.test(response.headers.get('Content-Security-Policy') ?? ''),
       'Public origin/deep-link security check failed',
     );
-    if (frontendVersionId)
-      need(
-        response.headers.get('X-Corner-Frontend-Version') === frontendVersionId,
-        'Public asset gateway version identity mismatch',
-      );
     const html = await response.text();
     const asset = html.match(/src="([^" ]+\.js)"/);
     need(
@@ -716,7 +664,8 @@ export async function promote({
   need(
     prepared.environment === `${target.environment}-plan` &&
       p?.phase === 'planned' &&
-      p.kind === target.kind,
+      p.kind === target.kind &&
+      p.workerName === target.workerName,
     'Not an approved release plan',
   );
   need(
@@ -732,12 +681,15 @@ export async function promote({
   const baseline = await github.baseline();
   assertBaseline(p.baselineId, baseline?.id);
   need(
-    p.format === 2 &&
+    p.format === 3 &&
       sha.test(p.sourceSha) &&
       digest.test(p.candidateDigest) &&
       digest.test(p.configurationSha256) &&
-      digest.test(p.frontendConfigurationSha256) &&
       typeof p.bootstrap === 'boolean' &&
+      (p.provisionedVersionId == null ||
+        (p.bootstrap &&
+          typeof p.provisionedVersionId === 'string' &&
+          uuid.test(p.provisionedVersionId))) &&
       typeof p.rollback === 'boolean' &&
       typeof p.operatorRequired === 'boolean',
     'Invalid persisted approval plan',
@@ -751,40 +703,16 @@ export async function promote({
         ? p.qualification.previousDigest === p.candidateDigest &&
           p.targetQualification?.passed === true &&
           p.targetQualification.candidateDigest === p.candidateDigest &&
-          uuid.test(p.rollbackVersionId) &&
-          uuid.test(p.rollbackFrontendVersionId)
+          uuid.test(p.rollbackVersionId)
         : p.qualification.candidateDigest === p.candidateDigest &&
           p.qualification.previousDigest === (baseline?.payload.candidateDigest ?? null) &&
           p.qualification.bootstrap === p.bootstrap),
     'Persisted approval qualification does not bind candidate and current baseline',
   );
-  if (!target.staging)
-    manualAttestation(JSON.stringify(p.manualReview), p.sourceSha, process.env.GITHUB_ACTOR);
-  else if (!p.rollback) {
-    const current = await github.api('git/ref/heads/staging');
-    need(current.object?.sha === p.sourceSha, 'Superseded staging candidate');
-  }
+  manualAttestation(JSON.stringify(p.manualReview), p.sourceSha, process.env.GITHUB_ACTOR);
   const schemaState = await github.schema();
   assertBaseline(p.schemaId, schemaState?.id);
-  const approval = target.staging
-    ? {
-        kind: 'automatic-staging',
-        runId: process.env.GITHUB_RUN_ID,
-        attempt: process.env.GITHUB_RUN_ATTEMPT,
-      }
-    : await github.approval('production');
-  const access = target.staging
-    ? {
-        'CF-Access-Client-Id': need(
-          process.env.CORNER_STAGING_ACCESS_CLIENT_ID,
-          'Staging Access service token ID required',
-        ),
-        'CF-Access-Client-Secret': need(
-          process.env.CORNER_STAGING_ACCESS_CLIENT_SECRET,
-          'Staging Access service token secret required',
-        ),
-      }
-    : {};
+  const approval = await github.approval('production');
   let bootstrapSecrets;
   if (p.bootstrap) {
     bootstrapSecrets = JSON.parse(
@@ -826,8 +754,7 @@ export async function promote({
   const candidate = await github.artifact(p, join(work, 'candidate'));
   need(
     candidate.digest === p.candidateDigest &&
-      candidate.manifest.configurationSha256 === p.configurationSha256 &&
-      candidate.manifest.frontendConfigurationSha256 === p.frontendConfigurationSha256,
+      candidate.manifest.configurationSha256 === p.configurationSha256,
     'Approved candidate changed',
   );
   const toolVersion = createRequire(new URL('../apps/server/package.json', import.meta.url))(
@@ -837,24 +764,33 @@ export async function promote({
     toolVersion === candidate.manifest.wranglerVersion,
     'Pinned deployment tool differs from the qualified artifact; select a matching main candidate',
   );
-  for (const [name, expected] of [
-    [target.workerName, baseline?.payload.versionId],
-    [target.frontendName, baseline?.payload.frontendVersionId],
-  ]) {
-    if (p.bootstrap)
+  const assertBootstrapTarget = async () => {
+    const existing = await cf(`workers/scripts/${target.workerName}/settings`, { missing: true });
+    if (!p.provisionedVersionId) {
       need(
-        !(await cf(`workers/scripts/${name}/settings`, { missing: true })),
-        'Bootstrap Worker already exists without a paired ledger; reconcile it explicitly',
+        !existing,
+        'Bootstrap Worker already exists; pin its exact current version for explicit adoption',
       );
-    if (baseline) {
-      const live = await cf(`workers/scripts/${name}/deployments`);
-      need(
-        live.deployments?.[0]?.versions?.length === 1 &&
-          live.deployments[0].versions[0].version_id === expected &&
-          live.deployments[0].versions[0].percentage === 100,
-        'Live release drifted from the approved baseline; explicit recovery required',
-      );
+      return;
     }
+    need(existing, 'The pinned provisioned Worker is missing');
+    const current = await cf(`workers/scripts/${target.workerName}/deployments`);
+    need(
+      current.deployments?.[0]?.versions?.length === 1 &&
+        current.deployments[0].versions[0].version_id === p.provisionedVersionId &&
+        current.deployments[0].versions[0].percentage === 100,
+      'Provisioned Worker changed from the approved version; prepare a new bootstrap plan',
+    );
+  };
+  if (p.bootstrap) await assertBootstrapTarget();
+  if (baseline) {
+    const live = await cf(`workers/scripts/${target.workerName}/deployments`);
+    need(
+      live.deployments?.[0]?.versions?.length === 1 &&
+        live.deployments[0].versions[0].version_id === baseline.payload.versionId &&
+        live.deployments[0].versions[0].percentage === 100,
+      'Live release drifted from the approved baseline; explicit recovery required',
+    );
   }
   if (!p.bootstrap) {
     const settings = await cf(`workers/scripts/${target.workerName}/settings`);
@@ -882,26 +818,10 @@ export async function promote({
     JSON.stringify({
       ...packagedConfig,
       name: target.workerName,
+      workers_dev: config.workersDev,
+      preview_urls: true,
       main: join(candidate.directory, candidate.manifest.workerEntry),
       assets: { ...packagedConfig.assets, directory: join(candidate.directory, 'assets') },
-    }),
-  );
-  const frontendConfig = JSON.parse(
-    await readFile(
-      join(candidate.directory, candidate.manifest.frontendConfigurationEntry),
-      'utf8',
-    ),
-  );
-  const frontendCfg = join(work, 'wrangler-frontend.json');
-  await writeFile(
-    frontendCfg,
-    JSON.stringify({
-      ...frontendConfig,
-      name: target.frontendName,
-      workers_dev: config.workersDev,
-      main: join(candidate.directory, candidate.manifest.frontendEntry),
-      assets: { ...frontendConfig.assets, directory: join(candidate.directory, 'assets') },
-      services: [{ binding: 'SERVER', service: target.workerName }],
     }),
   );
   const reverify = async () =>
@@ -916,7 +836,6 @@ export async function promote({
       env: { ...process.env, WRANGLER_SEND_METRICS: 'false' },
     });
   let versionId = p.rollbackVersionId;
-  let frontendVersionId = p.rollbackFrontendVersionId;
   if (p.rollback) {
     validateReceipt(baseline.payload);
     const current = await github.artifact(
@@ -933,7 +852,6 @@ export async function promote({
         ...p,
         phase: 'complete',
         versionId,
-        frontendVersionId,
         qualification: p.targetQualification,
       },
       {
@@ -941,7 +859,6 @@ export async function promote({
         sourceSha: current.manifest.sourceSha,
         candidateDigest: current.digest,
         configurationSha256: current.manifest.configurationSha256,
-        frontendConfigurationSha256: current.manifest.frontendConfigurationSha256,
         qualification: current.qualification,
       },
       qualification,
@@ -954,19 +871,6 @@ export async function promote({
       versionId = output.match(/Worker Version ID:\s*([a-f0-9-]{36})/)?.[1];
       need(uuid.test(versionId ?? ''), 'Upload did not return an exact Worker version ID');
       await reverify();
-      const frontendOutput = wrangler([
-        'versions',
-        'upload',
-        '--config',
-        frontendCfg,
-        '--no-bundle',
-      ]);
-      frontendVersionId = frontendOutput.match(/Worker Version ID:\s*([a-f0-9-]{36})/)?.[1];
-      need(
-        uuid.test(frontendVersionId ?? ''),
-        'Frontend upload did not return an exact Worker version ID',
-      );
-      await reverify();
     }
     // Journal before migration: even a lost response cannot hide a possible schema advance.
     await github.record({ ...p, phase: 'schema-attempted', planId: String(prepared.id), approval });
@@ -977,7 +881,8 @@ export async function promote({
     );
     await reverify();
     if (p.bootstrap) {
-      // Bootstrap alone creates the Worker; normal promotion never changes triggers.
+      // First tracked release creates or explicitly adopts the approved Worker.
+      await assertBootstrapTarget();
       const secretFile = join(work, 'bootstrap-secrets.json');
       await writeFile(secretFile, JSON.stringify(bootstrapSecrets), { mode: 0o600 });
       let output;
@@ -998,58 +903,29 @@ export async function promote({
       need(uuid.test(versionId ?? ''), 'Bootstrap did not return an exact Worker version ID');
     }
   }
-  need(
-    uuid.test(versionId ?? '') && (p.bootstrap || uuid.test(frontendVersionId ?? '')),
-    'Invalid qualified pair version IDs',
-  );
+  need(uuid.test(versionId ?? ''), 'Invalid qualified Worker version ID');
   const latest = await github.baseline();
   assertBaseline(p.baselineId, latest?.id);
   if (!p.bootstrap) wrangler(['versions', 'deploy', `${versionId}@100%`, ...common, '--yes']);
   let receipt = {
     ...p,
-    phase: 'backend-deployed',
+    phase: 'deployed',
     versionId,
-    frontendVersionId: baseline?.payload.frontendVersionId ?? null,
-    pendingFrontendVersionId: frontendVersionId ?? null,
     planId: String(prepared.id),
     approval,
     rollbackCompatibility: p.rollback ? p.qualification : null,
     qualification: p.rollback ? p.targetQualification : p.qualification,
   };
   await github.record(receipt);
-  const backendProgress = await github.baseline();
+  await reverify();
+  const deployments = await cf(`workers/scripts/${target.workerName}/deployments`);
   need(
-    backendProgress?.payload.planId === String(prepared.id) &&
-      backendProgress.payload.phase === 'backend-deployed' &&
-      backendProgress.payload.versionId === versionId,
-    'Backend progress changed before frontend switch; explicit recovery required',
+    deployments.deployments?.[0]?.versions?.length === 1 &&
+      deployments.deployments[0].versions[0].version_id === versionId &&
+      deployments.deployments[0].versions[0].percentage === 100,
+    'Cloudflare traffic does not match approved Worker',
   );
-  await reverify();
-  if (p.bootstrap) {
-    const output = wrangler(['deploy', '--config', frontendCfg, '--no-bundle']);
-    frontendVersionId = output.match(/Current Version ID:\s*([a-f0-9-]{36})/)?.[1];
-    need(
-      uuid.test(frontendVersionId ?? ''),
-      'Frontend bootstrap did not return an exact version ID',
-    );
-  } else
-    wrangler(['versions', 'deploy', `${frontendVersionId}@100%`, '--config', frontendCfg, '--yes']);
-  receipt = { ...receipt, phase: 'deployed', frontendVersionId, pendingFrontendVersionId: null };
-  await github.record(receipt);
-  await reverify();
-  for (const [name, expected] of [
-    [target.workerName, versionId],
-    [target.frontendName, frontendVersionId],
-  ]) {
-    const deployments = await cf(`workers/scripts/${name}/deployments`);
-    need(
-      deployments.deployments?.[0]?.versions?.length === 1 &&
-        deployments.deployments[0].versions[0].version_id === expected &&
-        deployments.deployments[0].versions[0].percentage === 100,
-      'Cloudflare traffic does not match approved pair',
-    );
-  }
-  await checkPublic(p.origin, versionId, undefined, frontendVersionId, access);
+  await checkPublic(p.origin, versionId);
   receipt = { ...receipt, phase: 'public-passed' };
   const publicRecord = await github.record(receipt);
   if (!p.operatorRequired)
@@ -1072,51 +948,19 @@ export async function validateOperational({
       ['deployed', 'public-passed'].includes(current.payload.phase),
     'Operational validation must reference the exact current deployed/public-passed deployment',
   );
-  if (releaseTarget().staging) {
-    validateReceipt(current.payload);
-    const access = {
-      'CF-Access-Client-Id': need(
-        process.env.CORNER_STAGING_ACCESS_CLIENT_ID,
-        'Staging Access service token ID required',
-      ),
-      'CF-Access-Client-Secret': need(
-        process.env.CORNER_STAGING_ACCESS_CLIENT_SECRET,
-        'Staging Access service token secret required',
-      ),
-    };
-    await checkPublic(
-      current.payload.origin,
-      current.payload.versionId,
-      undefined,
-      current.payload.frontendVersionId,
-      access,
-    );
-    const latest = await github.baseline();
-    assertBaseline(current.id, latest?.id);
-    return github.record(
-      { ...current.payload, phase: 'complete', validatedDeploymentId: String(current.id) },
-      'success',
-    );
-  }
   const assertion = JSON.parse(evidence);
   const actor = need(process.env.GITHUB_ACTOR, 'Operator identity required');
   need(
     assertion.sourceSha === current.payload.sourceSha &&
       assertion.versionId === current.payload.versionId &&
-      assertion.frontendVersionId === current.payload.frontendVersionId &&
       assertion.reviewer === actor &&
       ['accountAccess', 'saveReload', 'recovery', 'authOriginRoutingSecretsPersistence'].every(
         (key) => assertion[key] === 'passed',
       ),
-    'Operational human attestation must bind exact source/pair/operator and account/save/recovery/boundary checks',
+    'Operational human attestation must bind exact source/version/operator and account/save/recovery/boundary checks',
   );
   const approval = await github.approval('production-validation');
-  await checkPublic(
-    current.payload.origin,
-    current.payload.versionId,
-    undefined,
-    current.payload.frontendVersionId,
-  );
+  await checkPublic(current.payload.origin, current.payload.versionId);
   if (current.payload.phase === 'deployed')
     await github.record({ ...current.payload, phase: 'public-passed' });
   return github.record(
@@ -1129,7 +973,6 @@ export async function validateOperational({
       evidence: {
         sourceSha: assertion.sourceSha,
         versionId: assertion.versionId,
-        frontendVersionId: assertion.frontendVersionId,
         reviewer: actor,
         accountAccess: 'passed',
         saveReload: 'passed',
@@ -1149,8 +992,7 @@ async function main() {
   const target = releaseTarget();
   need(
     process.env.GITHUB_REF === `refs/heads/${target.branch}` &&
-      (process.env.GITHUB_EVENT_NAME === 'workflow_dispatch' ||
-        (target.staging && process.env.GITHUB_EVENT_NAME === 'workflow_run')),
+      process.env.GITHUB_EVENT_NAME === 'workflow_dispatch',
     'Release must execute from its trusted environment branch',
   );
   const github = new GitHub();
@@ -1163,6 +1005,7 @@ async function main() {
         runId: process.env.RELEASE_RUN_ID,
         sourceSha: process.env.RELEASE_SOURCE_SHA,
         bootstrap: process.env.RELEASE_BOOTSTRAP === 'true',
+        provisionedVersionId: process.env.RELEASE_PROVISIONED_VERSION_ID || undefined,
         rollbackId: process.env.RELEASE_ROLLBACK_ID || undefined,
         configuration: process.env[`${target.prefix}_CONFIG_JSON`],
         attestation: process.env.RELEASE_MANUAL_REVIEW,
