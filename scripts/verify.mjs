@@ -35,7 +35,7 @@ export function classifyChanges(paths) {
       (!path.includes('/') ||
         path.startsWith('.github/') ||
         path.startsWith('scripts/') ||
-        /(^|\/)(package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|turbo\.json|tsconfig[^/]*\.json|AGENTS\.md|\.npmrc|\.pnpmfile\.[cm]?js|(?:vite|vitest)\.config\.[cm]?[jt]s)$/.test(
+        /(^|\/)(package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|turbo\.json|tsconfig[^/]*\.json|AGENTS\.md|\.npmrc|\.pnpmfile\.[cm]?js|(?:vite|vitest|playwright)\.config\.[cm]?[jt]s)$/.test(
           path,
         ));
     policy ||= control;
@@ -47,13 +47,7 @@ export function classifyChanges(paths) {
       !control &&
       path.startsWith('apps/web/src/') &&
       !/(^|\/)(main|api|account-access|agent-panel|worker)\.[^.]+$/.test(path) &&
-      !/(auth|session|connection|proxy|runtime-config)/i.test(path)
-    )
-      profile = 'web';
-    else if (
-      !control &&
-      path.startsWith('apps/web/tests/') &&
-      !/(account|connection|vite)/i.test(path)
+      !/(auth|session|connection|proxy|runtime-config|browser)/i.test(path)
     )
       profile = 'web';
     selected.add(profile);
@@ -128,6 +122,7 @@ export function commandsFor(profile) {
     ['pnpm', ['run', 'check']],
     ['pnpm', ['test']],
     ['pnpm', ['run', 'build:workers']],
+    ['pnpm', ['run', 'test:browser']],
     ['pnpm', ['run', 'smoke']],
     ['pnpm', ['run', 'smoke:dev']],
     ['pnpm', ['run', 'smoke:workers']],

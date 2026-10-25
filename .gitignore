@@ -11,6 +11,9 @@ dist/
 *.tar.gz
 coverage/
 /apps/web/tests/.generated/
+/apps/web/playwright-report/
+/apps/web/test-results/
+/apps/web/.vitest/
 *.log
 .neon
 .wrangler/

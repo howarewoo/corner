@@ -25,6 +25,7 @@
     "test": "turbo run test",
     "verify": "node scripts/verify.mjs",
     "test:ci": "node --test scripts/__tests__/*.test.mjs",
+    "test:browser": "pnpm --filter web test:browser",
     "ci:configure": "node scripts/ci-configure.mjs",
     "release:package": "node scripts/release-artifact.mjs package",
     "release:verify": "node scripts/release-artifact.mjs verify",

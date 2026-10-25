@@ -22,6 +22,8 @@ Corner has not been released. This is the current implementation baseline, not a
 - `dev:seed` explicitly creates independent empty/demo synthetic accounts. Persistent seed identities and completion records preserve fixture edits and recover interrupted seeding. No staging or production seed target exists.
 - Repeated startup reuses only the authenticated controller for this checkout. `dev:down` preserves records and keys; confirmed `dev:reset` deletes only the owned local database and retains keys. Unrelated listeners, existing environment files, and repository `data/` are not modified.
 - The local fixture sends no email or model requests and is not qualification of live Neon Auth, OTP, or password-recovery delivery.
+- Web tests use Vitest 5 with sequential isolated forks, React Testing Library/jsdom for production components, and Node environments for configuration/service-worker checks. React Test Renderer, warning suppression, and generated React test bundles are removed.
+- Full verification adds Playwright journeys in Chromium desktop and emulated iPhone WebKit for account separation, food logging, and recorded workout persistence. The browser harness reuses disposable PostgreSQL/HTTPS Auth fixtures with temporary keys and owned-process cleanup; intercepted provider redirects block service workers to avoid bypassing synthetic responses. This does not qualify live OAuth, email delivery, or real-iPhone installation.
 
 ### Persistence and migrations
 
@@ -53,6 +55,8 @@ Corner has not been released. This is the current implementation baseline, not a
 - Preserve installation keys, private configuration, original SQLite backups, and independent production/staging backups. Database restore is a separate operator-controlled data-loss decision. Source cleanup does not authorize cloud/admin/data changes or retirement of provider resources.
 
 ### Verification and limits
+
+For the React testing cutover, Node 24.21.0 passed frozen-lockfile installation and full verification: 107 native tooling regressions, all 15 server files, 28 Vitest tests across 6 web files, 10 Playwright checks across Chromium desktop/WebKit phone, repository lint/type checks, workspace/Worker builds, and production/development/Worker smokes. Workflow syntax and documentation links also passed. Actual desktop/phone inspection exercised the production food-entry form and saved-record reload. The first full run exposed release packaging's remaining `esbuild` dependency; its existing web-manifest declaration is retained. Existing lint/chunk advisories and private-safe Worker connection diagnostics remain. Disposable schemas and the owned verification database were removed; no live cloud, email, or model qualification was performed.
 
 For the domain-package split, Node 24.21.0 verification passed 96 native tooling regressions, repository lint and type checks, all 13 server and 5 web test files, workspace/Worker builds, and production/development/Worker runtime smokes against an owned disposable PostgreSQL 17 database. The initial full-profile run exposed an obsolete compiler-readiness matcher; after fixing it, lint and the development/Worker smokes passed. Existing lint warnings and Vite chunk-size advisories remain.
 

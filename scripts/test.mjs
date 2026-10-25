@@ -2,7 +2,7 @@ import { readdirSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { join, relative, resolve } from 'node:path';
 
-// Workspace scripts run from their package directory.
+// The server workspace runs this native runner from its package directory.
 const root = process.cwd();
 const files = readdirSync(resolve(root, 'tests'))
   .filter((name) => name.endsWith('.test.ts'))
@@ -18,7 +18,7 @@ function collect(directory) {
 collect('src');
 files.sort();
 let failed = 0;
-// Separate processes keep each suite's database hooks and browser mocks private.
+// Separate processes keep each suite's database hooks private.
 // No inner isolation preserves individually named test output in this runtime.
 for (const file of files) {
   const result = spawnSync(
