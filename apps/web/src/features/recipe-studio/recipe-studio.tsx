@@ -12,7 +12,8 @@ import {
   Sparkles,
   UtensilsCrossed,
 } from 'lucide-react';
-import type { AppState, Recipe } from '@packages/shared/types';
+import type { AppState } from '@packages/workspace/types';
+import type { Recipe } from '@packages/nutrition/types';
 import { Badge, Button, Card, Input, Textarea, WorkspaceHeader } from '@packages/ui';
 import type { View } from '../workspace/types';
 import { cap } from '../workspace/utils';

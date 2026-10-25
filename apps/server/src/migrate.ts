@@ -1,59 +1,59 @@
-import { createHash } from 'node:crypto';
-import { readFile, readdir } from 'node:fs/promises';
-import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { resolve } from 'node:path';
+import { drizzle } from 'drizzle-orm/node-postgres';
+import { migrate as drizzleMigrate } from 'drizzle-orm/node-postgres/migrator';
 import type { Pool } from 'pg';
 import { createDatabase } from './database.js';
+import { currentSchema, migrationHistory, migrationLock } from './migration-history.js';
+import { migrationInventory, migrationsFolder } from './migration-inventory.js';
 
-export async function migrate(database: Pool): Promise<void> {
-  const directory = fileURLToPath(new URL('../migrations/', import.meta.url));
+export async function migrate(database: Pool, folder = migrationsFolder): Promise<void> {
+  const inventory = await migrationInventory(folder);
   const connection = await database.connect();
+  let locked = false;
+  let failed = false;
+  let failure: unknown;
   try {
-    await connection.query('BEGIN');
-    await connection.query(
-      "SELECT pg_advisory_xact_lock(hashtextextended('corner:schema-migrations', 0))",
-    );
-    await connection.query(
-      'CREATE TABLE IF NOT EXISTS corner_schema_migrations (name TEXT PRIMARY KEY, checksum TEXT NOT NULL)',
-    );
-    for (const name of (await readdir(directory))
-      .filter((name) => /^\d+_.+\.sql$/.test(name))
-      .sort()) {
-      const sql = await readFile(join(directory, name), 'utf8');
-      const checksum = createHash('sha256').update(sql).digest('hex');
-      const existing = (
-        await connection.query('SELECT checksum FROM corner_schema_migrations WHERE name = $1', [
-          name,
-        ])
-      ).rows[0];
-      if (existing) {
-        if (existing.checksum !== checksum)
-          throw new Error(`Applied migration ${name} was modified.`);
-        continue;
-      }
-      await connection.query(sql);
-      await connection.query(
-        'INSERT INTO corner_schema_migrations (name, checksum) VALUES ($1, $2)',
-        [name, checksum],
-      );
-      process.stdout.write(`Applied ${name}\n`);
-    }
-    await connection.query('COMMIT');
+    // A session lock spans the native engine's metadata setup and SQL transaction.
+    // This connection is direct for deployment; it never passes through transaction pooling.
+    await connection.query('SELECT pg_advisory_lock(hashtextextended($1, 0))', [migrationLock]);
+    locked = true;
+    const schema = await currentSchema(connection);
+    await migrationHistory(connection, schema, inventory);
+    await drizzleMigrate(drizzle({ client: connection }), { migrationsFolder: folder, migrationsSchema: schema });
+    await migrationHistory(connection, schema, inventory, true);
   } catch (error) {
-    await connection.query('ROLLBACK');
-    throw error;
+    failed = true;
+    failure = error;
   } finally {
-    connection.release();
+    let discard = false;
+    try {
+      if (locked) await connection.query('SELECT pg_advisory_unlock(hashtextextended($1, 0))', [migrationLock]);
+    } catch (error) {
+      discard = true;
+      if (!failed) {
+        failed = true;
+        failure = error;
+      }
+    }
+    connection.release(discard);
   }
+  if (failed) throw failure;
 }
 
-if (process.argv.includes('--apply')) {
-  if (!process.env.DATABASE_URL_UNPOOLED)
-    throw new Error('DATABASE_URL_UNPOOLED is required for schema migrations.');
-  const database = createDatabase(process.env.DATABASE_URL_UNPOOLED);
+export function directDatabaseUrl(value: string | undefined): string {
+  if (!value) throw new Error('DATABASE_URL_UNPOOLED is required for schema operations.');
+  const url = new URL(value);
+  if (!['postgres:', 'postgresql:'].includes(url.protocol) || url.hostname.includes('-pooler.') || url.searchParams.has('options'))
+    throw new Error('Schema operations require a direct PostgreSQL URL without connection overrides.');
+  return value;
+}
+
+if (process.argv.includes('--apply') && resolve(process.argv[1] ?? '') === fileURLToPath(import.meta.url)) {
+  const database = createDatabase(directDatabaseUrl(process.env.DATABASE_URL_UNPOOLED));
   try {
     await migrate(database);
-    process.stdout.write('Corner PostgreSQL schema is current.\n');
+    process.stdout.write('Corner Drizzle PostgreSQL schema is current.\n');
   } finally {
     await database.end();
   }

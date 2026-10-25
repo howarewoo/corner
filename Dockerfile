@@ -5,7 +5,10 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY apps/server/package.json ./apps/server/package.json
 COPY apps/web/package.json ./apps/web/package.json
 COPY apps/design/package.json ./apps/design/package.json
-COPY packages/shared/package.json ./packages/shared/package.json
+COPY packages/nutrition/package.json ./packages/nutrition/package.json
+COPY packages/training/package.json ./packages/training/package.json
+COPY packages/workspace/package.json ./packages/workspace/package.json
+COPY packages/agent/package.json ./packages/agent/package.json
 COPY packages/api/package.json ./packages/api/package.json
 COPY packages/ui/package.json ./packages/ui/package.json
 
@@ -34,7 +37,10 @@ COPY --from=production-dependencies --chown=node:node /app/packages ./packages
 COPY --from=build --chown=node:node /app/apps/server/dist ./apps/server/dist
 COPY --from=build --chown=node:node /app/apps/server/migrations ./apps/server/migrations
 COPY --from=build --chown=node:node /app/apps/web/dist ./apps/web/dist
-COPY --from=build --chown=node:node /app/packages/shared/dist ./packages/shared/dist
+COPY --from=build --chown=node:node /app/packages/nutrition/dist ./packages/nutrition/dist
+COPY --from=build --chown=node:node /app/packages/training/dist ./packages/training/dist
+COPY --from=build --chown=node:node /app/packages/workspace/dist ./packages/workspace/dist
+COPY --from=build --chown=node:node /app/packages/agent/dist ./packages/agent/dist
 COPY --from=build --chown=node:node /app/packages/api/dist ./packages/api/dist
 COPY --from=build --chown=node:node /app/scripts/healthcheck.mjs ./scripts/healthcheck.mjs
 RUN mkdir -p /app/data && chown node:node /app/data && chmod 700 /app/data

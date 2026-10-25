@@ -85,13 +85,13 @@ export function validateConfiguration(
 }
 export function validateReceipt(receipt) {
   need(
-    receipt?.format === 3 &&
+    receipt?.format === 4 &&
       receipt.kind === releaseTarget().kind &&
       sha.test(receipt.sourceSha) &&
       digest.test(receipt.candidateDigest) &&
       digest.test(receipt.configurationSha256) &&
       digest.test(receipt.runtimeConfigurationDigest),
-    'Invalid format-3 release receipt; reconcile prior release history explicitly',
+    'Invalid format-4 release receipt; pre-Drizzle receipts are retired recovery targets',
   );
   id(receipt.runId);
   id(receipt.artifactId);
@@ -276,7 +276,7 @@ export class GitHub {
     const current = records[0] ?? null;
     if (current)
       need(
-        current.payload?.format === 3 &&
+        current.payload?.format === 4 &&
           current.payload.workerName === 'corner' &&
           current.payload?.kind === releaseTarget().kind &&
           current.payload.phase === 'schema-attempted' &&
@@ -343,6 +343,11 @@ async function changedFiles(github, previous, source) {
     file.previous_filename ? [file.previous_filename, file.filename] : [file.filename],
   );
 }
+async function assertCurrentMain(github, sourceSha) {
+  const current = await github.api('git/ref/heads/main');
+  need(current.object?.sha === sourceSha, 'Candidate is superseded by the current main revision');
+}
+
 export async function plan({
   github,
   runId,
@@ -353,11 +358,19 @@ export async function plan({
   configuration,
   attestation,
   actor,
+  automatic = false,
   work,
   qualify = qualifyArtifact,
 }) {
   const config = validateConfiguration(configuration);
   const target = releaseTarget();
+  if (automatic) {
+    need(
+      !bootstrap && !rollbackId && provisionedVersionId === null,
+      'Automatic production cannot bootstrap, adopt, or roll back a Worker',
+    );
+    await assertCurrentMain(github, sourceSha);
+  }
   need(
     provisionedVersionId === null ||
       (bootstrap && typeof provisionedVersionId === 'string' && uuid.test(provisionedVersionId)),
@@ -416,6 +429,19 @@ export async function plan({
   } else {
     const run = await github.api(`actions/runs/${id(runId)}`);
     verifyRun(run, sourceSha);
+    if (automatic) {
+      need(
+        run.head_repository?.full_name === github.repository,
+        'Automatic production requires CI from this repository',
+      );
+      if (baseline.payload.sourceSha === sourceSha) {
+        need(
+          baseline.payload.runtimeConfigurationDigest === config.digest,
+          'Already-deployed source has different runtime configuration; use explicit operator release',
+        );
+        return baseline;
+      }
+    }
     const artifacts = await github.api(`actions/runs/${id(runId)}/artifacts?per_page=100`);
     const matches = artifacts.artifacts.filter(
       (row) => row.name === `corner-release-${sourceSha}` && !row.expired,
@@ -430,9 +456,7 @@ export async function plan({
       const currentSchema = await github.artifact(schemaReference, join(work, 'schema'));
       need(
         currentSchema.manifest.migrations.every(
-          (migration, index) =>
-            candidate.manifest.migrations[index]?.name === migration.name &&
-            candidate.manifest.migrations[index]?.sha256 === migration.sha256,
+          (migration, index) => isDeepStrictEqual(candidate.manifest.migrations[index], migration),
         ),
         'Candidate does not preserve CURRENT attempted migration history',
       );
@@ -452,9 +476,9 @@ export async function plan({
     );
     files = await changedFiles(github, baseline?.payload, sourceSha);
   }
-  const review = manualAttestation(attestation, reference.sourceSha, actor);
+  const review = automatic ? null : manualAttestation(attestation, reference.sourceSha, actor);
   const payload = {
-    format: 3,
+    format: 4,
     kind: target.kind,
     workerName: target.workerName,
     phase: 'planned',
@@ -467,13 +491,15 @@ export async function plan({
     origin: config.origin,
     baselineId: baseline ? String(baseline.id) : null,
     bootstrap,
+    automatic,
     provisionedVersionId,
     rollback: Boolean(rollbackId),
     rollbackVersionId: rollbackId ? reference.versionId : null,
     qualification,
     operatorRequired:
-      Boolean(rollbackId) ||
-      requiresOperator(files, bootstrap, baseline?.payload, candidate.manifest, config.digest),
+      !automatic &&
+      (Boolean(rollbackId) ||
+        requiresOperator(files, bootstrap, baseline?.payload, candidate.manifest, config.digest)),
     bindingsRevision: config.bindingsRevision,
     manualReview: review,
     targetQualification: rollbackId ? reference.qualification : null,
@@ -607,16 +633,15 @@ export async function validateLiveRollback(
   try {
     connection = await database.connect();
     await connection.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
-    const history = (
-      await connection.query('SELECT name, checksum FROM corner_schema_migrations ORDER BY name')
-    ).rows;
+    const { migrationHistory, currentSchema } = await load(
+      join(current.directory, current.manifest.migrationEntry),
+    );
     need(
-      history.every((row) =>
-        current.manifest.migrations.some(
-          (migration) => migration.name === row.name && migration.sha256 === row.checksum,
-        ),
-      ),
-      'CURRENT database has unknown or modified migrations',
+      typeof migrationHistory === 'function' && typeof currentSchema === 'function',
+      'CURRENT artifact lacks native migration history validation',
+    );
+    await migrationHistory(
+      connection, await currentSchema(connection), current.manifest.migrations, true,
     );
     let after = null;
     for (;;) {
@@ -651,6 +676,7 @@ export async function promote({
   github,
   planId,
   configuration,
+  automatic = false,
   work,
   execute = command,
   checkPublic = publicChecks,
@@ -673,6 +699,16 @@ export async function promote({
       p.executionRunAttempt === process.env.GITHUB_RUN_ATTEMPT,
     'Plan belongs to a different approval execution',
   );
+  need(p.automatic === automatic, 'Plan release mode differs from this execution');
+  const assertCurrentCandidate = async () => {
+    if (automatic) await assertCurrentMain(github, p.sourceSha);
+  };
+  await assertCurrentCandidate();
+  if (automatic)
+    need(
+      !p.bootstrap && !p.rollback && !p.operatorRequired && p.manualReview === null,
+      'Automatic production cannot execute an operator release plan',
+    );
   const config = validateConfiguration(configuration);
   need(
     config.digest === p.runtimeConfigurationDigest,
@@ -681,7 +717,7 @@ export async function promote({
   const baseline = await github.baseline();
   assertBaseline(p.baselineId, baseline?.id);
   need(
-    p.format === 3 &&
+    p.format === 4 &&
       sha.test(p.sourceSha) &&
       digest.test(p.candidateDigest) &&
       digest.test(p.configurationSha256) &&
@@ -709,10 +745,13 @@ export async function promote({
           p.qualification.bootstrap === p.bootstrap),
     'Persisted approval qualification does not bind candidate and current baseline',
   );
-  manualAttestation(JSON.stringify(p.manualReview), p.sourceSha, process.env.GITHUB_ACTOR);
+  if (!automatic)
+    manualAttestation(JSON.stringify(p.manualReview), p.sourceSha, process.env.GITHUB_ACTOR);
   const schemaState = await github.schema();
   assertBaseline(p.schemaId, schemaState?.id);
-  const approval = await github.approval('production');
+  const approval = automatic
+    ? { kind: 'successful-main-ci', runId: p.runId, sourceSha: p.sourceSha }
+    : await github.approval('production-operations');
   let bootstrapSecrets;
   if (p.bootstrap) {
     bootstrapSecrets = JSON.parse(
@@ -872,6 +911,7 @@ export async function promote({
       need(uuid.test(versionId ?? ''), 'Upload did not return an exact Worker version ID');
       await reverify();
     }
+    await assertCurrentCandidate();
     // Journal before migration: even a lost response cannot hide a possible schema advance.
     await github.record({ ...p, phase: 'schema-attempted', planId: String(prepared.id), approval });
     execute(
@@ -906,6 +946,7 @@ export async function promote({
   need(uuid.test(versionId ?? ''), 'Invalid qualified Worker version ID');
   const latest = await github.baseline();
   assertBaseline(p.baselineId, latest?.id);
+  await assertCurrentCandidate();
   if (!p.bootstrap) wrangler(['versions', 'deploy', `${versionId}@100%`, ...common, '--yes']);
   let receipt = {
     ...p,
@@ -984,6 +1025,27 @@ export async function validateOperational({
     'success',
   );
 }
+export async function deploy(options) {
+  const prepared = await plan({
+    ...options,
+    work: await mkdtemp(join(options.work, 'plan-')),
+    automatic: true,
+  });
+  if (prepared.payload.phase !== 'planned') {
+    await (options.checkPublic ?? publicChecks)(
+      prepared.payload.origin,
+      prepared.payload.versionId,
+    );
+    return prepared;
+  }
+  return promote({
+    ...options,
+    work: await mkdtemp(join(options.work, 'promote-')),
+    automatic: true,
+    planId: String(prepared.id),
+  });
+}
+
 async function main() {
   const args = process.argv.slice(2);
   if (args[0] === '--') args.shift();
@@ -999,8 +1061,8 @@ async function main() {
   const work = await mkdtemp(join(tmpdir(), 'corner-release-'));
   try {
     let record;
-    if (action === 'plan')
-      record = await plan({
+    if (action === 'plan' || action === 'deploy')
+      record = await (action === 'deploy' ? deploy : plan)({
         github,
         runId: process.env.RELEASE_RUN_ID,
         sourceSha: process.env.RELEASE_SOURCE_SHA,
@@ -1025,7 +1087,7 @@ async function main() {
         deploymentId: process.env.RELEASE_DEPLOYMENT_ID,
         evidence: process.env.RELEASE_OPERATIONAL_REVIEW,
       });
-    else throw new Error('Usage: node scripts/release.mjs plan|promote|validate');
+    else throw new Error('Usage: node scripts/release.mjs deploy|plan|promote|validate');
     if (process.env.GITHUB_OUTPUT)
       await writeFile(process.env.GITHUB_OUTPUT, `deployment_id=${record.id}\n`, { flag: 'a' });
     console.log(

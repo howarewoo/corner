@@ -2,7 +2,7 @@
 
 import { useState, type FormEvent } from 'react';
 import { Check, Loader2 } from 'lucide-react';
-import type { Ingredient, Macros, Recipe, RecipeCategory } from '@packages/shared/types';
+import type { Ingredient, Macros, Recipe, RecipeCategory } from '@packages/nutrition/types';
 import {
   Alert,
   AlertDescription,

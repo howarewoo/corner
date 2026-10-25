@@ -19,7 +19,6 @@ test('development origin validation stays on loopback with separate fixed ports'
       changeOrigin: false,
     });
   }
-  assert.ok(defaults.fs?.allow?.some((path) => path.endsWith('/packages/shared/dist')));
   assert.equal(
     defaults.fs?.allow?.includes(dirname(dirname(webRoot))),
     false,

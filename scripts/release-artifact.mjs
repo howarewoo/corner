@@ -4,6 +4,8 @@ import { access, copyFile, lstat, mkdir, readFile, readdir, writeFile } from 'no
 import { createRequire } from 'node:module';
 import { dirname, join, resolve, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isDeepStrictEqual } from 'node:util';
+import { migrationInventory } from '../apps/server/src/migration-inventory.ts';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const hash = (bytes) => createHash('sha256').update(bytes).digest('hex');
 const sha = (value) => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
@@ -40,7 +42,7 @@ export async function verifyArtifact(directory) {
   const manifest = JSON.parse(bytes);
   if (
     !object(manifest) ||
-    manifest.format !== 3 ||
+    manifest.format !== 4 ||
     !/^[a-f0-9]{40}$/.test(manifest.sourceSha) ||
     !sha(manifest.lockfileSha256) ||
     !/^v24\.(?:1[5-9]|[2-9]\d|\d{3,})\.\d+$/.test(manifest.nodeVersion) ||
@@ -66,7 +68,7 @@ export async function verifyArtifact(directory) {
     )
   )
     throw new Error(
-      'Invalid single-Worker format-3 artifact manifest; older artifacts require explicit operator reconciliation.',
+      'Invalid format-4 artifact; pre-Drizzle artifacts are retired recovery targets.',
     );
   delete files['manifest.json'];
   const names = Object.keys(manifest.files).sort();
@@ -139,21 +141,9 @@ export async function verifyArtifact(directory) {
     Object.keys(config.observability.logs).some((key) => key !== 'invocation_logs')
   )
     throw new Error('Unsafe packaged deployment configuration.');
-  const migrationNames = names.filter((name) => name.startsWith('migration/migrations/'));
-  if (manifest.migrations.length === 0 || manifest.migrations.length !== migrationNames.length)
-    throw new Error('Missing migration inventory.');
-  const seen = new Set();
-  for (const [index, migration] of manifest.migrations.entries()) {
-    if (
-      !object(migration) ||
-      !/^\d+_[a-zA-Z0-9_.-]+\.sql$/.test(migration.name) ||
-      seen.has(migration.name) ||
-      migrationNames[index] !== `migration/migrations/${migration.name}` ||
-      files[`migration/migrations/${migration.name}`] !== migration.sha256
-    )
-      throw new Error('Invalid migration digest.');
-    seen.add(migration.name);
-  }
+  const migrations = await migrationInventory(join(directory, 'migration/migrations'));
+  if (!isDeepStrictEqual(manifest.migrations, migrations))
+    throw new Error('Artifact migration inventory differs from validated Kit metadata.');
   return { manifest, digest: hash(bytes) };
 }
 
@@ -179,9 +169,11 @@ export async function packageArtifact({ root: sourceRoot = root, out, sourceSha 
   const serverRequire = createRequire(join(sourceRoot, 'apps/server/package.json'));
   const webRequire = createRequire(join(sourceRoot, 'apps/web/package.json'));
   const { experimental_readRawConfig } = await import(serverRequire.resolve('wrangler'));
-  const shared = await readdir(join(sourceRoot, 'packages/shared/dist')).catch(() => []);
-  if (!shared.some((name) => name.endsWith('.js')))
-    throw new Error('Build shared before packaging.');
+  for (const name of ['nutrition', 'training', 'workspace', 'agent']) {
+    const files = await readdir(join(sourceRoot, 'packages', name, 'dist')).catch(() => []);
+    if (!files.some((file) => file.endsWith('.js')))
+      throw new Error(`Build ${name} before packaging.`);
+  }
   await access(join(sourceRoot, 'apps/server/dist/migrate.js'));
   const workerSource = join(sourceRoot, 'apps/server/dist/worker');
   await access(join(workerSource, 'worker.js'));
@@ -196,7 +188,7 @@ export async function packageArtifact({ root: sourceRoot = root, out, sourceSha 
   await build({
     stdin: {
       contents:
-        "export { migrate } from './migrate.js'; export { createDatabase } from './database.js'; export { inspectImport } from './store.js';",
+        "export { migrate } from './migrate.js'; export { migrationInventory } from './migration-inventory.js'; export { migrationHistory, currentSchema } from './migration-history.js'; export { createDatabase } from './database.js'; export { inspectImport } from './store.js';",
       resolveDir: join(sourceRoot, 'apps/server/dist'),
       sourcefile: 'packaged-migration.js',
       loader: 'js',
@@ -233,7 +225,7 @@ export async function packageArtifact({ root: sourceRoot = root, out, sourceSha 
   });
   const files = await inventory(out);
   const manifest = {
-    format: 3,
+    format: 4,
     sourceSha,
     lockfileSha256: hash(await readFile(join(sourceRoot, 'pnpm-lock.yaml'))),
     nodeVersion: process.version,
@@ -244,9 +236,7 @@ export async function packageArtifact({ root: sourceRoot = root, out, sourceSha 
     workerName: original.name,
     migrationEntry: 'migration/dist/migrate.mjs',
     files,
-    migrations: Object.keys(files)
-      .filter((name) => name.startsWith('migration/migrations/'))
-      .map((name) => ({ name: name.split('/').at(-1), sha256: files[name] })),
+    migrations: await migrationInventory(join(out, 'migration/migrations')),
   };
   await writeFile(join(out, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`, {
     flag: 'wx',
@@ -285,7 +275,7 @@ export async function qualifyArtifact({ candidate, previous, bootstrap = false, 
       throw new Error('Previous artifact has no matching successful qualification.');
     for (const [index, item] of prior.manifest.migrations.entries()) {
       const candidateMigration = current.manifest.migrations[index];
-      if (candidateMigration?.name !== item.name || candidateMigration.sha256 !== item.sha256)
+      if (!isDeepStrictEqual(candidateMigration, item))
         throw new Error(
           'Candidate removed or rewrote a previous migration; prior inventory must remain a prefix.',
         );

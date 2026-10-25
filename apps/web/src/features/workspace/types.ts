@@ -1,4 +1,5 @@
-import type { AppState, FoodEntry, MealSlot, Recipe } from '@packages/shared/types';
+import type { AppState } from '@packages/workspace/types';
+import type { FoodEntry, MealSlot, Recipe } from '@packages/nutrition/types';
 import type { WorkspaceMutationInput } from '@packages/api/schemas';
 
 export type View =

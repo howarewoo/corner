@@ -43,7 +43,22 @@
       "cache": false,
       "persistent": true
     },
-    "@packages/shared#dev": {
+    "@packages/nutrition#dev": {
+      "dependsOn": ["build"],
+      "cache": false,
+      "persistent": true
+    },
+    "@packages/training#dev": {
+      "dependsOn": ["build"],
+      "cache": false,
+      "persistent": true
+    },
+    "@packages/workspace#dev": {
+      "dependsOn": ["build"],
+      "cache": false,
+      "persistent": true
+    },
+    "@packages/agent#dev": {
       "dependsOn": ["build"],
       "cache": false,
       "persistent": true

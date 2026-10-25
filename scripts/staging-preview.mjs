@@ -5,6 +5,7 @@ import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { isDeepStrictEqual } from 'node:util';
 import { GitHub, publicChecks } from './release.mjs';
 import { loadCiArtifact } from './ci-artifact.mjs';
 import { qualifyArtifact, verifyArtifact } from './release-artifact.mjs';
@@ -208,14 +209,15 @@ export async function deployPreview({
   const schema = histories[0];
   if (schema)
     need(
-      schema.payload?.kind === kind && schema.payload.phase === 'schema-attempted',
+      schema.payload?.format === 4 && schema.payload.kind === kind &&
+        schema.payload.phase === 'schema-attempted',
       'Invalid Preview schema history',
     );
   const deployments = await github.all('deployments?environment=staging&task=corner-preview');
   const previous = deployments[0];
   if (previous)
     need(
-      previous.payload?.kind === kind &&
+      previous.payload?.format === 4 && previous.payload.kind === kind &&
         ['deployed', 'complete'].includes(previous.payload.phase) &&
         previous.payload.workerName === workerName &&
         previous.payload.previewName === previewName &&
@@ -238,9 +240,7 @@ export async function deployPreview({
     const attempted = await load(schema.payload, join(work, 'schema'));
     need(
       attempted.manifest.migrations.every(
-        (migration, index) =>
-          candidate.manifest.migrations[index]?.name === migration.name &&
-          candidate.manifest.migrations[index]?.sha256 === migration.sha256,
+        (migration, index) => isDeepStrictEqual(candidate.manifest.migrations[index], migration),
       ),
       'Candidate does not preserve CURRENT attempted migration history',
     );
@@ -273,7 +273,7 @@ export async function deployPreview({
   const production = JSON.stringify(await cf(`workers/scripts/${workerName}/deployments`));
   await serving();
   const payload = {
-    format: 1,
+    format: 4,
     kind,
     ...reference,
     candidateDigest: candidate.digest,

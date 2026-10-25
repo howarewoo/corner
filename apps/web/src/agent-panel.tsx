@@ -10,13 +10,14 @@ import {
   Square,
   Unplug,
 } from 'lucide-react';
-import type { AgentChange, AgentRun } from '@packages/shared/agent';
-import type { AppState, Macros, Recipe } from '@packages/shared/types';
+import type { AgentChange, AgentRun } from '@packages/agent/proposals';
+import type { AppState } from '@packages/workspace/types';
+import type { Macros, Recipe } from '@packages/nutrition/types';
 import type {
   ExerciseTarget,
   WorkoutSession,
   WorkoutTemplate,
-} from '@packages/shared/training-types';
+} from '@packages/training/types';
 import {
   Alert,
   AlertDescription,

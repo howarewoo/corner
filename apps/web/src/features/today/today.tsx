@@ -1,13 +1,9 @@
-import type { AppState, Recipe, PlanEntry } from '@packages/shared/types';
-import { SLOTS } from '@packages/shared/types';
-import {
-  activityForStateDate,
-  dateKey,
-  mondayOf,
-  weekDates,
-  macroTotal,
-  targetForStateDate,
-} from '@packages/shared/domain';
+import type { AppState } from '@packages/workspace/types';
+import type { Recipe, PlanEntry } from '@packages/nutrition/types';
+import { SLOTS } from '@packages/nutrition/types';
+import { activityForStateDate, targetForStateDate } from '@packages/workspace/targets';
+import { dateKey, mondayOf, weekDates } from '@packages/nutrition/dates';
+import { macroTotal } from '@packages/nutrition/calculations';
 import {
   Activity,
   Dumbbell,

@@ -26,7 +26,7 @@ import {
   TrendingUp,
   X,
 } from 'lucide-react';
-import type { AppState } from '@packages/shared/types';
+import type { AppState } from '@packages/workspace/types';
 import type { WorkspaceMutationInput } from '@packages/api/schemas';
 import type {
   LoadType,
@@ -38,19 +38,19 @@ import type {
   WorkoutSet,
   WorkoutStatus,
   WorkoutTemplate,
-} from '@packages/shared/training-types';
+} from '@packages/training/types';
 import {
   createSessionFromTemplate,
   exerciseHistory,
   trainingStats,
-} from '@packages/shared/training';
-import { dateKey, shiftDate, weekDates } from '@packages/shared/domain';
+} from '@packages/training/workouts';
+import { dateKey, shiftDate, weekDates } from '@packages/nutrition/dates';
 import {
   convertTrainingWeight,
   getWorkoutPrefill,
   type WorkoutPrefill,
-} from '@packages/shared/training-prefill';
-import type { ExerciseCatalogEntry } from '@packages/shared/exercise-catalog';
+} from '@packages/training/prefill';
+import type { ExerciseCatalogEntry } from '@packages/training/exercise-catalog';
 import {
   Alert,
   AlertDescription,

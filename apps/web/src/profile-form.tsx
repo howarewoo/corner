@@ -1,8 +1,9 @@
 import { useState, type FormEvent, type ReactNode } from 'react';
 import { Check, Loader2, SlidersHorizontal } from 'lucide-react';
-import type { Macros, Settings } from '@packages/shared/types';
-import { SettingsSchema } from '@packages/shared/domain';
-import { DEFAULT_PROFILE } from '@packages/shared/seed';
+import type { Macros } from '@packages/nutrition/types';
+import type { Settings } from '@packages/workspace/types';
+import { SettingsSchema } from '@packages/workspace/mutations';
+import { DEFAULT_PROFILE } from '@packages/workspace/initial-state';
 import {
   Button,
   Input,

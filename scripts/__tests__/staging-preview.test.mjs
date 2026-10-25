@@ -235,8 +235,8 @@ async function interruptedDeployment(t) {
   const f = await scenario(t);
   const load = f.options.loadArtifact;
   const candidate = await load();
-  const migration = { name: '001.sql', sha256: '1'.repeat(64) };
-  const attemptedMigration = { name: '002.sql', sha256: '2'.repeat(64) };
+  const migration = { name: '0000_corner.sql', sha256: '1'.repeat(64), when: 1 };
+  const attemptedMigration = { name: '0001_next.sql', sha256: '2'.repeat(64), when: 2 };
   candidate.manifest.migrations = [migration, attemptedMigration];
   const serving = {
     ...candidate,
@@ -250,6 +250,7 @@ async function interruptedDeployment(t) {
     digest: 'd'.repeat(64),
   };
   const payload = {
+    format: 4,
     kind: 'corner-staging-preview',
     workerName: 'corner',
     previewName: 'staging',
@@ -334,4 +335,13 @@ test('live drift from serving ledger is rejected initially and after qualificati
     await assert.rejects(deployPreview(f.options), /Live Preview deployment differs/);
     assert.deepEqual(f.effects, []);
   }
+});
+
+test('Preview rejects pre-Drizzle schema history before any effects', async (t) => {
+  const f = await scenario(t);
+  f.options.github.all = async (path) => path.includes('environment=staging-schema&')
+    ? [{ payload: { format: 1, kind: 'corner-staging-preview', phase: 'schema-attempted' } }]
+    : [];
+  await assert.rejects(deployPreview(f.options));
+  assert.deepEqual(f.effects, []);
 });

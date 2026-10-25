@@ -1,14 +1,10 @@
 import { z } from 'zod';
-import {
-  DateSchema,
-  MacrosSchema,
-  PlanEntrySchema,
-  RecipeSchema,
-  applyMutation,
-} from './domain.js';
-import { WorkoutSessionSchema, WorkoutTemplateSchema, hasRecordedData } from './training.js';
-import { getCatalogExercise } from './exercise-catalog.js';
-import type { AppState, Mutation, Recipe } from './types.js';
+import { DateSchema, MacrosSchema, PlanEntrySchema, RecipeSchema } from '@packages/nutrition/schemas';
+import type { Recipe } from '@packages/nutrition/types';
+import { WorkoutSessionSchema, WorkoutTemplateSchema, hasRecordedData } from '@packages/training/workouts';
+import { getCatalogExercise } from '@packages/training/exercise-catalog';
+import { applyMutation } from '@packages/workspace/mutations';
+import type { AppState, Mutation } from '@packages/workspace/types';
 
 const id = z
   .string()

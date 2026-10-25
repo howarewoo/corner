@@ -8,7 +8,7 @@ import { act, createElement, useRef } from 'react';
 import { create, type ReactTestRenderer } from 'react-test-renderer';
 import { QueryClientProvider, notifyManager, useMutation } from '@tanstack/react-query';
 import type * as Runtime from '../rpc.ts';
-import type { StateResponse } from '@packages/shared/types';
+import type { StateResponse } from '@packages/workspace/types';
 const project = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 
 // Render the production query consumer with controlled native RPC responses.

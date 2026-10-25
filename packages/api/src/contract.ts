@@ -1,9 +1,9 @@
 import { oc, type, type ContractRouterClient } from '@orpc/contract';
 import { z } from 'zod';
-import { AgentRequestSchema, type AgentRun } from '@packages/shared/agent';
-import { RecipeSchema } from '@packages/shared/domain';
-import { FoodEstimateResultSchema } from '@packages/shared/food-estimate';
-import type { StateResponse } from '@packages/shared/types';
+import { AgentRequestSchema, type AgentRun } from '@packages/agent/proposals';
+import { RecipeSchema } from '@packages/nutrition/schemas';
+import { FoodEstimateResultSchema } from '@packages/nutrition/food-estimate';
+import type { StateResponse } from '@packages/workspace/types';
 import {
   applyInputSchema,
   FoodInputSchema,

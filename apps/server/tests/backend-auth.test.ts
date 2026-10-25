@@ -8,7 +8,7 @@ import type { Config } from '../src/config.ts';
 import type { SubscriptionProvider } from '../src/subscription.ts';
 import type { PlanningAgent } from '../src/planning-agent.ts';
 import { WorkspaceStore } from '../src/store.ts';
-import { createInitialState } from '@packages/shared/seed';
+import { createInitialState } from '@packages/workspace/initial-state';
 
 const config: Config = {
   ...neonTestConfig,

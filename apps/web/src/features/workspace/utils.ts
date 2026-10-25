@@ -1,4 +1,4 @@
-import type { Macros } from '@packages/shared/types';
+import type { Macros } from '@packages/nutrition/types';
 import { Activity, Dumbbell, Leaf } from 'lucide-react';
 
 export const macroNames: Record<keyof Macros, string> = {

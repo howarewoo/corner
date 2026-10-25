@@ -1,6 +1,6 @@
 import { z } from 'zod';
-import { MutationSchema } from '@packages/shared/domain';
-import { FoodDescriptionSchema } from '@packages/shared/food-estimate';
+import { MutationSchema } from '@packages/workspace/mutations';
+import { FoodDescriptionSchema } from '@packages/nutrition/food-estimate';
 
 export const requestIdSchema = z
   .string()

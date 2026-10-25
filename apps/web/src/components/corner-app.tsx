@@ -3,8 +3,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, Navigate, useLocation, useNavigate, useRoutes } from 'react-router';
 import { Dumbbell, Home, Settings2, Sparkles, UtensilsCrossed } from 'lucide-react';
-import type { Recipe } from '@packages/shared/types';
-import { dateKey } from '@packages/shared/domain';
+import type { Recipe } from '@packages/nutrition/types';
+import { dateKey } from '@packages/nutrition/dates';
 import {
   AppSidebar,
   Avatar,

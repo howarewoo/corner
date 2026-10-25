@@ -7,8 +7,8 @@ import { build } from 'esbuild';
 import { act, createElement, type ComponentType } from 'react';
 import { create, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer';
 import { QueryClientProvider, notifyManager } from '@tanstack/react-query';
-import type { AgentRun } from '@packages/shared/agent';
-import type { AppState } from '@packages/shared/types';
+import type { AgentRun } from '@packages/agent/proposals';
+import type { AppState } from '@packages/workspace/types';
 import type * as Runtime from '../rpc.ts';
 
 const project = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
@@ -51,7 +51,10 @@ test('rendered agent recovers from poll and connection refresh failures and stop
     },
     outfile: bundle, bundle: true, format: 'esm', platform: 'node', target: 'node24',
     mainFields: ['module', 'main'],
-    external: ['react', 'react/*', 'react-dom', 'react-dom/*', '@tanstack/react-query', 'lucide-react', '@packages/shared/*'],
+    external: [
+      'react', 'react/*', 'react-dom', 'react-dom/*', '@tanstack/react-query', 'lucide-react',
+      '@packages/nutrition/*', '@packages/training/*', '@packages/workspace/*', '@packages/agent/*',
+    ],
     loader: { '.css': 'empty' }, jsx: 'automatic',
     banner: { js: "import { createRequire as createNodeRequire } from 'node:module'; const require = createNodeRequire(import.meta.url);" },
     tsconfig: join(project, 'tsconfig.json'), logLevel: 'silent',

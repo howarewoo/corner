@@ -1,18 +1,19 @@
 import { createHash } from 'node:crypto';
-import type { Pool, PoolClient } from 'pg';
+import type { Pool } from 'pg';
+import { and, desc, eq, inArray, sql } from 'drizzle-orm';
+import { createQueries, type Database, type QueryConnection, type Transaction } from './queries.js';
+import { mutationReceipts, workspaceState } from './schema.js';
 import { z } from 'zod';
+import { applyMutation, MutationSchema, SettingsSchema } from '@packages/workspace/mutations';
 import {
-  applyMutation,
   FoodEntrySchema,
-  MutationSchema,
   PlanEntrySchema,
   RecipeRequestSchema,
   RecipeSchema,
-  SettingsSchema,
-} from '@packages/shared/domain';
-import { createInitialState } from '@packages/shared/seed';
-import { TrainingStateSchema } from '@packages/shared/training';
-import type { AppState, Mutation } from '@packages/shared/types';
+} from '@packages/nutrition/schemas';
+import { createInitialState } from '@packages/workspace/initial-state';
+import { createTrainingState, TrainingStateSchema } from '@packages/training/workouts';
+import type { AppState, Mutation } from '@packages/workspace/types';
 import { ApiError } from './http.js';
 import { requestIdSchema, revisionSchema } from '@packages/api/schemas';
 
@@ -51,15 +52,6 @@ const StateSchema = z
   })
   .strict();
 
-const emptyTraining = () => ({
-  templates: [],
-  sessions: [],
-  checkIns: [],
-  requests: [],
-  reviews: [],
-  scheduledDates: [],
-});
-
 function uniqueIds(items: Array<{ id: string }>, collection: string): void {
   if (new Set(items.map((item) => item.id)).size !== items.length)
     throw new ApiError(400, 'INVALID_STATE', `${collection} contains duplicate item IDs.`);
@@ -83,7 +75,7 @@ export function inspectImport(rawState: unknown): {
     throw new ApiError(400, 'INVALID_STATE', 'Choose a valid Corner JSON export.');
   const raw = rawState as Record<string, unknown>;
   let training = raw.training;
-  if (training === undefined) training = emptyTraining();
+  if (training === undefined) training = createTrainingState();
   else if (
     training &&
     typeof training === 'object' &&
@@ -177,19 +169,22 @@ export function isEmptyWorkspace(state: AppState): boolean {
 }
 
 export class WorkspaceStore {
-  constructor(public readonly db: Pool) {}
+  readonly db: Database;
+
+  constructor(pool: Pool) {
+    this.db = createQueries(pool);
+  }
 
   async read(
     userId: string,
     name?: string,
-    connection: Pool | PoolClient = this.db,
+    connection: QueryConnection = this.db,
   ): Promise<WorkspaceSnapshot> {
     userSchema.parse(userId);
     const row = (
-      await connection.query('SELECT data, version FROM workspace_state WHERE user_id = $1', [
-        userId,
-      ])
-    ).rows[0] as { data: string; version: number } | undefined;
+      await connection.select({ data: workspaceState.data, version: workspaceState.version })
+        .from(workspaceState).where(eq(workspaceState.user_id, userId))
+    )[0];
     if (!row) return { state: createInitialState(name), revision: 0 };
     try {
       return {
@@ -229,7 +224,7 @@ export class WorkspaceStore {
     requestId: string,
     mutations: Mutation[],
     expectedRevision: number,
-    onApplied?: (connection: PoolClient) => Promise<void>,
+    onApplied?: (connection: Transaction) => Promise<void>,
   ): Promise<WorkspaceSnapshot> {
     revisionSchema.parse(expectedRevision);
     const parsed = z.array(MutationSchema).min(1).max(200).parse(mutations) as Mutation[];
@@ -299,23 +294,20 @@ export class WorkspaceStore {
     payload: unknown,
     expectedRevision: number | undefined,
     update: (current: WorkspaceSnapshot) => AppState,
-    onApplied?: (connection: PoolClient) => Promise<void>,
+    onApplied?: (connection: Transaction) => Promise<void>,
   ): Promise<WorkspaceSnapshot> {
     userSchema.parse(userId);
     requestIdSchema.parse(requestId);
     if (expectedRevision !== undefined) revisionSchema.parse(expectedRevision);
     const hash = fingerprint(payload);
-    const connection = await this.db.connect();
-    try {
-      await connection.query('BEGIN');
+    return this.db.transaction(async (connection) => {
       // Also serializes the first mutation, when no workspace row exists yet.
-      await connection.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [userId]);
+      await connection.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${userId}, 0))`);
       const receipt = (
-        await connection.query(
-          'SELECT payload_hash FROM mutation_receipts WHERE user_id = $1 AND request_id = $2',
-          [userId, requestId],
-        )
-      ).rows[0] as { payload_hash: string } | undefined;
+        await connection.select({ payload_hash: mutationReceipts.payload_hash })
+          .from(mutationReceipts)
+          .where(and(eq(mutationReceipts.user_id, userId), eq(mutationReceipts.request_id, requestId)))
+      )[0];
       if (receipt) {
         if (receipt.payload_hash !== hash)
           throw new ApiError(
@@ -325,7 +317,6 @@ export class WorkspaceStore {
           );
         const replay = await this.read(userId, undefined, connection);
         await onApplied?.(connection);
-        await connection.query('COMMIT');
         return replay;
       }
       const current = await this.read(userId, undefined, connection);
@@ -344,26 +335,24 @@ export class WorkspaceStore {
       const next = inspectImport(update(current)).state;
       const revision = current.revision + 1;
       const now = new Date().toISOString();
-      await connection.query(
-        'INSERT INTO workspace_state (user_id, data, version, updated_at) VALUES ($1, $2, $3, $4) ON CONFLICT(user_id) DO UPDATE SET data = excluded.data, version = excluded.version, updated_at = excluded.updated_at',
-        [userId, JSON.stringify(next), revision, now],
-      );
-      await connection.query(
-        'INSERT INTO mutation_receipts (user_id, request_id, payload_hash, revision, created_at) VALUES ($1, $2, $3, $4, $5)',
-        [userId, requestId, hash, revision, now],
-      );
-      await connection.query(
-        'DELETE FROM mutation_receipts WHERE user_id = $1 AND request_id IN (SELECT request_id FROM mutation_receipts WHERE user_id = $1 ORDER BY revision DESC OFFSET 1000)',
-        [userId],
-      );
+      const data = JSON.stringify(next);
+      await connection.insert(workspaceState).values({
+        user_id: userId, data, version: revision, updated_at: now,
+      }).onConflictDoUpdate({
+        target: workspaceState.user_id,
+        set: { data, version: revision, updated_at: now },
+      });
+      await connection.insert(mutationReceipts).values({
+        user_id: userId, request_id: requestId, payload_hash: hash, revision, created_at: now,
+      });
+      await connection.delete(mutationReceipts).where(and(
+        eq(mutationReceipts.user_id, userId),
+        inArray(mutationReceipts.request_id, connection.select({ request_id: mutationReceipts.request_id })
+          .from(mutationReceipts).where(eq(mutationReceipts.user_id, userId))
+          .orderBy(desc(mutationReceipts.revision)).offset(1000)),
+      ));
       await onApplied?.(connection);
-      await connection.query('COMMIT');
       return { state: next, revision };
-    } catch (error) {
-      await connection.query('ROLLBACK');
-      throw error;
-    } finally {
-      connection.release();
-    }
+    });
   }
 }

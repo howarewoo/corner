@@ -234,7 +234,10 @@ test('rendered standalone account verification and password recovery', async (t)
       'lucide-react',
       '@neondatabase/auth',
       '@neondatabase/auth/*',
-      '@packages/shared/*',
+      '@packages/nutrition/*',
+      '@packages/training/*',
+      '@packages/workspace/*',
+      '@packages/agent/*',
     ],
     banner: {
       js: "import { createRequire as createNodeRequire } from 'node:module'; const require = createNodeRequire(import.meta.url);",

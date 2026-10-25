@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
-import type { AppState } from '@packages/shared/types';
-import { groceryList, mondayOf } from '@packages/shared/domain';
+import type { AppState } from '@packages/workspace/types';
+import { groceryList } from '@packages/nutrition/calculations';
+import { mondayOf } from '@packages/nutrition/dates';
 import { ArrowDownToLine, ArrowRight, CheckCircle2, Copy, ShoppingBasket } from 'lucide-react';
 import {
   Button,

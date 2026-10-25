@@ -1,0 +1,42 @@
+name: Deploy main to production
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  dispatch:
+    if: >-
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      # workflow_run uses the default branch ref. Dispatch main explicitly so the
+      # production environment can remain main-only even when staging is default.
+      - name: Release the current successful main candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          CI_RUN_ID: ${{ github.event.workflow_run.id }}
+          CI_SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          current_sha=$(gh api "repos/$GH_REPO/git/ref/heads/main" --jq '.object.sha')
+          if [ "$current_sha" != "$CI_SOURCE_SHA" ]; then
+            echo "Skipping superseded main CI candidate."
+            exit 0
+          fi
+          gh workflow run release.yml --ref main \
+            --raw-field automatic=true \
+            --raw-field run_id="$CI_RUN_ID" \
+            --raw-field source_sha="$CI_SOURCE_SHA"
