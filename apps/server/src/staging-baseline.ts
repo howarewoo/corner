@@ -24,9 +24,12 @@ export interface StagingBaselineOptions {
 
 async function identity(client: PoolClient, schema: string): Promise<string> {
   const { rows } = await client.query(
-    'SELECT current_database() AS db, inet_server_addr()::text AS host, inet_server_port() AS port',
+    `SELECT current_database() AS db, current_setting('neon.branch_id', true) AS branch,
+      inet_server_addr()::text AS host, inet_server_port() AS port`,
   );
-  return JSON.stringify([rows[0], schema]);
+  const row = rows[0];
+  // Neon's proxy address is shared across branches and computes can move between servers.
+  return JSON.stringify([row.branch ? { db: row.db, branch: row.branch } : row, schema]);
 }
 
 // Deliberately limited to the plain tables, built-in column types and btree indexes
@@ -43,13 +46,17 @@ async function catalog(client: PoolClient, schema: string, includeLedger = false
     EXISTS (SELECT 1 FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=$1) OR
     EXISTS (SELECT 1 FROM pg_rewrite r JOIN pg_class c ON c.oid=r.ev_class JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=$1) OR
     EXISTS (SELECT 1 FROM pg_policy p JOIN pg_class c ON c.oid=p.polrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=$1) OR
-    EXISTS (SELECT 1 FROM pg_constraint c JOIN pg_namespace n ON n.oid=c.connamespace WHERE n.nspname=$1 AND c.contype NOT IN ('p','u')) OR
+    EXISTS (SELECT 1 FROM pg_constraint c JOIN pg_namespace n ON n.oid=c.connamespace WHERE n.nspname=$1 AND c.contype NOT IN ('p','u','n')) OR
     EXISTS (SELECT 1 FROM pg_attribute a JOIN pg_class c ON c.oid=a.attrelid JOIN pg_namespace n ON n.oid=c.relnamespace JOIN pg_type t ON t.oid=a.atttypid JOIN pg_namespace tn ON tn.oid=t.typnamespace
       WHERE n.nspname=$1 AND c.relkind='r' AND a.attnum>0 AND (a.attisdropped OR a.attidentity<>'' OR a.attgenerated<>'' OR a.atthasmissing OR a.attacl IS NOT NULL OR tn.nspname<>'pg_catalog' OR EXISTS (SELECT 1 FROM pg_collation co JOIN pg_namespace cn ON cn.oid=co.collnamespace WHERE co.oid=a.attcollation AND cn.nspname<>'pg_catalog'))) OR
     EXISTS (SELECT 1 FROM pg_inherits i JOIN pg_class c ON c.oid=i.inhrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=$1) OR
     EXISTS (SELECT 1 FROM pg_statistic_ext s JOIN pg_namespace n ON n.oid=s.stxnamespace WHERE n.nspname=$1) OR
     EXISTS (SELECT 1 FROM pg_extension e JOIN pg_namespace n ON n.oid=e.extnamespace WHERE n.nspname=$1) OR
-    EXISTS (SELECT 1 FROM pg_default_acl a JOIN pg_namespace n ON n.oid=a.defaclnamespace WHERE n.nspname=$1) OR
+    EXISTS (SELECT 1 FROM pg_default_acl a JOIN pg_namespace n ON n.oid=a.defaclnamespace WHERE n.nspname=$1 AND NOT
+      (current_setting('neon.branch_id', true) IS NOT NULL AND
+       pg_get_userbyid(a.defaclrole)='cloud_admin' AND a.defaclobjtype IN ('r','S') AND NOT EXISTS
+       (SELECT 1 FROM aclexplode(a.defaclacl) acl WHERE pg_get_userbyid(acl.grantor)<>'cloud_admin' OR
+        pg_get_userbyid(acl.grantee)<>'neon_superuser' OR NOT acl.is_grantable))) OR
     EXISTS (SELECT 1 FROM pg_collation c JOIN pg_namespace n ON n.oid=c.collnamespace WHERE n.nspname=$1) OR
     EXISTS (SELECT 1 FROM pg_operator o JOIN pg_namespace n ON n.oid=o.oprnamespace WHERE n.nspname=$1) OR
     EXISTS (SELECT 1 FROM pg_opclass o JOIN pg_namespace n ON n.oid=o.opcnamespace WHERE n.nspname=$1) OR

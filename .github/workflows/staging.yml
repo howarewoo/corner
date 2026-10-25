@@ -1,4 +1,4 @@
-name: Deploy persistent staging
+name: Deploy staging Preview
 
 on:
   workflow_run:
@@ -8,21 +8,13 @@ on:
   workflow_dispatch:
     inputs:
       run_id:
-        description: Successful push-to-staging CI run ID (not used for rollback)
+        description: Exact successful current push-to-staging CI run ID
         type: string
+        required: true
       source_sha:
-        description: Exact current staging SHA (not used for rollback)
+        description: Exact current staging source SHA
         type: string
-      bootstrap:
-        description: Explicit first creation of both staging Workers after database/Auth setup
-        type: boolean
-        default: false
-      rollback_deployment_id:
-        description: Completed staging deployment to recover without reversing SQL
-        type: string
-      validate_deployment_id:
-        description: Recheck an exact deployed staging pair after a repaired public boundary; no code/schema effects
-        type: string
+        required: true
 
 permissions:
   contents: read
@@ -55,7 +47,6 @@ jobs:
         ports: ['5432:5432']
         options: --health-cmd "pg_isready -U postgres -d corner_test" --health-interval 5s --health-timeout 5s --health-retries 10
     env:
-      CORNER_RELEASE_ENVIRONMENT: staging
       CORNER_TEST_DATABASE_URL: postgresql://postgres:corner-test-only@127.0.0.1:5432/corner_test
       CORNER_STAGING_CONFIG_JSON: ${{ vars.CORNER_STAGING_CONFIG_JSON }}
       CORNER_STAGING_ORIGIN: ${{ vars.CORNER_STAGING_ORIGIN }}
@@ -76,31 +67,15 @@ jobs:
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
-      - name: Reject superseded candidates and qualify against deployed staging
-        id: plan
-        if: ${{ !inputs.validate_deployment_id }}
-        run: node scripts/release.mjs plan
+      - name: Qualify, migrate, and deploy the isolated native staging Preview
+        run: node scripts/staging-preview.mjs
         env:
-          RELEASE_RUN_ID: ${{ github.event.workflow_run.id || inputs.run_id }}
-          RELEASE_SOURCE_SHA: ${{ github.event.workflow_run.head_sha || inputs.source_sha }}
-          RELEASE_BOOTSTRAP: ${{ inputs.bootstrap }}
-          RELEASE_ROLLBACK_ID: ${{ inputs.rollback_deployment_id }}
-      - name: Migrate and deploy only the fixed staging Worker pair
-        if: ${{ !inputs.validate_deployment_id }}
-        run: node scripts/release.mjs promote
-        env:
-          RELEASE_PLAN_ID: ${{ steps.plan.outputs.deployment_id }}
+          PREVIEW_RUN_ID: ${{ github.event.workflow_run.id || inputs.run_id }}
+          PREVIEW_SOURCE_SHA: ${{ github.event.workflow_run.head_sha || inputs.source_sha }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
           CORNER_WORKER_SECRETS_JSON: ${{ secrets.CORNER_WORKER_SECRETS_JSON }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CORNER_STAGING_ACCESS_CLIENT_ID: ${{ secrets.CORNER_STAGING_ACCESS_CLIENT_ID }}
-          CORNER_STAGING_ACCESS_CLIENT_SECRET: ${{ secrets.CORNER_STAGING_ACCESS_CLIENT_SECRET }}
-      - name: Recheck a repaired staging public boundary
-        if: ${{ inputs.validate_deployment_id != '' }}
-        run: node scripts/release.mjs validate
-        env:
-          RELEASE_DEPLOYMENT_ID: ${{ inputs.validate_deployment_id }}
           CORNER_STAGING_ACCESS_CLIENT_ID: ${{ secrets.CORNER_STAGING_ACCESS_CLIENT_ID }}
           CORNER_STAGING_ACCESS_CLIENT_SECRET: ${{ secrets.CORNER_STAGING_ACCESS_CLIENT_SECRET }}

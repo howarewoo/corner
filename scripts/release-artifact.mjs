@@ -40,16 +40,33 @@ export async function verifyArtifact(directory) {
   const manifest = JSON.parse(bytes);
   if (
     !object(manifest) ||
-    manifest.format !== 2 ||
+    manifest.format !== 3 ||
     !/^[a-f0-9]{40}$/.test(manifest.sourceSha) ||
     !sha(manifest.lockfileSha256) ||
     !/^v24\.(?:1[5-9]|[2-9]\d|\d{3,})\.\d+$/.test(manifest.nodeVersion) ||
     !/^\d+\.\d+\.\d+$/.test(manifest.wranglerVersion) ||
     !object(manifest.files) ||
-    !Array.isArray(manifest.migrations)
+    !Array.isArray(manifest.migrations) ||
+    Object.keys(manifest).some(
+      (key) =>
+        ![
+          'format',
+          'sourceSha',
+          'lockfileSha256',
+          'nodeVersion',
+          'wranglerVersion',
+          'configurationSha256',
+          'configurationEntry',
+          'workerEntry',
+          'workerName',
+          'migrationEntry',
+          'files',
+          'migrations',
+        ].includes(key),
+    )
   )
     throw new Error(
-      'Invalid paired artifact manifest; backend-only artifacts require operator reconciliation.',
+      'Invalid single-Worker format-3 artifact manifest; older artifacts require explicit operator reconciliation.',
     );
   delete files['manifest.json'];
   const names = Object.keys(manifest.files).sort();
@@ -59,7 +76,7 @@ export async function verifyArtifact(directory) {
     if (!safe(name) || !sha(manifest.files[name]) || files[name] !== manifest.files[name])
       throw new Error(`Artifact digest mismatch: ${name}`);
     if (
-      !/^(worker\/|frontend\/|assets\/|migration\/|wrangler\.json$)/.test(name) ||
+      !/^(worker\/|assets\/|migration\/|wrangler\.json$)/.test(name) ||
       /\.(?:map|pem|key|env)$/i.test(name)
     )
       throw new Error(`Forbidden payload: ${name}`);
@@ -67,8 +84,7 @@ export async function verifyArtifact(directory) {
   if (
     manifest.configurationEntry !== 'wrangler.json' ||
     manifest.migrationEntry !== 'migration/dist/migrate.mjs' ||
-    !safe(manifest.workerEntry) ||
-    !manifest.workerEntry.startsWith('worker/') ||
+    manifest.workerEntry !== 'worker/worker.js' ||
     !files[manifest.workerEntry] ||
     !files[manifest.migrationEntry] ||
     !files['assets/index.html'] ||
@@ -93,54 +109,46 @@ export async function verifyArtifact(directory) {
     Object.keys(config).some((key) => !configKeys.has(key)) ||
     config.no_bundle !== true ||
     config.main !== manifest.workerEntry ||
-    config.name !== 'corner-server' ||
+    config.name !== 'corner' ||
     manifest.workerName !== config.name ||
     !/^\d{4}-\d{2}-\d{2}$/.test(config.compatibility_date) ||
     !Array.isArray(config.compatibility_flags) ||
     !config.compatibility_flags.includes('nodejs_compat') ||
     config.assets?.directory !== 'assets' ||
     config.workers_dev !== false ||
-    config.preview_urls !== false
+    config.preview_urls !== true ||
+    config.assets?.binding !== 'ASSETS' ||
+    config.assets?.run_worker_first !== true ||
+    config.assets?.html_handling !== 'none' ||
+    config.assets?.not_found_handling !== 'none' ||
+    Object.keys(config.assets).some(
+      (key) =>
+        ![
+          'directory',
+          'binding',
+          'run_worker_first',
+          'html_handling',
+          'not_found_handling',
+        ].includes(key),
+    ) ||
+    config.version_metadata?.binding !== 'CF_VERSION_METADATA' ||
+    Object.keys(config.version_metadata).length !== 1 ||
+    config.observability?.enabled !== true ||
+    config.observability?.logs?.invocation_logs !== false ||
+    Object.keys(config.observability).some((key) => !['enabled', 'logs'].includes(key)) ||
+    Object.keys(config.observability.logs).some((key) => key !== 'invocation_logs')
   )
     throw new Error('Unsafe packaged deployment configuration.');
-  if (
-    manifest.frontendConfigurationEntry !== 'frontend/wrangler.json' ||
-    manifest.frontendEntry !== 'frontend/worker.js' ||
-    manifest.frontendName !== 'corner-web' ||
-    !files[manifest.frontendEntry] ||
-    files[manifest.frontendConfigurationEntry] !== manifest.frontendConfigurationSha256
-  )
-    throw new Error('Invalid frontend artifact entry points.');
-  const frontend = JSON.parse(
-    await readFile(join(directory, manifest.frontendConfigurationEntry), 'utf8'),
-  );
-  if (
-    !object(frontend) ||
-    Object.keys(frontend).some((key) => !configKeys.has(key) && key !== 'services') ||
-    frontend.name !== manifest.frontendName ||
-    frontend.main !== 'worker.js' ||
-    frontend.no_bundle !== true ||
-    frontend.workers_dev !== false ||
-    frontend.preview_urls !== false ||
-    frontend.assets?.directory !== '../assets' ||
-    frontend.compatibility_date !== config.compatibility_date ||
-    !Array.isArray(frontend.compatibility_flags) ||
-    !frontend.compatibility_flags.includes('nodejs_compat') ||
-    JSON.stringify(frontend.services) !==
-      JSON.stringify([{ binding: 'SERVER', service: manifest.workerName }]) ||
-    frontend.version_metadata?.binding !== 'CF_VERSION_METADATA' ||
-    config.version_metadata?.binding !== 'CF_VERSION_METADATA'
-  )
-    throw new Error('Unsafe packaged frontend configuration or backend binding.');
   const migrationNames = names.filter((name) => name.startsWith('migration/migrations/'));
   if (manifest.migrations.length === 0 || manifest.migrations.length !== migrationNames.length)
     throw new Error('Missing migration inventory.');
   const seen = new Set();
-  for (const migration of manifest.migrations) {
+  for (const [index, migration] of manifest.migrations.entries()) {
     if (
       !object(migration) ||
       !/^\d+_[a-zA-Z0-9_.-]+\.sql$/.test(migration.name) ||
       seen.has(migration.name) ||
+      migrationNames[index] !== `migration/migrations/${migration.name}` ||
       files[`migration/migrations/${migration.name}`] !== migration.sha256
     )
       throw new Error('Invalid migration digest.');
@@ -177,13 +185,10 @@ export async function packageArtifact({ root: sourceRoot = root, out, sourceSha 
   await access(join(sourceRoot, 'apps/server/dist/migrate.js'));
   const workerSource = join(sourceRoot, 'apps/server/dist/worker');
   await access(join(workerSource, 'worker.js'));
-  const frontendSource = join(sourceRoot, 'apps/web/.wrangler/worker');
-  await access(join(frontendSource, 'worker.js'));
   await access(join(sourceRoot, 'apps/web/dist/index.html'));
   await mkdir(dirname(out), { recursive: true });
   await mkdir(out); // Deliberately not recursive: existing outputs are immutable.
   await copyTree(workerSource, join(out, 'worker'));
-  await copyTree(frontendSource, join(out, 'frontend'));
   await copyTree(join(sourceRoot, 'apps/web/dist'), join(out, 'assets'));
   await copyTree(join(sourceRoot, 'apps/server/migrations'), join(out, 'migration/migrations'));
   await mkdir(join(out, 'migration/dist'), { recursive: true });
@@ -218,7 +223,7 @@ export async function packageArtifact({ root: sourceRoot = root, out, sourceSha 
     compatibility_date: original.compatibility_date,
     compatibility_flags: original.compatibility_flags,
     workers_dev: false,
-    preview_urls: false,
+    preview_urls: true,
     assets: { ...original.assets, directory: 'assets' },
     observability: original.observability,
   };
@@ -226,30 +231,9 @@ export async function packageArtifact({ root: sourceRoot = root, out, sourceSha 
   await writeFile(join(out, 'wrangler.json'), `${JSON.stringify(config, null, 2)}\n`, {
     flag: 'wx',
   });
-  const { rawConfig: frontendOriginal } = experimental_readRawConfig({
-    config: join(sourceRoot, 'apps/web/wrangler.jsonc'),
-  });
-  const frontendConfig = {
-    name: frontendOriginal.name,
-    main: 'worker.js',
-    no_bundle: true,
-    compatibility_date: frontendOriginal.compatibility_date,
-    compatibility_flags: frontendOriginal.compatibility_flags,
-    workers_dev: false,
-    preview_urls: false,
-    assets: { ...frontendOriginal.assets, directory: '../assets' },
-    observability: frontendOriginal.observability,
-    version_metadata: frontendOriginal.version_metadata,
-    services: frontendOriginal.services,
-  };
-  await writeFile(
-    join(out, 'frontend/wrangler.json'),
-    `${JSON.stringify(frontendConfig, null, 2)}\n`,
-    { flag: 'wx' },
-  );
   const files = await inventory(out);
   const manifest = {
-    format: 2,
+    format: 3,
     sourceSha,
     lockfileSha256: hash(await readFile(join(sourceRoot, 'pnpm-lock.yaml'))),
     nodeVersion: process.version,
@@ -258,10 +242,6 @@ export async function packageArtifact({ root: sourceRoot = root, out, sourceSha 
     configurationEntry: 'wrangler.json',
     workerEntry: 'worker/worker.js',
     workerName: original.name,
-    frontendName: frontendOriginal.name,
-    frontendEntry: 'frontend/worker.js',
-    frontendConfigurationEntry: 'frontend/wrangler.json',
-    frontendConfigurationSha256: files['frontend/wrangler.json'],
     migrationEntry: 'migration/dist/migrate.mjs',
     files,
     migrations: Object.keys(files)
@@ -303,10 +283,13 @@ export async function qualifyArtifact({ candidate, previous, bootstrap = false, 
       (receipt.bootstrap ? receipt.previousDigest !== null : !sha(receipt.previousDigest))
     )
       throw new Error('Previous artifact has no matching successful qualification.');
-    const migrations = new Map(current.manifest.migrations.map((item) => [item.name, item.sha256]));
-    for (const item of prior.manifest.migrations)
-      if (migrations.get(item.name) !== item.sha256)
-        throw new Error('Candidate removed or rewrote a previous migration.');
+    for (const [index, item] of prior.manifest.migrations.entries()) {
+      const candidateMigration = current.manifest.migrations[index];
+      if (candidateMigration?.name !== item.name || candidateMigration.sha256 !== item.sha256)
+        throw new Error(
+          'Candidate removed or rewrote a previous migration; prior inventory must remain a prefix.',
+        );
+    }
   }
   execFileSync(
     process.execPath,
@@ -314,16 +297,12 @@ export async function qualifyArtifact({ candidate, previous, bootstrap = false, 
       join(root, 'scripts/workers-smoke.mjs'),
       '--config',
       join(candidate, 'wrangler.json'),
-      '--frontend-config',
-      join(candidate, current.manifest.frontendConfigurationEntry),
       '--migration-entry',
       join(candidate, current.manifest.migrationEntry),
       ...(previous
         ? [
             '--previous-config',
             join(previous, 'wrangler.json'),
-            '--previous-frontend-config',
-            join(previous, prior.manifest.frontendConfigurationEntry),
             '--previous-migration-entry',
             join(previous, prior.manifest.migrationEntry),
           ]

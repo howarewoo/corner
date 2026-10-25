@@ -30,15 +30,15 @@
     "release:verify": "node scripts/release-artifact.mjs verify",
     "release:qualify": "node scripts/release-artifact.mjs qualify",
     "release": "node scripts/release.mjs",
+    "preview:staging": "node scripts/staging-preview.mjs",
     "start": "pnpm --filter server start",
     "db:migrate": "node --env-file-if-exists=.env.local --env-file-if-exists=.env apps/server/dist/migrate.js --apply",
     "db:baseline:staging": "node apps/server/dist/staging-baseline.js --apply",
     "smoke": "node scripts/smoke.mjs",
     "package": "python3 scripts/package.py",
     "smoke:dev": "node scripts/dev-smoke.mjs",
-    "build:workers": "pnpm run build && pnpm --filter server exec wrangler deploy --dry-run --outdir dist/worker && pnpm --filter server exec wrangler deploy --config ../web/wrangler.jsonc --dry-run --outdir .wrangler/worker",
-    "build:web:worker": "pnpm run build --filter=web && pnpm --filter server exec wrangler deploy --config ../web/wrangler.jsonc --dry-run --outdir .wrangler/worker",
-    "smoke:workers": "node scripts/workers-smoke.mjs --frontend-config apps/web/wrangler.jsonc"
+    "build:workers": "pnpm run build && pnpm --filter server exec wrangler deploy --dry-run --outdir dist/worker",
+    "smoke:workers": "node scripts/workers-smoke.mjs"
   },
   "devDependencies": {
     "@shadcn/lint": "0.2.3",

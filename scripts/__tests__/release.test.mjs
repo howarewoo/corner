@@ -18,6 +18,8 @@ import {
   validateLiveRollback,
   validateOperational,
 } from '../release.mjs';
+import { loadCiArtifact } from '../ci-artifact.mjs';
+import { releaseTarget } from '../release-target.mjs';
 
 const source = 'a'.repeat(40),
   previousSource = 'b'.repeat(40),
@@ -26,8 +28,6 @@ const source = 'a'.repeat(40),
   configurationSha256 = 'e'.repeat(64);
 const versionId = '12345678-1234-1234-1234-123456789012',
   oldVersion = 'abcdefab-abcd-abcd-abcd-abcdefabcdef';
-const frontendVersionId = '22345678-1234-1234-1234-123456789012',
-  oldFrontendVersion = 'bbcdefab-abcd-abcd-abcd-abcdefabcdef';
 const configuration = JSON.stringify({
   CORNER_ORIGIN: 'https://corner.example.com',
   NEON_AUTH_REQUIRE_EMAIL_VERIFICATION: 'true',
@@ -49,31 +49,26 @@ const report = {
   passed: true,
 };
 const receipt = {
-  format: 2,
+  format: 3,
   kind: 'corner-production',
+  workerName: 'corner',
   phase: 'complete',
   runId: '1',
   artifactId: '2',
   sourceSha: previousSource,
   candidateDigest: previousDigest,
   configurationSha256,
-  frontendConfigurationSha256: configurationSha256,
   runtimeConfigurationDigest: config.digest,
   versionId: oldVersion,
-  frontendVersionId: oldFrontendVersion,
   qualification: { ...report, sourceSha: previousSource, candidateDigest: previousDigest },
 };
 const manifest = {
   sourceSha: source,
   configurationSha256,
-  frontendConfigurationSha256: configurationSha256,
   configurationEntry: 'wrangler.json',
   workerEntry: 'worker/worker.js',
   migrationEntry: 'migration/dist/migrate.mjs',
-  workerName: 'corner-server',
-  frontendName: 'corner-web',
-  frontendEntry: 'frontend/worker.js',
-  frontendConfigurationEntry: 'frontend/wrangler.json',
+  workerName: 'corner',
   migrations: [{ name: '001_corner.sql', sha256: 'f'.repeat(64) }],
 };
 manifest.wranglerVersion = JSON.parse(
@@ -93,27 +88,16 @@ const review = JSON.stringify({
 });
 const work = await mkdtemp(join(tmpdir(), 'corner-release-tests-'));
 const packagedConfig = {
-  name: 'corner-server',
+  name: 'corner',
   main: manifest.workerEntry,
   no_bundle: true,
   assets: { directory: 'assets', binding: 'ASSETS' },
   workers_dev: false,
-  preview_urls: false,
+  preview_urls: true,
 };
 for (const revision of [source, previousSource]) {
   await mkdir(join(work, revision));
   await writeFile(join(work, revision, 'wrangler.json'), JSON.stringify(packagedConfig));
-  await mkdir(join(work, revision, 'frontend'));
-  await writeFile(
-    join(work, revision, manifest.frontendConfigurationEntry),
-    JSON.stringify({
-      name: 'corner-web',
-      main: 'worker.js',
-      no_bundle: true,
-      assets: { directory: '../assets' },
-      services: [{ binding: 'SERVER', service: 'corner-server' }],
-    }),
-  );
 }
 after(async () => {
   await rm(work, { recursive: true, force: true });
@@ -151,10 +135,7 @@ function fixture(overrides = {}) {
   payload.manualReview = JSON.parse(review);
   payload.executionRunAttempt = '1';
   const github = {
-    baseline: async () =>
-      records.at(-1)?.phase === 'backend-deployed'
-        ? { id: 20 + records.length, payload: records.at(-1) }
-        : { id: 10, payload: receipt },
+    baseline: async () => ({ id: 10, payload: receipt }),
     schema: async () => null,
     approval: async (environment) => ({
       runId: '90',
@@ -189,19 +170,10 @@ function fixture(overrides = {}) {
     },
   };
   const execute = (binary, args) => {
-    const frontend = args.some((value) => String(value).includes('wrangler-frontend'));
     effects.push(
-      args.includes('upload')
-        ? frontend
-          ? 'upload-frontend'
-          : 'upload'
-        : args.includes('--apply')
-          ? 'migrate'
-          : frontend
-            ? 'deploy-frontend'
-            : 'deploy',
+      args.includes('upload') ? 'upload' : args.includes('--apply') ? 'migrate' : 'deploy',
     );
-    return `Worker Version ID: ${frontend ? frontendVersionId : versionId}\n`;
+    return `Worker Version ID: ${versionId}\n`;
   };
   const cf = async (path, { missing = false } = {}) => {
     if (missing) return null;
@@ -214,19 +186,12 @@ function fixture(overrides = {}) {
           'CORNER_TOKEN_ENCRYPTION_KEY',
         ].map((name) => ({ name, type: 'secret_text' })),
       };
-    const frontend = path.includes('corner-web');
     return {
       deployments: [
         {
           versions: [
             {
-              version_id: frontend
-                ? effects.includes('deploy-frontend')
-                  ? frontendVersionId
-                  : oldFrontendVersion
-                : effects.includes('deploy')
-                  ? versionId
-                  : oldVersion,
+              version_id: effects.includes('deploy') ? versionId : oldVersion,
               percentage: 100,
             },
           ],
@@ -282,34 +247,23 @@ test('configuration excludes secrets and binds explicit public settings plus ope
     /custom-domain/,
   );
 });
-test('only staging accepts its fixed workers.dev deployment hostname, never a production or version-preview hostname', () => {
-  const before = { ...process.env };
-  const stagingOrigin = 'https://corner-web-staging.adam-nathaniel-woo.workers.dev';
-  const settings = (origin) => JSON.stringify({
-    CORNER_ORIGIN: origin,
-    NEON_AUTH_REQUIRE_EMAIL_VERIFICATION: 'true',
-  });
-  try {
-    process.env.CORNER_RELEASE_ENVIRONMENT = 'staging';
-    process.env.CORNER_STAGING_BINDINGS_REVISION = 'test-config-1';
-    delete process.env.CORNER_STAGING_ORIGIN;
-    assert.equal(validateConfiguration(settings(stagingOrigin)).origin, stagingOrigin);
-    for (const origin of [
-      'https://corner-web.adam-nathaniel-woo.workers.dev',
-      'https://staging-corner-web.adam-nathaniel-woo.workers.dev',
-      'https://12345678-corner-web-staging.adam-nathaniel-woo.workers.dev',
-      'https://corner-server-staging.adam-nathaniel-woo.workers.dev',
-      'https://corner-web-staging.adam-nathaniel-woo.workers.dev:8443',
-      'https://corner-web-staging.workers.dev',
-      'https://corner-web-staging.example.workers-preview.com',
-      'http://corner-web-staging.adam-nathaniel-woo.workers.dev',
-    ]) assert.throws(() => validateConfiguration(settings(origin)), /Release requires/);
-    process.env.CORNER_RELEASE_ENVIRONMENT = 'production';
-    assert.throws(() => validateConfiguration(settings(stagingOrigin)), /Release requires/);
-  } finally {
-    for (const key of Object.keys(process.env)) if (!(key in before)) delete process.env[key];
-    Object.assign(process.env, before);
-  }
+test('production rejects native Worker hosts and the obsolete staging release environment', () => {
+  for (const origin of [
+    'https://corner-web.account.workers.dev',
+    'https://staging-corner-web.account.workers.dev',
+    'https://preview.example.workers-preview.com',
+  ])
+    assert.throws(
+      () =>
+        validateConfiguration(
+          JSON.stringify({
+            CORNER_ORIGIN: origin,
+            NEON_AUTH_REQUIRE_EMAIL_VERIFICATION: 'true',
+          }),
+        ),
+      /Release requires/,
+    );
+  assert.throws(() => releaseTarget('staging'), /production only/);
 });
 test('receipt and rollback require real qualified identities and CURRENT compatibility/configuration', () => {
   validateReceipt(receipt);
@@ -421,6 +375,22 @@ test('missing baseline never silently bootstraps', async () => {
   );
   assert.deepEqual(f.effects, []);
 });
+
+test('provisioned Worker version pins cannot be used for an ordinary release', async () => {
+  const f = fixture();
+  await assert.rejects(
+    plan({
+      ...f.options,
+      runId: '1',
+      sourceSha: source,
+      provisionedVersionId: oldVersion,
+      attestation: review,
+      actor: 'reviewer',
+    }),
+    /valid only for explicit bootstrap/,
+  );
+  assert.deepEqual(f.effects, []);
+});
 test('qualification failure occurs before approval record', async () => {
   const f = fixture();
   await assert.rejects(
@@ -455,16 +425,19 @@ test('plan persists exact real artifact and baseline qualification before approv
 });
 test('migration failure journals schema attempt and prevents traffic/public checks', async () => {
   const f = fixture();
-  f.options.execute = (binary, args) => {
+  const execute = f.options.execute;
+  f.options.execute = (binary, args, options) => {
     if (args.includes('--apply')) {
-      f.effects.push('migration-failed');
+      assert.equal(f.records.at(-1)?.phase, 'schema-attempted');
       throw new Error('migration failed');
     }
-    f.effects.push('upload');
-    return `Worker Version ID: ${versionId}`;
+    assert(!args.includes('deploy'), 'Traffic must not switch before migration succeeds');
+    return execute(binary, args, options);
   };
   await assert.rejects(promote(f.options), /migration failed/);
-  assert.deepEqual(f.effects, ['upload', 'upload', 'schema-attempted', 'migration-failed']);
+  assert.equal(f.records.at(-1)?.phase, 'schema-attempted');
+  assert(!f.effects.includes('deploy'));
+  assert(!f.effects.includes('public'));
 });
 test('upload failure cannot migrate or deploy', async () => {
   const f = fixture();
@@ -485,21 +458,17 @@ test('routine promotion uploads exact prebuilt config, migrates once, deploys ex
   const result = await promote(f.options);
   assert.deepEqual(f.effects, [
     'upload',
-    'upload-frontend',
     'schema-attempted',
     'migrate',
     'deploy',
-    'backend-deployed',
-    'deploy-frontend',
     'deployed',
     'public',
     'public-passed',
     'complete',
   ]);
   assert.equal(result.payload.versionId, versionId);
-  assert.equal(result.payload.frontendVersionId, frontendVersionId);
   assert(commands[0][1].includes('--no-bundle'));
-  assert(commands[3][1].includes(`${versionId}@100%`));
+  assert(commands[2][1].includes(`${versionId}@100%`));
   assert(!commands.some(([, args]) => args.includes('build') || args.includes('triggers')));
   const configurationPath = commands[0][1][commands[0][1].indexOf('--config') + 1];
   assert.notEqual(
@@ -510,9 +479,13 @@ test('routine promotion uploads exact prebuilt config, migrates once, deploys ex
   const relocated = JSON.parse(await readFile(configurationPath, 'utf8'));
   assert.deepEqual(relocated, {
     ...packagedConfig,
+    workers_dev: false,
+    preview_urls: true,
     main: join(work, source, manifest.workerEntry),
     assets: { ...packagedConfig.assets, directory: join(work, source, 'assets') },
   });
+  assert.equal(relocated.preview_urls, true);
+  assert.equal(relocated.workers_dev, false);
   assert.equal(
     await readFile(join(work, source, 'wrangler.json'), 'utf8'),
     JSON.stringify(packagedConfig),
@@ -651,10 +624,7 @@ test('bootstrap validates all required bindings before any production mutation',
 });
 test('explicit bootstrap migrates before first creation and remains operationally incomplete', async () => {
   const f = fixture();
-  f.github.baseline = async () =>
-    f.records.at(-1)?.phase === 'backend-deployed'
-      ? { id: 20 + f.records.length, payload: f.records.at(-1) }
-      : null;
+  f.github.baseline = async () => null;
   Object.assign(f.payload, {
     bootstrap: true,
     baselineId: null,
@@ -675,9 +645,8 @@ test('explicit bootstrap migrates before first creation and remains operationall
   const invocations = [];
   f.options.execute = (binary, args) => {
     invocations.push(args);
-    const frontend = args.some((value) => String(value).includes('wrangler-frontend'));
-    f.effects.push(args.includes('--apply') ? 'migrate' : frontend ? 'deploy-frontend' : 'deploy');
-    return `Current Version ID: ${frontend ? frontendVersionId : versionId}`;
+    f.effects.push(args.includes('--apply') ? 'migrate' : 'deploy');
+    return `Current Version ID: ${versionId}`;
   };
   try {
     const cf = f.options.cf;
@@ -699,6 +668,75 @@ test('explicit bootstrap migrates before first creation and remains operationall
     else process.env.CORNER_WORKER_SECRETS_JSON = before.worker;
   }
 });
+
+test('explicit adoption pins the existing Worker before migration and again before deployment', async (t) => {
+  const before = {
+    database: process.env.DATABASE_URL,
+    worker: process.env.CORNER_WORKER_SECRETS_JSON,
+  };
+  process.env.DATABASE_URL = 'postgresql://synthetic.invalid/unused';
+  process.env.CORNER_WORKER_SECRETS_JSON = JSON.stringify({
+    DATABASE_URL: process.env.DATABASE_URL,
+    NEON_AUTH_BASE_URL: 'https://auth.example.invalid/neondb/auth',
+    BETTER_AUTH_SECRET: 'synthetic-session-secret-over-thirty-two-characters',
+    CORNER_TOKEN_ENCRYPTION_KEY: Buffer.alloc(32, 42).toString('base64'),
+  });
+  try {
+    for (const scenario of ['changed-before-migration', 'changed-during-migration', 'stable']) {
+      await t.test(scenario, async () => {
+        const f = fixture();
+        f.github.baseline = async () => null;
+        Object.assign(f.payload, {
+          bootstrap: true,
+          provisionedVersionId: oldVersion,
+          baselineId: null,
+          operatorRequired: true,
+          qualification: { ...report, bootstrap: true, previousDigest: null },
+        });
+        f.options.cf = async (path) => {
+          if (path.endsWith('/settings')) return { bindings: [] };
+          const drift =
+            scenario === 'changed-before-migration' ||
+            (scenario === 'changed-during-migration' && f.effects.includes('migrate'));
+          return {
+            deployments: [
+              {
+                versions: [
+                  {
+                    version_id: f.effects.includes('deploy') || drift ? versionId : oldVersion,
+                    percentage: 100,
+                  },
+                ],
+              },
+            ],
+          };
+        };
+        f.options.execute = (_binary, args) => {
+          f.effects.push(args.includes('--apply') ? 'migrate' : 'deploy');
+          return `Current Version ID: ${versionId}`;
+        };
+        if (scenario === 'stable') {
+          const result = await promote(f.options);
+          assert.equal(result.payload.versionId, versionId);
+          assert.equal(result.payload.phase, 'public-passed');
+          assert(f.effects.indexOf('migrate') < f.effects.indexOf('deploy'));
+          assert(!f.effects.includes('complete'));
+        } else {
+          await assert.rejects(promote(f.options), /Provisioned Worker changed/);
+          assert(!f.effects.includes('deploy'));
+          assert(!f.effects.includes('public'));
+          if (scenario === 'changed-before-migration') assert.deepEqual(f.records, []);
+          else assert.equal(f.records.at(-1)?.phase, 'schema-attempted');
+        }
+      });
+    }
+  } finally {
+    if (before.database === undefined) delete process.env.DATABASE_URL;
+    else process.env.DATABASE_URL = before.database;
+    if (before.worker === undefined) delete process.env.CORNER_WORKER_SECRETS_JSON;
+    else process.env.CORNER_WORKER_SECRETS_JSON = before.worker;
+  }
+});
 test('missing inherited secret bindings and live version drift block before migration', async () => {
   const f = fixture();
   f.options.cf = async (path) =>
@@ -709,7 +747,7 @@ test('missing inherited secret bindings and live version drift block before migr
             {
               versions: [
                 {
-                  version_id: path.includes('corner-web') ? oldFrontendVersion : oldVersion,
+                  version_id: oldVersion,
                   percentage: 100,
                 },
               ],
@@ -733,7 +771,6 @@ test('protected operational recovery rechecks exact version, records public evid
   const evidence = JSON.stringify({
     sourceSha: previousSource,
     versionId: oldVersion,
-    frontendVersionId: oldFrontendVersion,
     reviewer: 'reviewer',
     accountAccess: 'passed',
     saveReload: 'passed',
@@ -869,99 +906,6 @@ test('post-upload payload changes block before migrations or traffic changes', a
   assert.deepEqual(f.effects, ['upload']);
 });
 
-test('frontend failure retains backend progress and cannot claim a deployed pair', async () => {
-  const f = fixture();
-  const execute = f.options.execute;
-  f.options.execute = (binary, args, options) => {
-    if (
-      args.includes('deploy') &&
-      args.some((value) => String(value).includes('wrangler-frontend'))
-    )
-      throw new Error('frontend switch failed');
-    return execute(binary, args, options);
-  };
-  await assert.rejects(promote(f.options), /frontend switch failed/);
-  assert.equal(f.records.at(-1).phase, 'backend-deployed');
-  assert.equal(f.records.at(-1).versionId, versionId);
-  assert.equal(f.records.at(-1).frontendVersionId, oldFrontendVersion);
-  assert.equal(f.records.at(-1).pendingFrontendVersionId, frontendVersionId);
-  assert(!f.records.some((row) => ['deployed', 'public-passed', 'complete'].includes(row.phase)));
-});
-
-test('frontend drift blocks a coordinated release before uploads or migration', async () => {
-  const f = fixture();
-  const cf = f.options.cf;
-  f.options.cf = async (path, options) =>
-    path.includes('corner-web')
-      ? { deployments: [{ versions: [{ version_id: frontendVersionId, percentage: 100 }] }] }
-      : cf(path, options);
-  await assert.rejects(promote(f.options), /drifted/);
-  assert.deepEqual(f.effects, []);
-});
-
-test('staging accepts only current successful staging CI and fixed nonproduction targets, without production approval', async () => {
-  const before = { ...process.env };
-  try {
-    process.env.CORNER_RELEASE_ENVIRONMENT = 'staging';
-    process.env.CORNER_STAGING_BINDINGS_REVISION = 'test-config-1';
-    process.env.CORNER_STAGING_ACCESS_CLIENT_ID = 'synthetic-access-id';
-    process.env.CORNER_STAGING_ACCESS_CLIENT_SECRET = 'synthetic-access-secret';
-    const stagingConfiguration = JSON.stringify({
-      CORNER_ORIGIN: 'https://corner-web-staging.adam-nathaniel-woo.workers.dev',
-      NEON_AUTH_REQUIRE_EMAIL_VERIFICATION: 'true',
-    });
-    const stagingConfig = validateConfiguration(stagingConfiguration);
-    assert.throws(() => verifyRun(run, source), /push-to-staging/);
-    verifyRun({ ...run, head_branch: 'staging' }, source);
-    assert.throws(() => validateReceipt(receipt), /paired release receipt/);
-    const f = fixture({ configuration: stagingConfiguration });
-    Object.assign(f.payload, {
-      kind: 'corner-staging',
-      manualReview: null,
-      origin: stagingConfig.origin,
-      runtimeConfigurationDigest: stagingConfig.digest,
-    });
-    f.github.baseline = async () =>
-      f.records.at(-1)?.phase === 'backend-deployed'
-        ? { id: 20 + f.records.length, payload: f.records.at(-1) }
-        : { id: 10, payload: { ...receipt, kind: 'corner-staging' } };
-    f.github.approval = async () => {
-      throw new Error('Production approval must never be queried for staging');
-    };
-    const api = f.github.api;
-    f.github.api = async (path) =>
-      path === 'git/ref/heads/staging'
-        ? { object: { sha: source } }
-        : path === 'deployments/11'
-          ? { environment: 'staging-plan', payload: f.payload }
-          : api(path);
-    const result = await promote(f.options);
-    assert.equal(result.payload.phase, 'complete');
-    assert.equal(result.payload.approval.kind, 'automatic-staging');
-    const serverConfig = JSON.parse(await readFile(join(work, 'wrangler-deploy.json'), 'utf8'));
-    const frontendConfig = JSON.parse(await readFile(join(work, 'wrangler-frontend.json'), 'utf8'));
-    assert.equal(serverConfig.name, 'corner-server-staging');
-    assert.equal(frontendConfig.name, 'corner-web-staging');
-    assert.equal(frontendConfig.workers_dev, true);
-    assert.equal(serverConfig.workers_dev, false);
-    assert.equal(serverConfig.preview_urls, false);
-    assert.deepEqual(frontendConfig.services, [
-      { binding: 'SERVER', service: 'corner-server-staging' },
-    ]);
-    f.effects.length = 0;
-    f.github.api = async (path) =>
-      path === 'git/ref/heads/staging'
-        ? { object: { sha: previousSource } }
-        : { environment: 'staging-plan', payload: f.payload };
-    await assert.rejects(promote(f.options), /Superseded/);
-    assert.deepEqual(f.effects, []);
-    await assert.rejects(plan({ ...f.options, sourceSha: source }), /Superseded/);
-  } finally {
-    for (const key of Object.keys(process.env)) if (!(key in before)) delete process.env[key];
-    Object.assign(process.env, before);
-  }
-});
-
 test('production manual review requires staging evidence or an explicit emergency exception', () => {
   const value = JSON.parse(review);
   delete value.stagingReview;
@@ -973,75 +917,6 @@ test('production manual review requires staging evidence or an explicit emergenc
   assert.equal(
     manualAttestation(JSON.stringify(value), source, 'reviewer').hotfixReason,
     value.hotfixReason,
-  );
-});
-
-test('a repaired staging boundary completes only the exact recorded pair and never requests production approval', async () => {
-  const before = { ...process.env };
-  try {
-    process.env.CORNER_RELEASE_ENVIRONMENT = 'staging';
-    process.env.CORNER_STAGING_ACCESS_CLIENT_ID = 'synthetic-access-id';
-    process.env.CORNER_STAGING_ACCESS_CLIENT_SECRET = 'synthetic-access-secret';
-    const f = fixture();
-    const current = {
-      id: 40,
-      payload: { ...receipt, kind: 'corner-staging', phase: 'deployed', origin: config.origin },
-    };
-    f.github.baseline = async () => current;
-    f.github.approval = async () => {
-      throw new Error('No production authority');
-    };
-    let observed;
-    await assert.rejects(
-      validateOperational({ github: f.github, deploymentId: '39' }),
-      /exact current/,
-    );
-    const result = await validateOperational({
-      github: f.github,
-      deploymentId: '40',
-      checkPublic: async (origin, backend, _fetch, frontend, access) => {
-        observed = { origin, backend, frontend };
-        assert.equal(access['CF-Access-Client-Id'], 'synthetic-access-id');
-      },
-    });
-    assert.deepEqual(observed, {
-      origin: config.origin,
-      backend: oldVersion,
-      frontend: oldFrontendVersion,
-    });
-    assert.equal(result.payload.phase, 'complete');
-    assert.equal(
-      result.payload.evidence,
-      undefined,
-      'Automated public recheck is not a human account attestation.',
-    );
-    current.payload.phase = 'backend-deployed';
-    await assert.rejects(
-      validateOperational({ github: f.github, deploymentId: '40' }),
-      /exact current/,
-    );
-  } finally {
-    for (const key of Object.keys(process.env)) if (!(key in before)) delete process.env[key];
-    Object.assign(process.env, before);
-  }
-});
-
-test('public checks refuse a stale frontend even when the backend version is correct', async () => {
-  const fetcher = async (url) =>
-    new URL(url).pathname.includes('sign-up')
-      ? Response.json({ code: 'ORIGIN_NOT_ALLOWED' }, { status: 403 })
-      : Response.json(
-          { ok: true },
-          {
-            headers: {
-              'X-Corner-Version': versionId,
-              'X-Corner-Frontend-Version': oldFrontendVersion,
-            },
-          },
-        );
-  await assert.rejects(
-    publicChecks(config.origin, versionId, fetcher, frontendVersionId),
-    /frontend version identity/,
   );
 });
 
@@ -1061,7 +936,14 @@ test('public probes require a canonical native protected RPC error, not an obsol
       assert.deepEqual(JSON.parse(options.body), {});
       return Response.json(
         native
-          ? { json: { defined: true, code: 'SIGN_IN_REQUIRED', status: 401, message: 'Sign in required' } }
+          ? {
+              json: {
+                defined: true,
+                code: 'SIGN_IN_REQUIRED',
+                status: 401,
+                message: 'Sign in required',
+              },
+            }
           : { code: 'SIGN_IN_REQUIRED' },
         { status: 401 },
       );
@@ -1078,4 +960,130 @@ test('public probes require a canonical native protected RPC error, not an obsol
   assert.equal(requests.includes('/api/state'), false);
   native = false;
   await assert.rejects(publicChecks(config.origin, versionId, fetcher), /RPC authentication/);
+});
+
+test('shared CI loader binds branch, repository, run and retained artifact before unpacking', async () => {
+  for (const branch of ['main', 'staging']) {
+    const validRun = { ...run, head_branch: branch };
+    const reference = { runId: '1', artifactId: '2', sourceSha: source };
+    const invoke = (candidateRun, artifact = {}) =>
+      loadCiArtifact({
+        api: async (path) => (path.startsWith('actions/runs/') ? candidateRun : artifact),
+        repository: 'owner/corner',
+        branch,
+        reference,
+        destination: work,
+      });
+    for (const mutation of [
+      { event: 'pull_request' },
+      { head_branch: 'feature' },
+      { conclusion: 'failure' },
+      { status: 'in_progress' },
+      { head_sha: previousSource },
+      { id: 9 },
+      { path: '.github/workflows/other.yml' },
+    ])
+      await assert.rejects(invoke({ ...validRun, ...mutation }), /successful exact/);
+    await assert.rejects(
+      invoke({
+        ...validRun,
+        head_repository: { full_name: 'foreign/corner' },
+      }),
+      /Foreign/,
+    );
+    await assert.rejects(
+      invoke(validRun, {
+        id: 2,
+        expired: false,
+        name: `corner-release-${source}`,
+        workflow_run: { id: 9, head_sha: source },
+      }),
+      /provenance/,
+    );
+    await assert.rejects(
+      invoke(validRun, {
+        id: 2,
+        expired: true,
+        name: `corner-release-${source}`,
+        workflow_run: { id: 1, head_sha: source },
+      }),
+      /expired/,
+    );
+  }
+});
+
+test('format-2 production history requires explicit reconciliation', () => {
+  assert.throws(() => validateReceipt({ ...receipt, format: 2 }), /reconcile/);
+});
+
+test('production permits only the exact stable corner Worker hostname and binds configured origin', () => {
+  const settings = JSON.stringify({
+    CORNER_ORIGIN: 'https://corner.account.workers.dev',
+    NEON_AUTH_REQUIRE_EMAIL_VERIFICATION: 'true',
+  });
+  const before = process.env.CORNER_PRODUCTION_ORIGIN;
+  try {
+    delete process.env.CORNER_PRODUCTION_ORIGIN;
+    assert.equal(validateConfiguration(settings).workersDev, true);
+    process.env.CORNER_PRODUCTION_ORIGIN = 'https://corner.other.workers.dev';
+    assert.throws(() => validateConfiguration(settings), /canonical release origin/);
+    delete process.env.CORNER_PRODUCTION_ORIGIN;
+    for (const hostname of [
+      'staging-corner.account.workers.dev',
+      'abc-corner.account.workers.dev',
+      'corner.other.account.workers.dev',
+    ]) {
+      assert.throws(
+        () => validateConfiguration(settings.replace('corner.account.workers.dev', hostname)),
+        /Release requires/,
+      );
+    }
+  } finally {
+    if (before === undefined) delete process.env.CORNER_PRODUCTION_ORIGIN;
+    else process.env.CORNER_PRODUCTION_ORIGIN = before;
+  }
+});
+
+test('public probes never forward Access credentials to an external page asset', async () => {
+  const access = {
+    'CF-Access-Client-Id': 'synthetic-id',
+    'CF-Access-Client-Secret': 'synthetic-secret',
+  };
+  const fetcher = async (url, options) => {
+    assert.equal(new URL(url).origin, config.origin);
+    assert.equal(options.redirect, 'manual');
+    assert.equal(options.headers['CF-Access-Client-Id'], access['CF-Access-Client-Id']);
+    assert.equal(options.headers['CF-Access-Client-Secret'], access['CF-Access-Client-Secret']);
+    const path = new URL(url).pathname;
+    if (path === '/api/health')
+      return Response.json({ ok: true }, { headers: { 'X-Corner-Version': versionId } });
+    if (path.includes('sign-up'))
+      return Response.json({ code: 'ORIGIN_NOT_ALLOWED' }, { status: 403 });
+    if (path.includes('/api/rpc/'))
+      return Response.json(
+        { json: { defined: true, code: 'SIGN_IN_REQUIRED', status: 401 } },
+        { status: 401 },
+      );
+    if (path === '/.env' || path === '/assets/not-found.js')
+      return new Response(null, { status: 404 });
+    return new Response('<script src="https://external.invalid/app.js"></script>', {
+      headers: { 'Content-Security-Policy': "frame-ancestors 'none'" },
+    });
+  };
+  await assert.rejects(
+    publicChecks(config.origin, versionId, fetcher, access),
+    /same-origin asset/,
+  );
+});
+
+test('single runtime traffic-switch failure never records a deployed receipt', async () => {
+  const f = fixture();
+  const execute = f.options.execute;
+  f.options.execute = (binary, args, options) => {
+    if (args.includes('deploy')) throw new Error('runtime switch failed');
+    return execute(binary, args, options);
+  };
+  await assert.rejects(promote(f.options), /runtime switch failed/);
+  assert.equal(f.records.at(-1).phase, 'schema-attempted');
+  assert(!f.records.some((row) => ['deployed', 'public-passed', 'complete'].includes(row.phase)));
 });
