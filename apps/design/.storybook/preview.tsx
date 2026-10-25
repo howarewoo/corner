@@ -1,6 +1,6 @@
 import { useLayoutEffect, type ReactNode } from 'react';
-import type { Preview, ReactRenderer } from '@storybook/react-vite';
-import { withThemeFromJSXProvider } from '@storybook/addon-themes';
+import type { Preview } from '@storybook/react-vite';
+import { DecoratorHelpers } from '@storybook/addon-themes';
 import { useGlobals } from 'storybook/preview-api';
 import { Toaster, TooltipProvider, type ThemePreference } from '@packages/ui';
 import { CatalogThemeContext } from '../src/catalog-theme';
@@ -16,6 +16,7 @@ try {
 } catch {
   // Appearance remains usable when storage is unavailable.
 }
+DecoratorHelpers.initializeThemeState(['light', 'dark', 'system'], defaultTheme);
 
 function CornerProviders({ theme, children }: { theme: ThemePreference; children: ReactNode }) {
   useLayoutEffect(() => {
@@ -46,24 +47,22 @@ const preview: Preview = {
   initialGlobals: { theme: defaultTheme },
   decorators: [
     (Story, context) => {
-      const [, updateGlobals] = useGlobals();
+      const [globals, updateGlobals] = useGlobals();
+      const theme = globals.theme || defaultTheme;
       return (
-        <CatalogThemeContext
-          key={context.id}
-          value={{
-            value: context.globals.theme || defaultTheme,
-            onValueChange: (theme) => updateGlobals({ theme }),
-          }}
-        >
-          <Story />
-        </CatalogThemeContext>
+        <CornerProviders theme={context.parameters.themes?.themeOverride || theme}>
+          <CatalogThemeContext
+            key={context.id}
+            value={{
+              value: theme,
+              onValueChange: (theme) => updateGlobals({ theme }),
+            }}
+          >
+            <Story />
+          </CatalogThemeContext>
+        </CornerProviders>
       );
     },
-    withThemeFromJSXProvider<ReactRenderer>({
-      themes: { light: 'light', dark: 'dark', system: 'system' },
-      defaultTheme,
-      Provider: CornerProviders,
-    }),
   ],
   parameters: {
     layout: 'fullscreen',

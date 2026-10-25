@@ -1,5 +1,5 @@
 // Live examples adapted from https://ui.shadcn.com/docs/components/base/input.
-import { useState, type ComponentType, type ReactNode } from 'react';
+import { useState } from 'react';
 import { Info } from 'lucide-react';
 import {
   Badge,
@@ -20,6 +20,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@packages/ui';
+import { Section, Status } from './specimen-layout';
 
 const countries = [
   { label: 'United States', value: 'us' },
@@ -45,13 +46,7 @@ const translations = {
   },
 } as const;
 
-export function InputExamples({
-  Section,
-  Status,
-}: {
-  Section: ComponentType<{ title: string; description?: string; children: ReactNode }>;
-  Status: ComponentType<{ children: ReactNode }>;
-}) {
+export function InputExamples() {
   const [groupResult, setGroupResult] = useState(
     'Submit a sample name and email; nothing leaves this preview.',
   );

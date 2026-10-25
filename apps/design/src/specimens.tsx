@@ -73,26 +73,8 @@ import './specimens.css';
 import { coreCatalog } from './catalog';
 import { ExpandedSpecimen } from './expanded-specimens';
 import { InputExamples } from './input-specimen';
+import { Section, Status } from './specimen-layout';
 
-function Section({
-  title,
-  description,
-  children,
-}: {
-  title: string;
-  description?: string;
-  children: ReactNode;
-}) {
-  return (
-    <section className="specimen-section">
-      <div className="specimen-heading">
-        <h2>{title}</h2>
-        {description && <p>{description}</p>}
-      </div>
-      <div className="specimen-preview">{children}</div>
-    </section>
-  );
-}
 function Field({ label, children, hint }: { label: string; children: ReactNode; hint?: string }) {
   return (
     <label className="specimen-field">
@@ -100,13 +82,6 @@ function Field({ label, children, hint }: { label: string; children: ReactNode; 
       {children}
       {hint && <small>{hint}</small>}
     </label>
-  );
-}
-function Status({ children }: { children: ReactNode }) {
-  return (
-    <p className="specimen-status" role="status">
-      {children}
-    </p>
   );
 }
 const units = [
@@ -424,7 +399,7 @@ function CoreSpecimen({ id }: { id: string }) {
               </Field>
             </div>
           </Section>
-          <InputExamples Section={Section} Status={Status} />
+          <InputExamples />
         </>
       );
     case 'textarea':
