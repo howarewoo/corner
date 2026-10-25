@@ -188,7 +188,7 @@ export async function packageArtifact({ root: sourceRoot = root, out, sourceSha 
   await build({
     stdin: {
       contents:
-        "export { migrate } from './migrate.js'; export { migrationInventory } from './migration-inventory.js'; export { migrationHistory, currentSchema } from './migration-history.js'; export { createDatabase } from './database.js'; export { inspectImport } from './store.js';",
+        "export { migrate, migrationCli } from './migrate.js'; export { migrationInventory } from './migration-inventory.js'; export { migrationHistory, currentSchema } from './migration-history.js'; export { createDatabase } from './database.js'; export { inspectImport } from './store.js';",
       resolveDir: join(sourceRoot, 'apps/server/dist'),
       sourcefile: 'packaged-migration.js',
       loader: 'js',
