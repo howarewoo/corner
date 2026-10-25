@@ -22,6 +22,7 @@ import '@packages/ui/theme.css';
 import '@packages/ui/styles.css';
 import '@/components/globals.css';
 import './standalone.css';
+import './pwa';
 
 function Brand() {
   return (

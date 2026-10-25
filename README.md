@@ -122,6 +122,21 @@ Open the same http://127.0.0.1:3000 address. Compose publishes the app only on l
 
 Application smoke checks use real PostgreSQL with a disposable local HTTPS auth fixture. They do not prove the Docker/Caddy application deployment, public certificates, or inbox delivery.
 
+## Install on iPhone
+
+Corner can be added to your Home Screen as a standalone web app with its own icon.
+
+1. Open your deployed Corner **HTTPS address in Safari** on your iPhone. Use the installation's stable address, not a temporary preview URL. The Mac's `127.0.0.1` development address is not reachable from your phone.
+2. Open **Share → Add to Home Screen** (it may be under **More**).
+3. Keep **Open as Web App** enabled if Safari offers it, then tap **Add**.
+4. Launch **Corner** from the Home Screen and sign in there if prompted.
+
+An internet connection is required for accounts, viewing saved records, and logging or saving changes. The production service worker does not cache private responses or an old application shell, and does not queue offline edits. A disconnected launch or page reload shows a reconnect page; **Try again** reopens the same address once connectivity returns. An already-open workspace retains its normal request-error handling.
+
+Installation does not require the App Store, add push notifications, or enable background syncing. Development builds do not register a service worker. Updates use the browser's normal service-worker lifecycle without forcing a reload over unsaved work.
+
+For mobile release verification, install the HTTPS build on a real iPhone and check sign-in, portrait/landscape safe areas, forms with the keyboard open, and disconnect/reconnect. Desktop phone emulation does not verify Safari's installed-app behavior.
+
 ## Your first plan
 
 1. **Create your own account.** Managed Neon sign-in is independent of the AI connection. Verification policy and recovery delivery are configured in Neon.
