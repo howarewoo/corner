@@ -1,3 +1,11 @@
+# Main automatically deploys production
+
+Merging to main is now ordinary production release approval. Successful current push-to-main CI triggers a credential-free workflow that dispatches the release on main, keeping production credentials main-only even when staging is the repository default. The controller qualifies the exact immutable artifact, rechecks current main before planning/SQL/traffic changes, preserves migration and live-baseline safeguards, and completes after public probes. Repeated CI for an already-deployed source probes it without redeploying. No human browser evidence is invented for automatic releases.
+
+Explicit bootstrap/adoption, recovery, and operator configuration releases retain human approval in `production-operations`; operational validation remains protected in `production-validation`. The explicit CI policy helper makes ordinary `production` automatic while retaining main-only branch rules for all production environments. Existing installations still require operator policy/credential setup and the first validated release baseline; these source changes do not deploy or change live settings.
+
+Observed on Node 24.21.0: all 93 native tooling regressions, actionlint, and documentation-link verification passed. Repository lint completed with 46 existing warnings and no errors. A real-ZIP regression reproduced a planning/promotion extraction collision before repair and passed after each phase received its own fresh workspace. A throwaway smoke ran the actual workflow shell for current and superseded main candidates, then exercised the actual Node release CLI's stale-main rejection before artifacts, SQL, or provider calls. External GitHub responses/dispatch were synthetic; no production migration, deployment, account verification, or cloud configuration change was performed.
+
 # Flat Base UI toasts
 
 Shared Base UI toasts now use solid borderless surfaces and the existing `--shadow-floating` elevation token. Toast actions use tonal fills; action and dismiss controls remain borderless with visible keyboard focus. The catalog's flat-control reset no longer suppresses toast shadows.
