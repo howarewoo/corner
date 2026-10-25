@@ -1721,10 +1721,10 @@ h1 {
   }
   .workspace {
     --workspace-inline-padding: 18px;
-    padding: 20px var(--workspace-inline-padding) 0;
+    padding: 0;
   }
   .workspace-content {
-    padding-bottom: var(--workspace-inline-padding);
+    padding: 20px var(--workspace-inline-padding) var(--workspace-inline-padding);
     scrollbar-width: none;
     scrollbar-gutter: auto;
   }
