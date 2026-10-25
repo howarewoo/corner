@@ -79,7 +79,11 @@ test('packaging canonicalizes JSONC comments and trailing commas but rejects mal
   const inputs = {
     'package.json': '{"type":"module"}',
     'pnpm-lock.yaml': 'lockfileVersion: "9.0"\n',
-    'packages/shared/dist/index.js': 'export {};',
+    ...Object.fromEntries(
+      ['nutrition', 'training', 'workspace', 'agent'].map((name) => [
+        `packages/${name}/dist/index.js`, 'export {};',
+      ]),
+    ),
     'apps/server/dist/migrate.js':
       'export function migrate() { throw new Error("packaging fixture"); }',
     'apps/server/dist/database.js':

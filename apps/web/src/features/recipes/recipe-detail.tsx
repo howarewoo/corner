@@ -11,7 +11,7 @@ import {
   Sparkles,
   Trash2,
 } from 'lucide-react';
-import type { Ingredient, Macros, Recipe } from '@packages/shared/types';
+import type { Ingredient, Macros, Recipe } from '@packages/nutrition/types';
 import { Badge, Button, Input } from '@packages/ui';
 import { cap, download, macroNames, num } from '../workspace/utils';
 import { Dialog, IconButton } from '../workspace/workspace-ui';

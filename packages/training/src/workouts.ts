@@ -8,7 +8,7 @@ import type {
   TrainingStats,
   WorkoutSession,
   WorkoutTemplate,
-} from './training-types.js';
+} from './types.js';
 
 const id = z
   .string()

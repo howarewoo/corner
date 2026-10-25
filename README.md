@@ -2,7 +2,7 @@
 
 Corner is a self-hostable app for meal planning, nutrition logging, workouts, progress, and an optional planning agent. Neon Postgres stores application data; managed Neon Auth owns email/password accounts and sessions. It does not read ChatGPT conversations, memories, or the original Corner Site.
 
-This is a separate application. Existing personal Corner data enters only when its owner chooses to import a Corner JSON export. The repository uses Turborepo with pnpm workspaces: `apps/server` owns the Hono runtime and oRPC procedures, `apps/web` is the Vite/React interface, `packages/api` owns the browser-safe application contract, and `packages/shared` owns shared domain code. Neon is managed infrastructure configured by root `neon.ts`; its server-side integration and application migrations stay in `apps/server`.
+This is a separate application. Existing personal Corner data enters only when its owner chooses to import a Corner JSON export. The repository uses Turborepo with pnpm workspaces: `apps/server` owns the Hono runtime and oRPC procedures, `apps/web` is the Vite/React interface, and `packages/api` owns the browser-safe application contract. Domain code lives in `packages/nutrition`, `packages/training`, `packages/workspace`, and `packages/agent`. Neon is managed infrastructure configured by root `neon.ts`; its server-side integration and application migrations stay in `apps/server`.
 
 The intended direction is a hosted service for performance-focused trainees, with an approved hosted ChatGPT integration. That is future direction, not a claim that this unreleased application provides a public service or hosted AI access; see [PRODUCT.md](PRODUCT.md) in a repository checkout.
 
@@ -19,7 +19,7 @@ pnpm run dev
 pnpm run dev:seed
 ```
 
-Open **http://127.0.0.1:3000**. The local controller builds the server and its dependencies, explicitly migrates its owned PostgreSQL 17 database, starts an HTTPS Better Auth fixture, then launches the existing API, web, design catalog, and shared/API watchers. The API uses **3001** and the catalog **3002**. Vite preserves the browser origin when proxying `/api` and `/auth/callback`. No Neon CLI, project, cloud credentials, or environment file is required. This is the local PostgreSQL approach in [Neon's local-development guide](https://neon.com/guides/local-development-with-neon); native `pg` needs no Neon HTTP proxy.
+Open **http://127.0.0.1:3000**. The local controller builds the server and its dependencies, explicitly migrates its owned PostgreSQL 17 database, starts an HTTPS Better Auth fixture, then launches the existing API, web, design catalog, and domain/API-package watchers. The API uses **3001** and the catalog **3002**. Vite preserves the browser origin when proxying `/api` and `/auth/callback`. No Neon CLI, project, cloud credentials, or environment file is required. This is the local PostgreSQL approach in [Neon's local-development guide](https://neon.com/guides/local-development-with-neon); native `pg` needs no Neon HTTP proxy.
 
 The explicit seed command creates `empty@corner.test` and `demo@corner.test`, both with password **`Corner-local-only-2026!`**. The first account stays empty; the second has synthetic recipes, a current-week meal plan, food logs, workouts, and progress records. These are local-only credentials, never suitable for a public service. Signup and sign-in use the normal account flow; no onboarding is required. Settings owns optional profile editing and workspace import.
 
@@ -51,7 +51,7 @@ pnpm run db:migrate
 pnpm start
 ```
 
-The build compiles `@packages/shared` and `@packages/api`, then builds `server` and `web` as separate workspace tasks. The compiled server starts on port 3000 and serves `apps/web/dist` alongside its API, preserving the same browser origin. Production runs ordinary JavaScript from `apps/server/dist`; it does not run Vite or require a TypeScript loader.
+The build compiles the nutrition, training, workspace, agent, and API packages in dependency order, then builds `server` and `web` as separate workspace tasks. The compiled server starts on port 3000 and serves `apps/web/dist` alongside its API, preserving the same browser origin. Production runs ordinary JavaScript from `apps/server/dist`; it does not run Vite or require a TypeScript loader.
 
 ### Workspace commands
 
@@ -80,7 +80,7 @@ The build compiles `@packages/shared` and `@packages/api`, then builds `server` 
 | `pnpm run test:ci`             | Native Node CI, release, and artifact regression tests                                                                                      |
 | `pnpm run smoke:workers`       | Actual full-stack workerd runtime with disposable PostgreSQL and HTTPS Auth fixtures, after `build:workers` |
 
-For a focused build, use `pnpm run build --filter=server` or `pnpm run build --filter=web`. Turbo also builds their shared/API dependencies. Each app declares its own dependencies; domain models and validation are imported through `@packages/shared/<module>` and the application contract through `@packages/api`, rather than relative paths into the other app.
+For a focused build, use `pnpm run build --filter=server` or `pnpm run build --filter=web`. Turbo also builds their domain/API dependencies. Each app declares its own dependencies; import models and validation directly from their owning `@packages/nutrition`, `@packages/training`, `@packages/workspace`, or `@packages/agent` subpath, and the application contract through `@packages/api`, rather than relative paths into another workspace.
 
 ### Formatting
 
@@ -226,7 +226,7 @@ pnpm run verify -- --full --report /tmp/corner-verification.jsonl
 
 Server tests and all runtime smoke checks require `CORNER_TEST_DATABASE_URL`; they never fall back to the real `DATABASE_URL`. Each fixture owns a random PostgreSQL schema and drops only that schema. Test files still run sequentially in separate processes. Better Auth is a **test-only** dependency for a local managed-service fixture; no test sends real account email or model requests.
 
-Production smoke starts disposable compiled servers on loopback ports 43137 and 43138. Development smoke starts only the web/API processes and shared/API-package watchers on 43139 and 43140, excluding the independent design catalog. Task-prefixed streaming logs expose readiness without waiting for persistent tasks to exit. Both use actual PostgreSQL and a private local HTTPS auth fixture, exercise cookie sessions and proxy boundaries, and clean up only their own resources. Run development smoke in a clean checkout without `.env`, `.env.local`, or Vite environment files; never remove a user's configuration just to pass it.
+Production smoke starts disposable compiled servers on loopback ports 43137 and 43138. Development smoke starts only the web/API processes and five domain/API-package watchers on 43139 and 43140, excluding the independent design catalog. Task-prefixed streaming logs expose readiness without waiting for persistent tasks to exit. Both use actual PostgreSQL and a private local HTTPS auth fixture, exercise cookie sessions and proxy boundaries, and clean up only their own resources. Run development smoke in a clean checkout without `.env`, `.env.local`, or Vite environment files; never remove a user's configuration just to pass it.
 
 ### Targeted verification and merge protection
 
@@ -280,7 +280,10 @@ Old feature-preview provisioning workflows are removed. Never recreate removed l
 | ---------------------- | ------------------------------------------------------------------------------------------------ |
 | `apps/web/src/`        | React account UI, profile/import settings, meal planner, recipes, workouts, and agent review     |
 | `apps/server/src/`     | Managed Auth boundary, PostgreSQL persistence, oRPC procedures, model connection, and planning agent |
-| `packages/shared/src/` | Shared models, validation, nutrition/training calculations, proposal rules, and exercise data    |
+| `packages/nutrition/src/` | Food and recipe types/schemas, meal calendar, macro/grocery calculations, and food estimates |
+| `packages/training/src/` | Workout types/rules, result prefill, exercise catalog, and provenance data |
+| `packages/workspace/src/` | Combined state/settings, validated mutation composition, training-aware nutrition targets, and initial state |
+| `packages/agent/src/` | Planning proposal contracts, allowed changes, and proposal-to-mutation validation |
 | `packages/api/src/`    | Browser-safe oRPC contract, transport schemas, and inferred client types                        |
 | `apps/web/tests/`      | Rendered account/connection controls and development configuration checks                        |
 | `apps/server/tests/`   | Accounts, email, data isolation, agent, provider, and proxy regression checks                    |
@@ -300,6 +303,6 @@ The four contributor guides above are available in repository checkouts. The cur
 
 ## Exercise data and third-party notices
 
-The exercise catalog is derived from [hasaneyldrm/exercises-dataset](https://github.com/hasaneyldrm/exercises-dataset). Its source metadata is in `packages/shared/src/data/exercises-source.json`; its supplied license and attribution notice are preserved in `apps/web/public/licenses/`. Exercise information is a movement reference, not a personalized prescribed load.
+The exercise catalog is derived from [hasaneyldrm/exercises-dataset](https://github.com/hasaneyldrm/exercises-dataset). Its source metadata is in `packages/training/src/data/exercises-source.json`; its supplied license and attribution notice are preserved in `apps/web/public/licenses/`. Exercise information is a movement reference, not a personalized prescribed load.
 
 The source package contains no personal workspace export, private database, runtime secret, ChatGPT token, original Sites deployment identity, or `node_modules`. Dependency versions and integrity hashes are recorded in `pnpm-lock.yaml`.

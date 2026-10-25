@@ -30,7 +30,7 @@ All commands below run from the repository root with dependencies installed:
 | `pnpm run dev:reset --confirm-delete-local-data` | Delete only the owned local database; retain local keys |
 | `pnpm run check`                               | Type-check all workspaces; Turbo builds shared dependencies first                                                                          |
 | `pnpm run lint`                                | Repository-wide Oxlint checks with `@shadcn/lint` registered; configure rules in `.oxlintrc.json`                                          |
-| `pnpm test`                                    | Server and rendered-web suites through Turbo; no separate shared-package test task exists                                                  |
+| `pnpm test`                                    | Server and rendered-web suites through Turbo; no separate domain-package test task exists                                                  |
 | `pnpm test --filter=server`                    | Server suite, retaining Turbo's shared-build prerequisite                                                                                  |
 | `pnpm test --filter=web`                       | Rendered-web and Vite configuration suite, retaining the shared-build prerequisite                                                         |
 | `pnpm run verify -- --plan --base origin/main` | Inspect conservative branch selection; omit `--plan` to run it, or use `--full` in a credential-free checkout                              |
@@ -55,7 +55,7 @@ A layout migration must update discovery, relative imports, and TypeScript inclu
 
 ## Select verification for the change
 
-- **Shared schemas, calculations, or mutation rules:** run `pnpm run check`, consuming server/web suites, and the build. Shared exports are compiled into `packages/shared/dist`; a direct workspace command does not automatically rebuild them as Turbo does.
+- **Domain schemas, calculations, or mutation rules:** run `pnpm run check`, consuming server/web suites, and the build. Nutrition, training, workspace, and agent exports compile into their owning `packages/<domain>/dist`; a direct workspace command does not automatically rebuild dependencies as Turbo does.
 - **UI behavior:** run the relevant web suite; inspect the actual changed screen at desktop and phone widths. Rendered component tests do not prove browser layout, focus behavior, or mobile usability.
 - **Account or AI lifecycle:** run the affected server suite and web suite when controls change. Provider/mail fixtures are simulated; do not use real grants, paid inference, or email delivery without explicit authorization.
 - **HTTP runtime, origin/proxy handling, development configuration, or workspace integration:** build, then exercise the relevant production/development smoke checks. Broaden to both smoke checks when changing the shared startup/origin contract.
@@ -79,7 +79,7 @@ Production is one full-stack Worker named `corner`; staging is native Preview `s
 ## Boundaries and pitfalls
 
 - Package names follow their folders: `apps/<name>/package.json` uses `<name>`; `packages/<name>/package.json` uses `@packages/<name>`.
-- Import shared domain code through `@packages/shared/<module>`, not relative paths into another app. Put credentials, database access, and provider I/O in the server, never shared or browser modules.
+- Import domain code directly through the owning `@packages/nutrition/<module>`, `@packages/training/<module>`, `@packages/workspace/<module>`, or `@packages/agent/<module>` export, never relative paths into another workspace. Nutrition and training are independent; workspace composes them, and agent depends on that composition. Put credentials, database access, and provider I/O in the server, never domain or browser modules.
 - Preserve owner-scoped reads/writes, request fingerprinting, atomic proposal application, and stale-proposal rejection. Ordinary manual mutations do not all carry `expectedRevision`; inspect the actual route and record-level concurrency rules before claiming otherwise.
 - AI proposes plans and targets; users approve changes and record actual food, measurements, and training. Preserve server/shared validation that protects started and recorded workouts. Draft recipes and food estimates must remain editable before saving.
 - Hosted mode currently has no enabled AI provider. The agreed direction is an approved hosted ChatGPT integration, not permission to bypass the local gate, reuse local tokens publicly, or introduce an implicit separately billed fallback.

@@ -1,5 +1,5 @@
 import type { AppState, Settings } from './types.js';
-import { createTrainingState } from './training.js';
+import { createTrainingState } from '@packages/training/workouts';
 
 export const DEFAULT_PROFILE: NonNullable<Settings['profile']> = {
   goals: '',

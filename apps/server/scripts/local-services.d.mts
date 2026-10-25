@@ -1,6 +1,6 @@
 import type { Pool } from 'pg';
 import type { BetterAuthOptions } from 'better-auth';
-import type { AppState } from '@packages/shared/types';
+import type { AppState } from '@packages/workspace/types';
 
 export const localUsers: ReadonlyArray<{ key: string; email: string; name: string }>;
 export const localPassword: string;

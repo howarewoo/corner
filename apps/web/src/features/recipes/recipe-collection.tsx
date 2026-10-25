@@ -2,7 +2,8 @@
 
 import { useState } from 'react';
 import { ArrowUpRight, Clock3, Heart, Plus, Search, Sparkles } from 'lucide-react';
-import type { AppState, Recipe } from '@packages/shared/types';
+import type { AppState } from '@packages/workspace/types';
+import type { Recipe } from '@packages/nutrition/types';
 import {
   Badge,
   Button,

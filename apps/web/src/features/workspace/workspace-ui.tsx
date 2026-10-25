@@ -1,6 +1,6 @@
 import type { ComponentProps, ReactNode } from 'react';
-import type { Macros } from '@packages/shared/types';
-import { mondayOf, shiftDate } from '@packages/shared/domain';
+import type { Macros } from '@packages/nutrition/types';
+import { mondayOf, shiftDate } from '@packages/nutrition/dates';
 import { Home, UtensilsCrossed, ChevronLeft, ChevronRight } from 'lucide-react';
 import {
   Button,

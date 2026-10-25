@@ -8,10 +8,10 @@ import { PlanningAgent, type InferenceProvider } from '../src/planning-agent.ts'
 import { WorkspaceStore } from '../src/store.ts';
 import type { Config } from '../src/config.ts';
 import type { SubscriptionProvider, SubscriptionStatus } from '../src/subscription.ts';
-import { createInitialState } from '@packages/shared/seed';
-import type { AgentResult } from '@packages/shared/agent';
-import type { Recipe } from '@packages/shared/types';
-import type { WorkoutSession } from '@packages/shared/training-types';
+import { createInitialState } from '@packages/workspace/initial-state';
+import type { AgentResult } from '@packages/agent/proposals';
+import type { Recipe } from '@packages/nutrition/types';
+import type { WorkoutSession } from '@packages/training/types';
 
 const date = '2026-10-22';
 const timestamp = `${date}T12:00:00.000Z`;

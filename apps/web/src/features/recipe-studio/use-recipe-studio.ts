@@ -2,7 +2,8 @@
 
 import { useRef, useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
-import type { AppState, Recipe, RecipeRequest } from '@packages/shared/types';
+import type { AppState } from '@packages/workspace/types';
+import type { Recipe, RecipeRequest } from '@packages/nutrition/types';
 import type { Mutate, Notify } from '../workspace/types';
 import { rpc, scoped, errorCode, sessionLifetime } from '../../rpc';
 import { newId } from '../workspace/utils';

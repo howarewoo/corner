@@ -1,5 +1,7 @@
-import { targetForStateDate, weekDates } from './domain.js';
-import type { AppState, Macros } from './types.js';
+import { weekDates } from '@packages/nutrition/dates';
+import type { Macros } from '@packages/nutrition/types';
+import { targetForStateDate } from './targets.js';
+import type { AppState } from './types.js';
 
 export type MealPlanDaySummary = {
   date: string;

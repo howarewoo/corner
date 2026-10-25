@@ -4,8 +4,9 @@ import type { Pool } from 'pg';
 import { sql } from 'drizzle-orm';
 import type { Transaction } from '../src/queries.js';
 import { testDatabase, closeTestDatabase } from './helpers.ts';
-import { createInitialState } from '@packages/shared/seed';
-import type { AppState, Recipe } from '@packages/shared/types';
+import { createInitialState } from '@packages/workspace/initial-state';
+import type { AppState } from '@packages/workspace/types';
+import type { Recipe } from '@packages/nutrition/types';
 import { ApiError } from '../src/http.ts';
 import { inspectImport, WorkspaceStore } from '../src/store.ts';
 

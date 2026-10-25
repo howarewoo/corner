@@ -5,7 +5,7 @@ import { createTanstackQueryUtils } from '@orpc/tanstack-query';
 import { QueryClient, replaceEqualDeep, useQuery } from '@tanstack/react-query';
 import type { ApiClient } from '@packages/api/contract';
 import { RPC_PREFIX } from '@packages/api/protocol';
-import type { StateResponse } from '@packages/shared/types';
+import type { StateResponse } from '@packages/workspace/types';
 
 export const queryClient = new QueryClient({
   defaultOptions: {

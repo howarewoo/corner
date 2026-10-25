@@ -12,6 +12,7 @@ Corner has not been released. This is the current implementation baseline, not a
 - Shared Base UI-backed controls, navigation, light tokens, and toast notifications serve the product and catalog. The catalog also supports dark appearance. Product routes are bookmarkable; local drafts and filters survive navigation.
 - Original Corner JSON imports remain previewed, revision-checked, and restricted to empty workspaces. Workspace export and recipe text downloads remain supported. Imports do not claim identities by email or transfer passwords, sessions, model grants, or separate agent history.
 - Removed unused sample recipe/starter-week/template APIs and date selectors; persistence reuses the shared empty training-state factory. Supported original Corner imports and manual workflows remain unchanged.
+- Domain code is separated into nutrition, training, workspace, and agent packages with direct owner imports and acyclic dependencies. Development watchers, Vite access boundaries, containers, source packaging, and release tooling use those packages; no catch-all package or compatibility re-exports remain.
 
 ### Local development
 
@@ -49,9 +50,13 @@ Corner has not been released. This is the current implementation baseline, not a
 
 ### Verification and limits
 
-For this cleanup, `pnpm run verify -- --full` passed on Node 24.21.0 with an owned disposable PostgreSQL 17 database: 90 native tooling regressions, repository lint and type checks, all 13 server and 5 web test files, workspace/Worker builds, and production/development/Worker runtime smokes. Existing lint warnings and Vite chunk-size advisories remain.
+For the domain-package split, Node 24.21.0 verification passed 96 native tooling regressions, repository lint and type checks, all 13 server and 5 web test files, workspace/Worker builds, and production/development/Worker runtime smokes against an owned disposable PostgreSQL 17 database. The initial full-profile run exposed an obsolete compiler-readiness matcher; after fixing it, lint and the development/Worker smokes passed. Existing lint warnings and Vite chunk-size advisories remain.
 
 A separate compiled-module smoke imported an original export without training data, preserved its historical food snapshots in PostgreSQL, initialized empty training collections, retained owner isolation, and rejected invalid training data. Its schema and the verification database were removed afterward.
+
+Source ZIP verification confirmed all four domain manifests, unchanged 1,324-exercise catalog data and provenance, and no obsolete package or generated/private directories. Release packaging and verification consumed the actual built Worker, assets, and bundled Node migrator with a synthetic local-only source identity; this was not qualification of a committed or published release artifact.
+
+The Docker image built from the frozen lockfile. An offline container smoke exercised compiled domain imports, nutrition arithmetic, training date validation, empty workspace initialization, approval-gated target mutations, and rejection of agent-authored food recording. This did not exercise Docker HTTP startup or external authentication.
 
 Worker smoke still emitted private-safe `CORNER_DATABASE_CONNECTION_FAILED` diagnostics despite passing persistence assertions; clean connection logs are not established. Current local smoke success is not compatibility evidence for distinct historical production releases or qualification of immutable published artifacts.
 

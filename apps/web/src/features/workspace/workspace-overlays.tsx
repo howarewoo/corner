@@ -1,4 +1,5 @@
-import type { AppState, Recipe } from '@packages/shared/types';
+import type { AppState } from '@packages/workspace/types';
+import type { Recipe } from '@packages/nutrition/types';
 import {
   AlertDialog,
   AlertDialogAction,

@@ -12,14 +12,17 @@ import {
   type AgentRequest,
   type AgentResult,
   type AgentRun,
-} from '@packages/shared/agent';
-import { RecipeSchema, macroTotal, shiftDate } from '@packages/shared/domain';
+} from '@packages/agent/proposals';
+import { RecipeSchema } from '@packages/nutrition/schemas';
+import { macroTotal } from '@packages/nutrition/calculations';
+import { shiftDate } from '@packages/nutrition/dates';
 import {
   FoodEstimateResultSchema,
   FOOD_ESTIMATE_INSTRUCTIONS,
-} from '@packages/shared/food-estimate';
-import { searchExerciseCatalog } from '@packages/shared/exercise-catalog';
-import type { AppState, Recipe } from '@packages/shared/types';
+} from '@packages/nutrition/food-estimate';
+import { searchExerciseCatalog } from '@packages/training/exercise-catalog';
+import type { AppState } from '@packages/workspace/types';
+import type { Recipe } from '@packages/nutrition/types';
 import type { WorkspaceStore } from './store.js';
 import { FoodInputSchema, RecipeInputSchema } from '@packages/api/schemas';
 

@@ -93,12 +93,21 @@ importers:
       '@orpc/standard-server-fetch':
         specifier: 1.16.1
         version: 1.16.1
+      '@packages/agent':
+        specifier: workspace:*
+        version: link:../../packages/agent
       '@packages/api':
         specifier: workspace:*
         version: link:../../packages/api
-      '@packages/shared':
+      '@packages/nutrition':
         specifier: workspace:*
-        version: link:../../packages/shared
+        version: link:../../packages/nutrition
+      '@packages/training':
+        specifier: workspace:*
+        version: link:../../packages/training
+      '@packages/workspace':
+        specifier: workspace:*
+        version: link:../../packages/workspace
       drizzle-orm:
         specifier: 0.45.4
         version: 0.45.4(@types/pg@8.23.1)(kysely@0.29.7)(pg@8.23.1)
@@ -154,15 +163,24 @@ importers:
       '@orpc/tanstack-query':
         specifier: 1.16.1
         version: 1.16.1(@orpc/client@1.16.1)(@tanstack/query-core@5.104.5)
+      '@packages/agent':
+        specifier: workspace:*
+        version: link:../../packages/agent
       '@packages/api':
         specifier: workspace:*
         version: link:../../packages/api
-      '@packages/shared':
+      '@packages/nutrition':
         specifier: workspace:*
-        version: link:../../packages/shared
+        version: link:../../packages/nutrition
+      '@packages/training':
+        specifier: workspace:*
+        version: link:../../packages/training
       '@packages/ui':
         specifier: workspace:*
         version: link:../../packages/ui
+      '@packages/workspace':
+        specifier: workspace:*
+        version: link:../../packages/workspace
       '@tanstack/react-query':
         specifier: 5.104.5
         version: 5.104.5(@types/react@19.2.14)(react@19.2.6)
@@ -216,14 +234,42 @@ importers:
         specifier: 4.152.0
         version: 4.152.0(@types/node@24.19.2)
 
+  packages/agent:
+    dependencies:
+      '@packages/nutrition':
+        specifier: workspace:*
+        version: link:../nutrition
+      '@packages/training':
+        specifier: workspace:*
+        version: link:../training
+      '@packages/workspace':
+        specifier: workspace:*
+        version: link:../workspace
+      zod:
+        specifier: 3.25.76
+        version: 3.25.76
+    devDependencies:
+      '@types/node':
+        specifier: 24.19.2
+        version: 24.19.2
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+
   packages/api:
     dependencies:
       '@orpc/contract':
         specifier: 1.16.1
         version: 1.16.1
-      '@packages/shared':
+      '@packages/agent':
         specifier: workspace:*
-        version: link:../shared
+        version: link:../agent
+      '@packages/nutrition':
+        specifier: workspace:*
+        version: link:../nutrition
+      '@packages/workspace':
+        specifier: workspace:*
+        version: link:../workspace
       zod:
         specifier: 3.25.76
         version: 3.25.76
@@ -232,7 +278,20 @@ importers:
         specifier: 5.9.3
         version: 5.9.3
 
-  packages/shared:
+  packages/nutrition:
+    dependencies:
+      zod:
+        specifier: 3.25.76
+        version: 3.25.76
+    devDependencies:
+      '@types/node':
+        specifier: 24.19.2
+        version: 24.19.2
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+
+  packages/training:
     dependencies:
       zod:
         specifier: 3.25.76
@@ -311,6 +370,25 @@ importers:
       react-dom:
         specifier: 19.2.6
         version: 19.2.6(react@19.2.6)
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+
+  packages/workspace:
+    dependencies:
+      '@packages/nutrition':
+        specifier: workspace:*
+        version: link:../nutrition
+      '@packages/training':
+        specifier: workspace:*
+        version: link:../training
+      zod:
+        specifier: 3.25.76
+        version: 3.25.76
+    devDependencies:
+      '@types/node':
+        specifier: 24.19.2
+        version: 24.19.2
       typescript:
         specifier: 5.9.3
         version: 5.9.3

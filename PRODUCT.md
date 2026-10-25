@@ -52,8 +52,8 @@ Hosted capacity targets, pricing, launch criteria, and any future distributed AI
 - [README.md](README.md): current setup, representative workflows, data portability, and provider references.
 - [HOSTING.md](HOSTING.md): current deployment and backup procedures, with deployment verification limits.
 - [RELEASE-NOTES.md](RELEASE-NOTES.md): unreleased baseline and local verification limits, not proof of a live hosted service.
-- [Web UI](apps/web/src/) and [shared domain rules](packages/shared/src/): implemented workflows and terminology.
-- [Exercise provenance](packages/shared/src/data/exercises-source.json) and [third-party notice](apps/web/public/licenses/exercises-dataset-NOTICE.md): catalog evidence and attribution.
+- [Web UI](apps/web/src/), [nutrition](packages/nutrition/src/), [training](packages/training/src/), [workspace](packages/workspace/src/), and [agent rules](packages/agent/src/): implemented workflows and terminology.
+- [Exercise provenance](packages/training/src/data/exercises-source.json) and [third-party notice](apps/web/public/licenses/exercises-dataset-NOTICE.md): catalog evidence and attribution.
 
 The repository does not supply a public deployment, approved hosted AI credentials, real account consent evidence, or a completed browser visual review. Do not fabricate those assets or infer them from mocked provider tests.
 

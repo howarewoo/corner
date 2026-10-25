@@ -4,18 +4,16 @@ import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { createQueries, type Database, type QueryConnection, type Transaction } from './queries.js';
 import { mutationReceipts, workspaceState } from './schema.js';
 import { z } from 'zod';
+import { applyMutation, MutationSchema, SettingsSchema } from '@packages/workspace/mutations';
 import {
-  applyMutation,
   FoodEntrySchema,
-  MutationSchema,
   PlanEntrySchema,
   RecipeRequestSchema,
   RecipeSchema,
-  SettingsSchema,
-} from '@packages/shared/domain';
-import { createInitialState } from '@packages/shared/seed';
-import { createTrainingState, TrainingStateSchema } from '@packages/shared/training';
-import type { AppState, Mutation } from '@packages/shared/types';
+} from '@packages/nutrition/schemas';
+import { createInitialState } from '@packages/workspace/initial-state';
+import { createTrainingState, TrainingStateSchema } from '@packages/training/workouts';
+import type { AppState, Mutation } from '@packages/workspace/types';
 import { ApiError } from './http.js';
 import { requestIdSchema, revisionSchema } from '@packages/api/schemas';
 

@@ -15,7 +15,13 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const origin = 'http://127.0.0.1:43139';
 const apiPort = 43140;
 const password = 'synthetic-development-smoke-password-not-used-elsewhere';
-const compilerTasks = ['@packages/shared', '@packages/api'];
+const compilerTasks = [
+  '@packages/nutrition',
+  '@packages/training',
+  '@packages/workspace',
+  '@packages/agent',
+  '@packages/api',
+];
 const tasks = [...compilerTasks, 'server', 'web'];
 const seenTasks = new Set();
 const compiledTasks = new Set();
@@ -95,8 +101,8 @@ function capture(chunk) {
   // response data into CI output. Only bounded readiness markers are retained.
   captured = (captured + String(chunk)).slice(-64 * 1024);
   for (const task of tasks) if (captured.includes(`${task}:dev:`)) seenTasks.add(task);
-  for (const match of captured.matchAll(/(@packages\/(?:shared|api)):dev:[^\r\n]*Found 0 errors\. Watching for file changes\./g))
-    compiledTasks.add(match[1]);
+  for (const match of captured.matchAll(/(@packages\/[\w-]+):dev:[^\r\n]*Found 0 errors\. Watching for file changes\./g))
+    if (compilerTasks.includes(match[1])) compiledTasks.add(match[1]);
   apiStarted ||= captured.includes(`Development API listens at http://127.0.0.1:${apiPort};`);
 }
 
@@ -246,10 +252,7 @@ try {
       'turbo',
       'run',
       'dev',
-      '--filter=web',
-      '--filter=server',
-      '--filter=@packages/shared',
-      '--filter=@packages/api',
+      ...tasks.map((name) => `--filter=${name}`),
       '--ui=stream',
       '--log-order=stream',
       '--log-prefix=task',
@@ -283,7 +286,7 @@ try {
     'The web entry must be served as JavaScript.',
   );
 
-  const module = await call(filesystemPath('packages/shared/dist/exercise-catalog.js'));
+  const module = await call(filesystemPath('packages/training/dist/exercise-catalog.js'));
   assert.equal(
     module.status,
     200,
@@ -295,7 +298,7 @@ try {
     'The catalog must resolve both shared JSON imports.',
   );
   for (const filename of ['exercises.json', 'exercises-source.json']) {
-    const path = filesystemPath(`packages/shared/dist/data/${filename}`);
+    const path = filesystemPath(`packages/training/dist/data/${filename}`);
     const raw = await call(path);
     assert.equal(raw.status, 200, `Vite must serve shared catalog data: ${filename}.`);
     const data = json(raw, 'Shared catalog data');
@@ -401,7 +404,7 @@ try {
   }
 }
 process.stdout.write(
-  'Passed all four Turbo development tasks, web/shared catalog serving, filesystem isolation, native RPC proxy, callback authentication, and account session checks.\n',
+  `Passed all ${tasks.length} Turbo development tasks, web/exercise catalog serving, filesystem isolation, native RPC proxy, callback authentication, and account session checks.\n`,
 );
 process.stdout.write(
   'The owned development process group and temporary data were cleaned up. No account email or model requests were made.\n',

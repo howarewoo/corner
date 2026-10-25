@@ -1,4 +1,4 @@
-import type { WorkoutExercise, WorkoutSession, WorkoutSet } from './training-types.js';
+import type { WorkoutExercise, WorkoutSession, WorkoutSet } from './types.js';
 
 export type SetPrefill = {
   weight: number | null;

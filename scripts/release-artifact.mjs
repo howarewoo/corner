@@ -169,9 +169,11 @@ export async function packageArtifact({ root: sourceRoot = root, out, sourceSha 
   const serverRequire = createRequire(join(sourceRoot, 'apps/server/package.json'));
   const webRequire = createRequire(join(sourceRoot, 'apps/web/package.json'));
   const { experimental_readRawConfig } = await import(serverRequire.resolve('wrangler'));
-  const shared = await readdir(join(sourceRoot, 'packages/shared/dist')).catch(() => []);
-  if (!shared.some((name) => name.endsWith('.js')))
-    throw new Error('Build shared before packaging.');
+  for (const name of ['nutrition', 'training', 'workspace', 'agent']) {
+    const files = await readdir(join(sourceRoot, 'packages', name, 'dist')).catch(() => []);
+    if (!files.some((file) => file.endsWith('.js')))
+      throw new Error(`Build ${name} before packaging.`);
+  }
   await access(join(sourceRoot, 'apps/server/dist/migrate.js'));
   const workerSource = join(sourceRoot, 'apps/server/dist/worker');
   await access(join(workerSource, 'worker.js'));
