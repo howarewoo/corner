@@ -1,12 +1,9 @@
 import { z } from 'zod';
 import type {
   AppState,
-  FoodEntry,
   GroceryItem,
   Macros,
   Mutation,
-  PlanEntry,
-  Recipe,
   Settings,
 } from './types.js';
 import { applyTrainingMutation, ensureTrainingState, TrainingMutationOptions } from './training.js';
@@ -258,24 +255,6 @@ export function targetForStateDate(state: AppState, date: string): Macros {
       session.date === date && session.status !== 'skipped' && session.kind !== 'recovery',
   );
   return hasTraining ? state.settings.training : state.settings.rest;
-}
-
-export function plannedForDate(
-  state: AppState,
-  date: string,
-): Array<PlanEntry & { recipe: Recipe }> {
-  const recipes = new Map(state.recipes.map((recipe) => [recipe.id, recipe]));
-  const slots = ['breakfast', 'lunch', 'dinner', 'snack', 'fuel'];
-  return state.plan
-    .filter((entry) => entry.date === date && recipes.has(entry.recipeId))
-    .map((entry) => ({ ...entry, recipe: recipes.get(entry.recipeId)! }))
-    .sort((a, b) => slots.indexOf(a.slot) - slots.indexOf(b.slot));
-}
-
-export function loggedForDate(state: AppState, date: string): FoodEntry[] {
-  return state.logs
-    .filter((entry) => entry.date === date)
-    .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 }
 
 export function groceryList(state: AppState, weekStart: string): GroceryItem[] {

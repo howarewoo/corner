@@ -4,7 +4,7 @@ Corner is a self-hostable app for meal planning, nutrition logging, workouts, pr
 
 This is a separate application. Existing personal Corner data enters only when its owner chooses to import a Corner JSON export. The repository uses Turborepo with pnpm workspaces: `apps/server` owns the Hono runtime and oRPC procedures, `apps/web` is the Vite/React interface, `packages/api` owns the browser-safe application contract, and `packages/shared` owns shared domain code. Neon is managed infrastructure configured by root `neon.ts`; its server-side integration and application migrations stay in `apps/server`.
 
-The intended direction is a hosted service for performance-focused trainees, with an approved hosted ChatGPT integration. That is future direction, not a claim that this release provides a public service or hosted AI access; see [PRODUCT.md](PRODUCT.md) in a repository checkout.
+The intended direction is a hosted service for performance-focused trainees, with an approved hosted ChatGPT integration. That is future direction, not a claim that this unreleased application provides a public service or hosted AI access; see [PRODUCT.md](PRODUCT.md) in a repository checkout.
 
 ## Start development
 
@@ -35,7 +35,7 @@ The account form uses Neon's `@neondatabase/auth` SDK (`signUp.email` and `signI
 
 The SDK is pinned to `0.6.0-beta` to satisfy its bundled `@neondatabase/auth-ui` peer contract; the `0.7.0-beta` release still pulls UI that requires `0.6.0-beta`. Workspace pnpm overrides align Better Auth/core at `1.7.12` and `better-call` at `1.4.4`, avoiding conflicting legacy-UI plugin peers. Corner uses only the programmatic SDK, not those UI components. Revisit these pins together when Neon's published dependency graph is compatible without overrides.
 
-Application calls use the shared `@packages/api` contract and native oRPC at `/api/rpc`; TanStack Query owns browser server state. This unreleased application starts with that protocol baseline: old application REST URLs are not supported, and no REST upgrade bridge, maintenance mode, or cutover controller is added. Managed Auth `/api/auth`, OAuth `/auth/callback`, and `GET /api/health` retain their separate protocols.
+Application calls use the shared `@packages/api` contract and native oRPC at `/api/rpc`; TanStack Query owns browser server state. Old application REST URLs are not supported. Managed Auth `/api/auth`, OAuth `/auth/callback`, and `GET /api/health` retain their separate protocols.
 
 **Development never connects to cloud Neon.** `pnpm dev` starts only its owned local PostgreSQL/Auth stack. API development also rejects non-loopback database/Auth endpoints and database host overrides before opening connections or writing private keys. Development does not load root environment files. Cloud configuration belongs to compiled production starts and explicit deployment/migration operations, not a separate cloud-development mode.
 
@@ -153,7 +153,7 @@ The implementation follows OpenAI's documented **ChatGPT plan usage / Sign in wi
 
 This connection authorizes eligible model requests. **It does not grant ChatGPT conversation history or account context.** Model access, usage limits, consent, workspace policy, and availability are determined by the connected account and OpenAI.
 
-The self-serve route documented by OpenAI is for open-source and locally hosted applications. Paid or remotely hosted applications require separate onboarding/approval. Consequently, this release supports local loopback authorization and **disables self-serve subscription registration in hosted mode**. It is not a public SaaS deployment, and the local connection should not be presented as an approved hosted integration.
+The self-serve route documented by OpenAI is for open-source and locally hosted applications. Paid or remotely hosted applications require separate onboarding/approval. Consequently, Corner supports local loopback authorization and **disables self-serve subscription registration in hosted mode**. It is not a public SaaS deployment, and the local connection should not be presented as an approved hosted integration.
 
 Official references, checked 22 October 2026:
 
@@ -170,7 +170,7 @@ Corner login and ChatGPT authorization are separate. An expired or limited ChatG
 
 OAuth uses fresh state, nonce, PKCE, and the initiating Corner session. The app retains the issued registration and verifies signed account identity before enabling inference. Access and refresh credentials are encrypted in Postgres and never sent to the frontend. Refresh rotation is serialized with database leases, and generation checks prevent late work from restoring a disconnected grant. Available models are fetched for the selected connection rather than hardcoded.
 
-Disconnect stops local use and attempts remote revocation. If remote revocation cannot be confirmed, the interface tells you and links to ChatGPT settings. The verified registration is retained so reconnecting uses the same ChatGPT identity; this release does not offer a switch-account operation within a Corner account. A separate Corner account has its own independent connection.
+Disconnect stops local use and attempts remote revocation. If remote revocation cannot be confirmed, the interface tells you and links to ChatGPT settings. The verified registration is retained so reconnecting uses the same ChatGPT identity; Corner does not offer a switch-account operation within a Corner account. A separate Corner account has its own independent connection.
 
 ## Bring your current Corner plan
 
@@ -198,7 +198,7 @@ Application queries use Drizzle ORM over the existing `pg` pools. Edit [schema.t
 
 Upgrades run `pnpm install --frozen-lockfile`, `pnpm run build`, and the explicit `pnpm run db:migrate` before restarting one Corner process. The official Drizzle migrator applies pending SQL transactionally under a migration lock; Corner verifies the applied hash/timestamp prefix first. The native `__drizzle_migrations` ledger lives in the application schema, including each owned disposable test schema. Startup never applies migrations. Never edit applied SQL or its Kit journal/snapshots.
 
-Drizzle is the initial deployment baseline for this unreleased application. The old custom migration history is not an upgrade or recovery target; no legacy migration bridge or archive is retained. Existing databases are never reset automatically.
+Drizzle is the initial deployment baseline for this unreleased application. Pre-Drizzle migration histories and artifacts are not upgrade or recovery targets. Existing databases are never reset automatically.
 
 ## Hosted deployment preparation
 
@@ -294,7 +294,7 @@ Old feature-preview provisioning workflows are removed. Never recreate removed l
 - [ARCHITECTURE.md](ARCHITECTURE.md): component responsibilities, data flows, and safety boundaries.
 - [AGENTS.md](AGENTS.md): repository operations and change-specific verification.
 - [HOSTING.md](HOSTING.md): current deployment, proxy, backup, and recovery procedures.
-- [RELEASE-NOTES.md](RELEASE-NOTES.md): release history and historical verification limits.
+- [RELEASE-NOTES.md](RELEASE-NOTES.md): unreleased implementation baseline and verification limits.
 
 The four contributor guides above are available in repository checkouts. The current source-ZIP allowlist does not include them; the ZIP still includes this README, hosting guidance, and release notes.
 

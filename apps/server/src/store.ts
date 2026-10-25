@@ -14,7 +14,7 @@ import {
   SettingsSchema,
 } from '@packages/shared/domain';
 import { createInitialState } from '@packages/shared/seed';
-import { TrainingStateSchema } from '@packages/shared/training';
+import { createTrainingState, TrainingStateSchema } from '@packages/shared/training';
 import type { AppState, Mutation } from '@packages/shared/types';
 import { ApiError } from './http.js';
 import { requestIdSchema, revisionSchema } from '@packages/api/schemas';
@@ -54,15 +54,6 @@ const StateSchema = z
   })
   .strict();
 
-const emptyTraining = () => ({
-  templates: [],
-  sessions: [],
-  checkIns: [],
-  requests: [],
-  reviews: [],
-  scheduledDates: [],
-});
-
 function uniqueIds(items: Array<{ id: string }>, collection: string): void {
   if (new Set(items.map((item) => item.id)).size !== items.length)
     throw new ApiError(400, 'INVALID_STATE', `${collection} contains duplicate item IDs.`);
@@ -86,7 +77,7 @@ export function inspectImport(rawState: unknown): {
     throw new ApiError(400, 'INVALID_STATE', 'Choose a valid Corner JSON export.');
   const raw = rawState as Record<string, unknown>;
   let training = raw.training;
-  if (training === undefined) training = emptyTraining();
+  if (training === undefined) training = createTrainingState();
   else if (
     training &&
     typeof training === 'object' &&

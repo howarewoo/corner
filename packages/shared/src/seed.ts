@@ -1,4 +1,4 @@
-import type { AppState, PlanEntry, Recipe, Settings } from './types.js';
+import type { AppState, Settings } from './types.js';
 import { createTrainingState } from './training.js';
 
 export const DEFAULT_PROFILE: NonNullable<Settings['profile']> = {
@@ -29,10 +29,6 @@ export const DEFAULT_SETTINGS: Settings = {
   setup: { completedAt: null, nutritionTargetsSet: false },
 };
 // New accounts contain only their own records. No personal sample plan is installed.
-export const SEED_RECIPES: Recipe[] = [];
-export function starterWeek(_date?: string): PlanEntry[] {
-  return [];
-}
 export function createInitialState(name?: string): AppState {
   const settings = structuredClone(DEFAULT_SETTINGS);
   if (name?.trim()) settings.name = name.trim().slice(0, 80);

@@ -17,7 +17,7 @@ Production and staging share one full-stack runtime and immutable payload:
 
 Both serve assets, `/api/*`, and `/auth/callback` through `apps/server/src/worker.ts`; there is no frontend Worker or service binding. Production also supports an exact HTTPS custom domain. Keep top-level `preview_urls: true`. Enable `workers_dev` only for production's exact stable `https://corner.<account-subdomain>.workers.dev` origin; custom-domain production keeps it disabled. Deployment/Preview URLs cannot be production canonical origins. Keep DB/Auth/keys isolated and hosted ChatGPT disabled.
 
-The unreleased application's initial deployment baseline is native oRPC at `/api/rpc`. The browser and backend share `@packages/api`; managed Auth `/api/auth`, OAuth `/auth/callback`, and `GET /api/health` retain their own protocols. Old application REST URLs and historical unpublished REST artifacts are not supported. No maintenance mode, REST upgrade bridge, or cutover controller is added; live admin/cutover actions below remain separately authorized operator work.
+The unreleased application's initial deployment baseline is native oRPC at `/api/rpc`. The browser and backend share `@packages/api`; managed Auth `/api/auth`, OAuth `/auth/callback`, and `GET /api/health` retain their own protocols. Old application REST URLs and historical unpublished REST artifacts are not supported. Live admin/cutover actions below remain separately authorized operator work.
 
 Workers use request-scoped PostgreSQL pools and the existing owner locks, transactions, and mutation receipts. They never initialize process-wide agent recovery, read repository environment files, or start inference. Stop the old Node process before moving its database to Workers.
 
@@ -215,7 +215,7 @@ Use your own email address for this first check:
 
 1. Create an account. With verification required, no workspace should open before verification.
 2. Enter the verification code from the email, then sign in normally.
-3. Complete the profile and save a small manual plan or recipe.
+3. Save a small manual plan or recipe and optionally edit the profile in Settings.
 4. Sign out and request a password reset. Open the email, choose a new password, and sign in again.
 5. Confirm the saved record remains. An earlier session should no longer be authenticated after the reset.
 
@@ -253,9 +253,9 @@ Manual plans, recipes, nutrition logs, and training records work in this deploym
 
 A supported hosted integration can be added after that access exists. Do not relabel a public installation as local, reuse a person's local token, or expose the loopback registration route publicly. There is no automatic fallback to separately billed API use.
 
-## Verification status for this release
+## Verification limits
 
-Node build, tests, local PostgreSQL smoke, live Neon service checks, and browser checks are reported in the latest `RELEASE-NOTES.md` entry. These do not prove the Docker/Caddy application deployment, public certificate issuance, SMTP inbox delivery, or live ChatGPT inference.
+Corner is unreleased. [RELEASE-NOTES.md](RELEASE-NOTES.md) summarizes the current implementation and local verification limits; it is not deployment qualification. Run the checks appropriate to the actual source and environment. Local builds, tests, and fixtures do not prove the current Docker/Caddy or Workers deployment, public certificates, Access isolation, SMTP inbox recovery, or live ChatGPT inference.
 
 Official deployment and integration references:
 

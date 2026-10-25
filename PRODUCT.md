@@ -20,7 +20,7 @@ The agreed direction is a future hosted service. Near-term priorities are daily 
 
 Today, Corner is a self-hostable web application using managed Neon Auth email/password accounts and owner-scoped Neon Postgres workspaces. Local setup is documented in [README.md](README.md); Cloudflare Workers and the optional single-server HTTPS deployment are documented in [HOSTING.md](HOSTING.md).
 
-A person sets up their profile or imports a Corner JSON export, plans meals and training, records what actually happened, and reviews progress. Manual tools work without an AI connection. Corner sign-in and ChatGPT authorization are separate; losing model access must not prevent manual tracking.
+A person can optionally edit their profile or import a Corner JSON export, then plan meals and training, record what actually happened, and review progress. Manual tools work without an AI connection. Corner sign-in and ChatGPT authorization are separate; losing model access must not prevent manual tracking.
 
 Corner does not read ChatGPT conversations, memories, an original Corner Site, or another person's workspace. Existing personal data enters through an owner-selected import, not account matching or background synchronization.
 
@@ -51,7 +51,7 @@ Hosted capacity targets, pricing, launch criteria, and any future distributed AI
 
 - [README.md](README.md): current setup, representative workflows, data portability, and provider references.
 - [HOSTING.md](HOSTING.md): current deployment and backup procedures, with deployment verification limits.
-- [RELEASE-NOTES.md](RELEASE-NOTES.md): historical verification evidence, not proof of a live hosted service.
+- [RELEASE-NOTES.md](RELEASE-NOTES.md): unreleased baseline and local verification limits, not proof of a live hosted service.
 - [Web UI](apps/web/src/) and [shared domain rules](packages/shared/src/): implemented workflows and terminology.
 - [Exercise provenance](packages/shared/src/data/exercises-source.json) and [third-party notice](apps/web/public/licenses/exercises-dataset-NOTICE.md): catalog evidence and attribution.
 
