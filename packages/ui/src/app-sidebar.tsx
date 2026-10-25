@@ -15,6 +15,7 @@ import {
   useSidebar,
 } from './catalog/sidebar';
 import { BrandMark } from './workspace-header';
+import { ThemePicker, type ThemePickerProps } from './theme-picker';
 type SidebarEntry<Id extends string> = {
   id: Id;
   label: string;
@@ -50,6 +51,7 @@ export type AppSidebarProps<Id extends string> = {
     inputRef?: React.RefObject<HTMLInputElement | null>;
   };
   empty?: { message: string; actionLabel: string; onAction: () => void };
+  theme?: Pick<ThemePickerProps, 'value' | 'onValueChange'>;
   profile?: {
     name: string;
     initial: string;
@@ -80,6 +82,7 @@ export function AppSidebar<Id extends string>({
   selectedIndicator = false,
   search,
   empty,
+  theme,
   profile,
   footer,
   note,
@@ -248,13 +251,14 @@ export function AppSidebar<Id extends string>({
           )}
         </nav>
       </SidebarContent>
-      {(note || profile || footer) && (
+      {(note || theme || profile || footer) && (
         <SidebarFooter>
           {note && (
             <p className="ui-app-sidebar-note" role="status">
               {note}
             </p>
           )}
+          {theme && <ThemePicker {...theme} />}
           {profile && (
             <SidebarMenu>
               <SidebarMenuItem>

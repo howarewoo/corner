@@ -23,6 +23,7 @@ import '@packages/ui/styles.css';
 import '@/components/globals.css';
 import './standalone.css';
 import './pwa';
+import { ThemeProvider } from './theme';
 
 function Brand() {
   return (
@@ -208,12 +209,14 @@ function AccountEntryPoint() {
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <QueryClientProvider client={queryClient}>
-      <BrowserRouter>
-        <Toaster toastManager={accountToasts} viewportProps={{ className: 'corner-ui' }} />
-        <ConnectionNotice />
-        <AccountEntryPoint />
-      </BrowserRouter>
-    </QueryClientProvider>
+    <ThemeProvider>
+      <QueryClientProvider client={queryClient}>
+        <BrowserRouter>
+          <Toaster toastManager={accountToasts} viewportProps={{ className: 'corner-ui' }} />
+          <ConnectionNotice />
+          <AccountEntryPoint />
+        </BrowserRouter>
+      </QueryClientProvider>
+    </ThemeProvider>
   </StrictMode>,
 );

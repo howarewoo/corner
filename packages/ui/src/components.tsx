@@ -5,6 +5,7 @@ export {
   type MobileNavigationItem,
   type MobileNavigation,
 } from './app-sidebar';
+export { ThemePicker, type ThemePreference, type ThemePickerProps } from './theme-picker';
 export {
   WorkspaceHeader,
   WorkspaceMobileBar,

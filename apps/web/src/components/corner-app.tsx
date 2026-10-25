@@ -12,6 +12,7 @@ import {
   Button,
   SidebarInset,
   SidebarProvider,
+  ThemePicker,
   Toaster,
   ToggleGroup,
   ToggleGroupItem,
@@ -33,6 +34,7 @@ import WorkspaceOverlays from '../features/workspace/workspace-overlays';
 import { useWorkspaceState } from '../features/workspace/use-workspace-state';
 import { isNutritionView, sidebarGroups, viewPaths } from '../features/workspace/navigation';
 import type { Confirmation, CornerAppProps, Overlay, View } from '../features/workspace/types';
+import { useTheme } from '../theme';
 import './training.css';
 import './food-estimator.css';
 import './food-entry.css';
@@ -62,6 +64,7 @@ function CornerWorkspace({
   view,
 }: CornerAppProps & { view: View }) {
   const { isMobile } = useSidebar();
+  const theme = useTheme();
   const [lastNutritionView, setLastNutritionView] = useState<
     'planner' | 'recipes' | 'groceries' | 'studio'
   >(isNutritionView(view) ? view : 'planner');
@@ -150,6 +153,7 @@ function CornerWorkspace({
           onSelect={navigate}
           renderLink={({ href, ...props }) => <Link {...props} to={href!} />}
           groups={sidebarGroups}
+          theme={theme}
           profile={{
             name: state.settings.name || displayName || 'Your workspace',
             initial: firstName.charAt(0).toUpperCase(),
@@ -171,6 +175,7 @@ function CornerWorkspace({
                 homeLink={<Link to={viewPaths.today} />}
                 actions={
                   <>
+                    <ThemePicker {...theme} compact />
                     <Button
                       variant="ghost"
                       size="icon"
