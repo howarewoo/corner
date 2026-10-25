@@ -106,6 +106,7 @@ const run = {
 function fixture(overrides = {}) {
   const effects = [],
     records = [];
+  const states = new Map();
   const payload = {
     ...receipt,
     phase: 'planned',
@@ -154,10 +155,15 @@ function fixture(overrides = {}) {
         candidateDigest: reference.sourceSha === source ? candidateDigest : previousDigest,
       },
     }),
-    record: async (payload) => {
+    record: async (payload, state = 'in_progress') => {
       effects.push(payload.phase);
       records.push(payload);
-      return { id: 20 + records.length, payload };
+      const record = { id: 20 + records.length, payload };
+      await github.status(record, state);
+      return record;
+    },
+    status: async (record, state) => {
+      states.set(String(record.id), state);
     },
   };
   const execute = (binary, args) => {
@@ -195,6 +201,7 @@ function fixture(overrides = {}) {
     payload,
     effects,
     records,
+    state: (phase) => states.get(String(21 + records.findLastIndex(row => row.phase === phase))),
     options: {
       github,
       planId: '11',
@@ -383,6 +390,57 @@ test('plan persists exact real artifact and baseline qualification', async () =>
   assert.equal(result.payload.baselineId, '10');
   assert.equal(result.payload.qualification.previousDigest, previousDigest);
   assert.equal(result.payload.phase, 'planned');
+});
+
+test('successful promotion closes stage statuses without changing recovery journals', async () => {
+  const f = fixture();
+  const prepared = await plan({
+    ...f.options, runId: '1', sourceSha: source, qualify: async () => report,
+  });
+  assert.equal(f.state('planned'), 'success');
+  let schemaPayload;
+  const execute = f.options.execute;
+  f.options.execute = (...args) => {
+    if (args[1].includes('--apply')) {
+      assert.equal(f.state('schema-attempted'), 'in_progress');
+      schemaPayload = structuredClone(f.records.at(-1));
+    }
+    return execute(...args);
+  };
+  f.options.checkPublic = async () => {
+    assert.equal(f.state('schema-attempted'), 'success');
+    assert.equal(f.state('deployed'), 'in_progress');
+  };
+  const completed = await promote({ ...f.options, planId: String(prepared.id) });
+  assert.equal(completed.payload.phase, 'complete');
+  assert.deepEqual(
+    f.records.map(row => [row.phase, f.state(row.phase)]),
+    [['planned', 'inactive'], ['schema-attempted', 'success'], ['deployed', 'inactive'],
+      ['public-passed', 'inactive'], ['complete', 'success']],
+  );
+  assert.deepEqual(f.records.find(row => row.phase === 'schema-attempted'), schemaPayload);
+});
+
+test('migration and status failures remain visible without discarding the attempted schema', async () => {
+  const f = fixture();
+  const migrationError = new Error('migration failed');
+  const statusError = new Error('GitHub unavailable');
+  f.options.execute = (binary, args) => {
+    if (args.includes('--apply')) throw migrationError;
+    return `Worker Version ID: ${versionId}`;
+  };
+  const status = f.github.status;
+  f.github.status = async (record, state) => {
+    if (state === 'failure') throw statusError;
+    return status(record, state);
+  };
+  await assert.rejects(promote(f.options), error => {
+    assert(error instanceof AggregateError);
+    assert.deepEqual(error.errors, [migrationError, statusError]);
+    return true;
+  });
+  assert.equal(f.records.at(-1).phase, 'schema-attempted');
+  assert(!f.records.some(row => row.phase === 'deployed'));
 });
 
 test('successful current main CI deploys backend changes without a second human gate and reruns do not redeploy', async () => {
@@ -596,6 +654,8 @@ test('automatic public failure leaves the deployed release incomplete', async ()
     /wrong deployed version/,
   );
   assert.equal(f.records.at(-1).phase, 'deployed');
+  assert.equal(f.state('schema-attempted'), 'success');
+  assert.equal(f.state('deployed'), 'failure');
   assert(!f.records.some((record) => record.phase === 'complete'));
 });
 test('migration failure journals schema attempt and prevents traffic/public checks', async () => {
@@ -611,6 +671,7 @@ test('migration failure journals schema attempt and prevents traffic/public chec
   };
   await assert.rejects(promote(f.options), /migration failed/);
   assert.equal(f.records.at(-1)?.phase, 'schema-attempted');
+  assert.equal(f.state('schema-attempted'), 'failure');
   assert(!f.effects.includes('deploy'));
   assert(!f.effects.includes('public'));
 });
@@ -815,6 +876,8 @@ test('first bootstrap recovers from transient public failure without migrating o
     await assert.rejects(promote(f.options), /transient public failure/);
     const deployed = { id: 22, payload: f.records.at(-1) };
     assert.equal(deployed.payload.phase, 'deployed');
+    assert.equal(f.state('schema-attempted'), 'success');
+    assert.equal(f.state('deployed'), 'failure');
     f.github.baseline = async () => deployed;
     f.github.schema = async () => ({ id: 21, payload: f.records[0] });
     const retry = { ...f.options, deploymentId: String(deployed.id) };
@@ -828,6 +891,9 @@ test('first bootstrap recovers from transient public failure without migrating o
     };
     const result = await complete(retry);
     assert.equal(result.payload.phase, 'complete');
+    assert.equal(f.state('deployed'), 'inactive');
+    assert.equal(f.state('public-passed'), 'inactive');
+    assert.equal(f.state('complete'), 'success');
     assert.equal(invocations.length, invocationCount);
     f.github.baseline = async () => result;
     await plan({
