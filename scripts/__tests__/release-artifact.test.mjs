@@ -85,7 +85,7 @@ test('packaging canonicalizes JSONC comments and trailing commas but rejects mal
       ]),
     ),
     'apps/server/dist/migrate.js':
-      'export function migrate() { throw new Error("packaging fixture"); }',
+      'export function migrate() { throw new Error("packaging fixture"); } export function migrationCli() { throw new Error("packaging fixture CLI"); }',
     'apps/server/dist/database.js':
       'export function createDatabase() { throw new Error("packaging fixture"); }',
     'apps/server/dist/store.js':
