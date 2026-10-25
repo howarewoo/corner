@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
 import type { Pool, PoolClient } from 'pg';
 import { testDatabase, closeTestDatabase, createTestAuth, neonTestConfig } from './helpers.ts';
+import { createQueries } from '../src/queries.ts';
 import test, { type TestContext } from 'node:test';
 import { exportJWK, generateKeyPair, SignJWT, type JWTPayload } from 'jose';
 import {
@@ -160,7 +161,7 @@ async function harness(
     config,
     calls,
     fetcher,
-    provider: new SubscriptionProvider({ db, config, fetch: fetcher }),
+    provider: new SubscriptionProvider({ db: createQueries(db), config, fetch: fetcher }),
     nonce: '',
     claims: {},
     expiresIn: 3600,
@@ -559,7 +560,7 @@ test('authorization uses fresh PKCE, stable opaque host ID, official endpoints, 
   assert.ok(!stored.includes(first.searchParams.get('state')!));
   assert.ok(!stored.includes(first.searchParams.get('nonce')!));
   assert.ok(!stored.includes('session-a'));
-  h.provider = new SubscriptionProvider({ db: h.db, config: h.config, fetch: h.fetcher });
+  h.provider = new SubscriptionProvider({ db: createQueries(h.db), config: h.config, fetch: h.fetcher });
   await h.provider.initialize();
   const second = await start(h);
   assert.equal(
@@ -792,7 +793,7 @@ test('concurrent renewal serializes rotating refresh tokens and persists the rep
     ).includes('synthetic-rotated'),
     false,
   );
-  h.provider = new SubscriptionProvider({ db: h.db, config: h.config, fetch: h.fetcher });
+  h.provider = new SubscriptionProvider({ db: createQueries(h.db), config: h.config, fetch: h.fetcher });
   await h.provider.initialize();
   await h.provider.models('corner-user-a');
   assert.equal(h.refreshCount, 1);
@@ -802,7 +803,7 @@ test('independent provider instances share a PostgreSQL refresh lease', async (t
   const h = await harness(t);
   h.expiresIn = 1;
   await connect(h);
-  const other = new SubscriptionProvider({ db: h.db, config: h.config, fetch: h.fetcher });
+  const other = new SubscriptionProvider({ db: createQueries(h.db), config: h.config, fetch: h.fetcher });
   await other.initialize();
   await Promise.all([h.provider.models('corner-user-a'), other.models('corner-user-a')]);
   assert.equal(h.refreshCount, 1);
@@ -851,12 +852,12 @@ test('a model catalog write racing token rotation preserves rotated refresh cred
 
   const staged = stagedPool(h.db, h.config, user);
   const writer = new SubscriptionProvider({
-    db: staged.pool as Pool,
+    db: createQueries(staged.pool as Pool),
     config: h.config,
     fetch: h.fetcher,
   });
   const rotator = new SubscriptionProvider({
-    db: staged.pool as Pool,
+    db: createQueries(staged.pool as Pool),
     config: h.config,
     fetch: h.fetcher,
   });

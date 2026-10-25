@@ -6,6 +6,7 @@ import { betterAuth } from 'better-auth';
 import { getMigrations } from 'better-auth/db/migration';
 import { createInitialState } from '@packages/workspace/initial-state';
 import { createDatabase } from '../dist/database.js';
+import { createQueries } from '../dist/queries.js';
 import { migrateLocalDatabase } from '../dist/local-migrations.js';
 import { createApp } from '../dist/app.js';
 import { createAuth } from '../dist/auth.js';
@@ -94,7 +95,7 @@ export async function startLocalServices({
     );
     const app = createApp({
       config: appConfig,
-      store: new WorkspaceStore(database),
+      store: new WorkspaceStore(createQueries(database)),
       auth: createAuth(appConfig, (input, init) =>
         managed.handler(new Request(String(input), init)),
       ),
