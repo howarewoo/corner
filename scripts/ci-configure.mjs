@@ -8,6 +8,7 @@ const branches = ['main', 'staging'];
 const environmentBranches = {
   staging: 'staging',
   production: 'main',
+  'production-operations': 'main',
   'production-validation': 'main',
 };
 
@@ -85,7 +86,8 @@ async function verifyEnvironment(api, environment, branch, reviewerId) {
     `/environments/${environment}/deployment-branch-policies`,
     'branch_policies',
   );
-  const humanApproval = environment !== 'staging';
+  const humanApproval =
+    environment === 'production-operations' || environment === 'production-validation';
   if (
     observed.can_admins_bypass !== false ||
     observed.deployment_branch_policy?.protected_branches !== false ||
@@ -128,7 +130,13 @@ export async function configure({ api, reviewer, apply = false }) {
       throw new Error(
         `Required branch ${branch} is missing. Create the persistent ${branch} branch explicitly before configuration; this helper never creates branches.`,
       );
-    for (const path of ['ci.yml', 'staging.yml', 'release.yml', 'release-validate.yml']) {
+    for (const path of [
+      'ci.yml',
+      'staging.yml',
+      'production.yml',
+      'release.yml',
+      'release-validate.yml',
+    ]) {
       const content = await api(`/contents/.github/workflows/${path}?ref=${ref.object.sha}`, {
         missing: true,
       });
@@ -188,7 +196,10 @@ export async function configure({ api, reviewer, apply = false }) {
         wait_timer: 0,
         prevent_self_review: false,
         can_admins_bypass: false,
-        reviewers: environment === 'staging' ? [] : [{ type: 'User', id: collaborator.user.id }],
+        reviewers:
+          environment === 'production-operations' || environment === 'production-validation'
+            ? [{ type: 'User', id: collaborator.user.id }]
+            : [],
         deployment_branch_policy: { protected_branches: false, custom_branch_policies: true },
       },
     });
