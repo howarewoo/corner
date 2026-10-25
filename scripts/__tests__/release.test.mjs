@@ -50,7 +50,7 @@ const report = {
   passed: true,
 };
 const receipt = {
-  format: 3,
+  format: 4,
   kind: 'corner-production',
   workerName: 'corner',
   phase: 'complete',
@@ -70,7 +70,7 @@ const manifest = {
   workerEntry: 'worker/worker.js',
   migrationEntry: 'migration/dist/migrate.mjs',
   workerName: 'corner',
-  migrations: [{ name: '001_corner.sql', sha256: 'f'.repeat(64) }],
+  migrations: [{ name: '0000_corner.sql', sha256: 'f'.repeat(64), when: 1 }],
 };
 manifest.wranglerVersion = JSON.parse(
   await readFile(
@@ -479,7 +479,16 @@ test('automatic production independently downloads and verifies real archives fo
     'worker/worker.js': 'export default { fetch() { return new Response("archive fixture"); } };',
     'assets/index.html': '<html>archive fixture</html>',
     'migration/dist/migrate.mjs': 'throw new Error("Archive fixture must not execute SQL");',
-    'migration/migrations/001_corner.sql': migration,
+    'migration/migrations/0000_corner.sql': migration,
+    'migration/migrations/meta/_journal.json': JSON.stringify({
+      version: '7', dialect: 'postgresql',
+      entries: [{ idx: 0, version: '7', when: 1, tag: '0000_corner', breakpoints: true }],
+    }),
+    'migration/migrations/meta/0000_snapshot.json': JSON.stringify({
+      id: '11111111-1111-4111-8111-111111111111',
+      prevId: '00000000-0000-0000-0000-000000000000',
+      version: '7', dialect: 'postgresql', tables: {},
+    }),
     'wrangler.json': JSON.stringify({
       ...packagedConfig,
       compatibility_date: '2026-10-19',
@@ -502,12 +511,16 @@ test('automatic production independently downloads and verifies real archives fo
     join(candidateRoot, 'manifest.json'),
     JSON.stringify({
       ...manifest,
-      format: 3,
+      format: 4,
       lockfileSha256: 'b'.repeat(64),
       nodeVersion: process.version,
       configurationSha256: hash(files['wrangler.json']),
       files: Object.fromEntries(Object.entries(files).map(([name, bytes]) => [name, hash(bytes)])),
-      migrations: [{ name: '001_corner.sql', sha256: hash(migration) }],
+      migrations: [{
+        name: '0000_corner.sql', sha256: hash(migration), when: 1,
+        journalSha256: hash(JSON.stringify(JSON.parse(files['migration/migrations/meta/_journal.json']).entries[0])),
+        snapshotSha256: hash(files['migration/migrations/meta/0000_snapshot.json']),
+      }],
     }),
   );
   const verified = await verifyArtifact(candidateRoot);
@@ -776,8 +789,6 @@ test('live rollback validates actual stored documents read-only without logging 
   const connection = {
     query: async (sql) => {
       statements.push(sql);
-      if (sql.startsWith('SELECT name'))
-        return { rows: [{ name: '001_corner.sql', checksum: 'f'.repeat(64) }] };
       if (sql.startsWith('SELECT user_id'))
         return { rows: [{ user_id: 'owner', data: JSON.stringify({ saved: 'private' }) }] };
       return { rows: [] };
@@ -787,6 +798,8 @@ test('live rollback validates actual stored documents read-only without logging 
     },
   };
   const load = async () => ({
+    currentSchema: async () => 'public',
+    migrationHistory: async () => manifest.migrations,
     createDatabase: () => ({
       connect: async () => connection,
       end: async () => {
@@ -796,7 +809,7 @@ test('live rollback validates actual stored documents read-only without logging 
     inspectImport: (raw) => ({ state: { ...raw, defaulted: true } }),
   });
   await assert.rejects(
-    validateLiveRollback({ directory: work, manifest }, { manifest }, load),
+    validateLiveRollback({ directory: work, manifest }, { directory: work, manifest }, load),
     /private details withheld/,
   );
   assert(statements[0].includes('READ ONLY'));
@@ -1229,8 +1242,13 @@ test('shared CI loader binds branch, repository, run and retained artifact befor
   }
 });
 
-test('format-2 production history requires explicit reconciliation', () => {
-  assert.throws(() => validateReceipt({ ...receipt, format: 2 }), /reconcile/);
+test('pre-Drizzle production receipts are never recovery targets', () => {
+  for (const format of [1, 2, 3]) {
+    assert.throws(() => validateReceipt({ ...receipt, format }));
+    assert.throws(() => rollbackEligible(
+      { ...receipt, format }, receipt, report, config.digest,
+    ));
+  }
 });
 
 test('production permits only the exact stable corner Worker hostname and binds configured origin', () => {

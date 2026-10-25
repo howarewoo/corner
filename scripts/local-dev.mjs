@@ -333,7 +333,13 @@ async function serve(config, engine, port) {
         onSignal();
       });
     };
-    launch('pnpm', ['exec', 'turbo', 'run', 'dev', '--filter=server', '--filter=web', '--filter=design', '--filter=@packages/shared', '--filter=@packages/api'], root);
+    launch('pnpm', [
+      'exec', 'turbo', 'run', 'dev',
+      ...[
+        'server', 'web', 'design', '@packages/nutrition', '@packages/training',
+        '@packages/workspace', '@packages/agent', '@packages/api',
+      ].map((name) => `--filter=${name}`),
+    ], root);
     console.log(`Local-only Corner: ${origin}\nRun pnpm run dev:seed to create synthetic users. No cloud credentials are used.`);
     await ended;
     await stopping;

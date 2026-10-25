@@ -1,5 +1,5 @@
-import type { AppState } from '@packages/shared/types';
-import { dateKey } from '@packages/shared/domain';
+import type { AppState } from '@packages/workspace/types';
+import { dateKey } from '@packages/nutrition/dates';
 import { ArrowDownToLine, LogOut } from 'lucide-react';
 import { Button, WorkspaceHeader } from '@packages/ui';
 import ProfileForm from '../../profile-form';

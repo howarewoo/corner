@@ -17,7 +17,7 @@ names = (
 excluded_directories = {"node_modules", "dist", ".turbo", "__pycache__", "coverage", "data"}
 # This checked-in catalog is application source; other data directories are
 # private runtime storage and must remain outside the distributable archive.
-catalog_data = root / "packages/shared/src/data"
+catalog_data = root / "packages/training/src/data"
 excluded_files = (
     "*.sqlite*", "*.db", "*.db-*", "*.zip", "*.tgz", "*.tar", "*.tar.gz",
     "*.log", "*.pyc", "*.pyo", "*.tsbuildinfo", "*.pem", "*.key",

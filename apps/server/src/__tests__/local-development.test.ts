@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { betterAuth } from 'better-auth';
 import { getMigrations } from 'better-auth/db/migration';
-import { createInitialState } from '@packages/shared/seed';
+import { createInitialState } from '@packages/workspace/initial-state';
 import { testDatabase, closeTestDatabase, neonTestConfig } from '../../tests/helpers.ts';
 import { createAuth } from '../auth.ts';
 import { createApp } from '../app.ts';

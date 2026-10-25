@@ -32,6 +32,8 @@
     "release": "node scripts/release.mjs",
     "preview:staging": "node scripts/staging-preview.mjs",
     "start": "pnpm --filter server start",
+    "db:generate": "pnpm --filter server exec drizzle-kit generate",
+    "db:check": "pnpm --filter server exec drizzle-kit check",
     "db:migrate": "node --env-file-if-exists=.env.local --env-file-if-exists=.env apps/server/dist/migrate.js --apply",
     "db:baseline:staging": "node apps/server/dist/staging-baseline.js --apply",
     "smoke": "node scripts/smoke.mjs",

@@ -85,13 +85,13 @@ export function validateConfiguration(
 }
 export function validateReceipt(receipt) {
   need(
-    receipt?.format === 3 &&
+    receipt?.format === 4 &&
       receipt.kind === releaseTarget().kind &&
       sha.test(receipt.sourceSha) &&
       digest.test(receipt.candidateDigest) &&
       digest.test(receipt.configurationSha256) &&
       digest.test(receipt.runtimeConfigurationDigest),
-    'Invalid format-3 release receipt; reconcile prior release history explicitly',
+    'Invalid format-4 release receipt; pre-Drizzle receipts are retired recovery targets',
   );
   id(receipt.runId);
   id(receipt.artifactId);
@@ -276,7 +276,7 @@ export class GitHub {
     const current = records[0] ?? null;
     if (current)
       need(
-        current.payload?.format === 3 &&
+        current.payload?.format === 4 &&
           current.payload.workerName === 'corner' &&
           current.payload?.kind === releaseTarget().kind &&
           current.payload.phase === 'schema-attempted' &&
@@ -456,9 +456,7 @@ export async function plan({
       const currentSchema = await github.artifact(schemaReference, join(work, 'schema'));
       need(
         currentSchema.manifest.migrations.every(
-          (migration, index) =>
-            candidate.manifest.migrations[index]?.name === migration.name &&
-            candidate.manifest.migrations[index]?.sha256 === migration.sha256,
+          (migration, index) => isDeepStrictEqual(candidate.manifest.migrations[index], migration),
         ),
         'Candidate does not preserve CURRENT attempted migration history',
       );
@@ -480,7 +478,7 @@ export async function plan({
   }
   const review = automatic ? null : manualAttestation(attestation, reference.sourceSha, actor);
   const payload = {
-    format: 3,
+    format: 4,
     kind: target.kind,
     workerName: target.workerName,
     phase: 'planned',
@@ -635,16 +633,15 @@ export async function validateLiveRollback(
   try {
     connection = await database.connect();
     await connection.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
-    const history = (
-      await connection.query('SELECT name, checksum FROM corner_schema_migrations ORDER BY name')
-    ).rows;
+    const { migrationHistory, currentSchema } = await load(
+      join(current.directory, current.manifest.migrationEntry),
+    );
     need(
-      history.every((row) =>
-        current.manifest.migrations.some(
-          (migration) => migration.name === row.name && migration.sha256 === row.checksum,
-        ),
-      ),
-      'CURRENT database has unknown or modified migrations',
+      typeof migrationHistory === 'function' && typeof currentSchema === 'function',
+      'CURRENT artifact lacks native migration history validation',
+    );
+    await migrationHistory(
+      connection, await currentSchema(connection), current.manifest.migrations, true,
     );
     let after = null;
     for (;;) {
@@ -720,7 +717,7 @@ export async function promote({
   const baseline = await github.baseline();
   assertBaseline(p.baselineId, baseline?.id);
   need(
-    p.format === 3 &&
+    p.format === 4 &&
       sha.test(p.sourceSha) &&
       digest.test(p.candidateDigest) &&
       digest.test(p.configurationSha256) &&

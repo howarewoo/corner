@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import type { FoodEntry, MealSlot, Macros } from '@packages/shared/types';
-import { SLOTS } from '@packages/shared/types';
-import { foodEstimateToDraft, type EstimatedFood } from '@packages/shared/food-estimate';
+import type { FoodEntry, MealSlot, Macros } from '@packages/nutrition/types';
+import { SLOTS } from '@packages/nutrition/types';
+import { foodEstimateToDraft, type EstimatedFood } from '@packages/nutrition/food-estimate';
 import { Sparkles, Pencil, CheckCircle2, Loader2, Check } from 'lucide-react';
 import {
   Alert,

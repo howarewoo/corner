@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import type { Recipe, MealSlot } from '@packages/shared/types';
-import { SLOTS } from '@packages/shared/types';
+import type { Recipe, MealSlot } from '@packages/nutrition/types';
+import { SLOTS } from '@packages/nutrition/types';
 import { Search, UtensilsCrossed, CheckCircle2, Circle, Plus } from 'lucide-react';
 import {
   Button,

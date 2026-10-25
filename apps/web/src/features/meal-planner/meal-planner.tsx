@@ -1,14 +1,9 @@
-import type { AppState, Recipe } from '@packages/shared/types';
-import { SLOTS } from '@packages/shared/types';
-import {
-  activityForStateDate,
-  dateKey,
-  mondayOf,
-  shiftDate,
-  weekDates,
-  macroTotal,
-  targetForStateDate,
-} from '@packages/shared/domain';
+import type { AppState } from '@packages/workspace/types';
+import type { Recipe } from '@packages/nutrition/types';
+import { SLOTS } from '@packages/nutrition/types';
+import { activityForStateDate, targetForStateDate } from '@packages/workspace/targets';
+import { dateKey, mondayOf, shiftDate, weekDates } from '@packages/nutrition/dates';
+import { macroTotal } from '@packages/nutrition/calculations';
 import { Sparkles, Copy, Plus, X, ShoppingBasket, ArrowRight } from 'lucide-react';
 import {
   Button,

@@ -4,7 +4,7 @@ import { Readable } from 'node:stream';
 import { join } from 'node:path';
 import { betterAuth } from 'better-auth';
 import { getMigrations } from 'better-auth/db/migration';
-import { createInitialState } from '@packages/shared/seed';
+import { createInitialState } from '@packages/workspace/initial-state';
 import { createDatabase } from '../dist/database.js';
 import { migrate } from '../dist/migrate.js';
 import { createApp } from '../dist/app.js';

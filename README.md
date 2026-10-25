@@ -2,9 +2,9 @@
 
 Corner is a self-hostable app for meal planning, nutrition logging, workouts, progress, and an optional planning agent. Neon Postgres stores application data; managed Neon Auth owns email/password accounts and sessions. It does not read ChatGPT conversations, memories, or the original Corner Site.
 
-This is a separate application. Existing personal Corner data enters only when its owner chooses to import a Corner JSON export. The repository uses Turborepo with pnpm workspaces: `apps/server` owns the Hono runtime and oRPC procedures, `apps/web` is the Vite/React interface, `packages/api` owns the browser-safe application contract, and `packages/shared` owns shared domain code. Neon is managed infrastructure configured by root `neon.ts`; its server-side integration and application migrations stay in `apps/server`.
+This is a separate application. Existing personal Corner data enters only when its owner chooses to import a Corner JSON export. The repository uses Turborepo with pnpm workspaces: `apps/server` owns the Hono runtime and oRPC procedures, `apps/web` is the Vite/React interface, and `packages/api` owns the browser-safe application contract. Domain code lives in `packages/nutrition`, `packages/training`, `packages/workspace`, and `packages/agent`. Neon is managed infrastructure configured by root `neon.ts`; its server-side integration and application migrations stay in `apps/server`.
 
-The intended direction is a hosted service for performance-focused trainees, with an approved hosted ChatGPT integration. That is future direction, not a claim that this release provides a public service or hosted AI access; see [PRODUCT.md](PRODUCT.md) in a repository checkout.
+The intended direction is a hosted service for performance-focused trainees, with an approved hosted ChatGPT integration. That is future direction, not a claim that this unreleased application provides a public service or hosted AI access; see [PRODUCT.md](PRODUCT.md) in a repository checkout.
 
 ## Start development
 
@@ -19,7 +19,7 @@ pnpm run dev
 pnpm run dev:seed
 ```
 
-Open **http://127.0.0.1:3000**. The local controller builds the server and its dependencies, explicitly migrates its owned PostgreSQL 17 database, starts an HTTPS Better Auth fixture, then launches the existing API, web, design catalog, and shared/API watchers. The API uses **3001** and the catalog **3002**. Vite preserves the browser origin when proxying `/api` and `/auth/callback`. No Neon CLI, project, cloud credentials, or environment file is required. This is the local PostgreSQL approach in [Neon's local-development guide](https://neon.com/guides/local-development-with-neon); native `pg` needs no Neon HTTP proxy.
+Open **http://127.0.0.1:3000**. The local controller builds the server and its dependencies, explicitly migrates its owned PostgreSQL 17 database, starts an HTTPS Better Auth fixture, then launches the existing API, web, design catalog, and domain/API-package watchers. The API uses **3001** and the catalog **3002**. Vite preserves the browser origin when proxying `/api` and `/auth/callback`. No Neon CLI, project, cloud credentials, or environment file is required. This is the local PostgreSQL approach in [Neon's local-development guide](https://neon.com/guides/local-development-with-neon); native `pg` needs no Neon HTTP proxy.
 
 The explicit seed command creates `empty@corner.test` and `demo@corner.test`, both with password **`Corner-local-only-2026!`**. The first account stays empty; the second has synthetic recipes, a current-week meal plan, food logs, workouts, and progress records. These are local-only credentials, never suitable for a public service. Signup and sign-in use the normal account flow; no onboarding is required. Settings owns optional profile editing and workspace import.
 
@@ -35,7 +35,7 @@ The account form uses Neon's `@neondatabase/auth` SDK (`signUp.email` and `signI
 
 The SDK is pinned to `0.6.0-beta` to satisfy its bundled `@neondatabase/auth-ui` peer contract; the `0.7.0-beta` release still pulls UI that requires `0.6.0-beta`. Workspace pnpm overrides align Better Auth/core at `1.7.12` and `better-call` at `1.4.4`, avoiding conflicting legacy-UI plugin peers. Corner uses only the programmatic SDK, not those UI components. Revisit these pins together when Neon's published dependency graph is compatible without overrides.
 
-Application calls use the shared `@packages/api` contract and native oRPC at `/api/rpc`; TanStack Query owns browser server state. This unreleased application starts with that protocol baseline: old application REST URLs are not supported, and no REST upgrade bridge, maintenance mode, or cutover controller is added. Managed Auth `/api/auth`, OAuth `/auth/callback`, and `GET /api/health` retain their separate protocols.
+Application calls use the shared `@packages/api` contract and native oRPC at `/api/rpc`; TanStack Query owns browser server state. Old application REST URLs are not supported. Managed Auth `/api/auth`, OAuth `/auth/callback`, and `GET /api/health` retain their separate protocols.
 
 **Development never connects to cloud Neon.** `pnpm dev` starts only its owned local PostgreSQL/Auth stack. API development also rejects non-loopback database/Auth endpoints and database host overrides before opening connections or writing private keys. Development does not load root environment files. Cloud configuration belongs to compiled production starts and explicit deployment/migration operations, not a separate cloud-development mode.
 
@@ -51,7 +51,7 @@ pnpm run db:migrate
 pnpm start
 ```
 
-The build compiles `@packages/shared` and `@packages/api`, then builds `server` and `web` as separate workspace tasks. The compiled server starts on port 3000 and serves `apps/web/dist` alongside its API, preserving the same browser origin. Production runs ordinary JavaScript from `apps/server/dist`; it does not run Vite or require a TypeScript loader.
+The build compiles the nutrition, training, workspace, agent, and API packages in dependency order, then builds `server` and `web` as separate workspace tasks. The compiled server starts on port 3000 and serves `apps/web/dist` alongside its API, preserving the same browser origin. Production runs ordinary JavaScript from `apps/server/dist`; it does not run Vite or require a TypeScript loader.
 
 ### Workspace commands
 
@@ -70,7 +70,9 @@ The build compiles `@packages/shared` and `@packages/api`, then builds `server` 
 | `pnpm run smoke`               | Actual compiled-server account, proxy, health, and shutdown checks                                                                          |
 | `pnpm run smoke:dev`           | Actual two-app development proxy, session, and shared-catalog checks                                                                        |
 | `pnpm start`                   | The compiled production server and built web app                                                                                            |
-| `pnpm run db:migrate`          | Apply checked-in PostgreSQL migrations through `DATABASE_URL_UNPOOLED`, after a build                                                       |
+| `pnpm run db:generate`         | Generate reviewed SQL and snapshots from the server-owned Drizzle schema; no database connection required |
+| `pnpm run db:check`            | Check Drizzle Kit migration snapshot consistency |
+| `pnpm run db:migrate`          | Apply checked-in Drizzle migrations through `DATABASE_URL_UNPOOLED`, after a build |
 | `pnpm run db:baseline:staging` | Explicit verified migration-history baseline for a new empty schema-only staging branch; build first, private operator environment required |
 | `pnpm run build:workers`       | Build all workspaces and dry-run the single full-stack `corner` Worker without deployment |
 | `pnpm run verify -- --plan`    | Show conservative changed-path selection without running checks                                                                             |
@@ -78,7 +80,7 @@ The build compiles `@packages/shared` and `@packages/api`, then builds `server` 
 | `pnpm run test:ci`             | Native Node CI, release, and artifact regression tests                                                                                      |
 | `pnpm run smoke:workers`       | Actual full-stack workerd runtime with disposable PostgreSQL and HTTPS Auth fixtures, after `build:workers` |
 
-For a focused build, use `pnpm run build --filter=server` or `pnpm run build --filter=web`. Turbo also builds their shared/API dependencies. Each app declares its own dependencies; domain models and validation are imported through `@packages/shared/<module>` and the application contract through `@packages/api`, rather than relative paths into the other app.
+For a focused build, use `pnpm run build --filter=server` or `pnpm run build --filter=web`. Turbo also builds their domain/API dependencies. Each app declares its own dependencies; import models and validation directly from their owning `@packages/nutrition`, `@packages/training`, `@packages/workspace`, or `@packages/agent` subpath, and the application contract through `@packages/api`, rather than relative paths into another workspace.
 
 ### Formatting
 
@@ -151,7 +153,7 @@ The implementation follows OpenAI's documented **ChatGPT plan usage / Sign in wi
 
 This connection authorizes eligible model requests. **It does not grant ChatGPT conversation history or account context.** Model access, usage limits, consent, workspace policy, and availability are determined by the connected account and OpenAI.
 
-The self-serve route documented by OpenAI is for open-source and locally hosted applications. Paid or remotely hosted applications require separate onboarding/approval. Consequently, this release supports local loopback authorization and **disables self-serve subscription registration in hosted mode**. It is not a public SaaS deployment, and the local connection should not be presented as an approved hosted integration.
+The self-serve route documented by OpenAI is for open-source and locally hosted applications. Paid or remotely hosted applications require separate onboarding/approval. Consequently, Corner supports local loopback authorization and **disables self-serve subscription registration in hosted mode**. It is not a public SaaS deployment, and the local connection should not be presented as an approved hosted integration.
 
 Official references, checked 22 October 2026:
 
@@ -168,7 +170,7 @@ Corner login and ChatGPT authorization are separate. An expired or limited ChatG
 
 OAuth uses fresh state, nonce, PKCE, and the initiating Corner session. The app retains the issued registration and verifies signed account identity before enabling inference. Access and refresh credentials are encrypted in Postgres and never sent to the frontend. Refresh rotation is serialized with database leases, and generation checks prevent late work from restoring a disconnected grant. Available models are fetched for the selected connection rather than hardcoded.
 
-Disconnect stops local use and attempts remote revocation. If remote revocation cannot be confirmed, the interface tells you and links to ChatGPT settings. The verified registration is retained so reconnecting uses the same ChatGPT identity; this release does not offer a switch-account operation within a Corner account. A separate Corner account has its own independent connection.
+Disconnect stops local use and attempts remote revocation. If remote revocation cannot be confirmed, the interface tells you and links to ChatGPT settings. The verified registration is retained so reconnecting uses the same ChatGPT identity; Corner does not offer a switch-account operation within a Corner account. A separate Corner account has its own independent connection.
 
 ## Bring your current Corner plan
 
@@ -192,9 +194,11 @@ For a complete backup:
 
 Restore the database and its original keys together, then verify sign-in and saved records before reopening access. Retention and restore capabilities depend on your Neon plan; exercise recovery rather than assuming persistence is a backup.
 
-Upgrades run `pnpm install --frozen-lockfile`, `pnpm run build`, and the explicit `pnpm run db:migrate` before restarting one Corner process. Migrations in `apps/server/migrations` are ordered, checksummed, transactional, and serialized; startup does not perform schema changes. Never edit an applied migration.
+Application queries use Drizzle ORM over the existing `pg` pools. Edit [schema.ts](apps/server/src/schema.ts), run `pnpm run db:generate`, and review the generated SQL and snapshots in `apps/server/migrations`. Run `pnpm run db:check` before building. Do not use `drizzle-kit push` against persistent environments.
 
-This cutover does not silently claim or merge old SQLite accounts by email. Before upgrading an old installation, export each owner's workspace and preserve the complete original SQLite directory and keys. Create a managed account and use the existing previewed import into its empty workspace. Passwords, old sessions, agent history, and ChatGPT grants are not included in workspace exports.
+Upgrades run `pnpm install --frozen-lockfile`, `pnpm run build`, and the explicit `pnpm run db:migrate` before restarting one Corner process. The official Drizzle migrator applies pending SQL transactionally under a migration lock; Corner verifies the applied hash/timestamp prefix first. The native `__drizzle_migrations` ledger lives in the application schema, including each owned disposable test schema. Startup never applies migrations. Never edit applied SQL or its Kit journal/snapshots.
+
+Drizzle is the initial deployment baseline for this unreleased application. Pre-Drizzle migration histories and artifacts are not upgrade or recovery targets. Existing databases are never reset automatically.
 
 ## Hosted deployment preparation
 
@@ -202,7 +206,7 @@ Hosted mode requires an HTTPS origin, the Neon Postgres/Auth URLs, and independe
 
 Neon owns password recovery, verification codes, session expiry, and managed service rate limits. Corner retains its code-entry, reset-password, loading, and error screens, and requires a live managed session before every protected request. No real inbox delivery is implied by an enabled policy.
 
-For **Cloudflare Workers**, follow [HOSTING.md → Cloudflare Workers](HOSTING.md#cloudflare-workers). Production is one full-stack Worker named `corner`; staging is native Preview `staging` under that Worker, not another named Worker. Both consume the identical immutable format-3 bundle/assets/migrator without rebuilding. Expected origins are `https://corner.adam-nathaniel-woo.workers.dev` and `https://staging-corner.adam-nathaniel-woo.workers.dev`; an exact production HTTPS custom domain is optional. Keep `preview_urls` enabled and Access limited to the exact staging alias and Preview deployment URLs, never production. Staging retains isolated persistent Neon DB/Auth/keys and synthetic records. There is no frontend Worker or service binding. Feature branches are tested locally; no feature app/database previews are provisioned. Disable independent Cloudflare Builds/automatic Preview triggers. `pnpm run build:workers` dry-runs the single Worker without publishing. Production `corner` must exist before creating its Preview; follow the separate [cutover gates](HOSTING.md#one-time-protected-configuration-and-cutover-order). Source implementation is not evidence of live migration.
+For **Cloudflare Workers**, follow [HOSTING.md → Cloudflare Workers](HOSTING.md#cloudflare-workers). Production is one full-stack Worker named `corner`; staging is native Preview `staging` under that Worker, not another named Worker. Both consume the identical immutable format-4 bundle/assets/Drizzle migrator without rebuilding. Expected origins are `https://corner.adam-nathaniel-woo.workers.dev` and `https://staging-corner.adam-nathaniel-woo.workers.dev`; an exact production HTTPS custom domain is optional. Keep `preview_urls` enabled and Access limited to the exact staging alias and Preview deployment URLs, never production. Staging retains isolated persistent Neon DB/Auth/keys and synthetic records. There is no frontend Worker or service binding. Feature branches are tested locally; no feature app/database previews are provisioned. Disable independent Cloudflare Builds/automatic Preview triggers. `pnpm run build:workers` dry-runs the single Worker without publishing. Production `corner` must exist before creating its Preview; follow the separate [cutover gates](HOSTING.md#one-time-protected-configuration-and-cutover-order). Source implementation is not evidence of live migration.
 
 For a **server you control**, the same guide covers one Corner container behind Caddy. `scripts/init-hosted.mjs` creates independent private keys without printing or overwriting them; it does not create a cloud server or configure DNS or SMTP.
 
@@ -222,7 +226,7 @@ pnpm run verify -- --full --report /tmp/corner-verification.jsonl
 
 Server tests and all runtime smoke checks require `CORNER_TEST_DATABASE_URL`; they never fall back to the real `DATABASE_URL`. Each fixture owns a random PostgreSQL schema and drops only that schema. Test files still run sequentially in separate processes. Better Auth is a **test-only** dependency for a local managed-service fixture; no test sends real account email or model requests.
 
-Production smoke starts disposable compiled servers on loopback ports 43137 and 43138. Development smoke starts only the web/API processes and shared/API-package watchers on 43139 and 43140, excluding the independent design catalog. Task-prefixed streaming logs expose readiness without waiting for persistent tasks to exit. Both use actual PostgreSQL and a private local HTTPS auth fixture, exercise cookie sessions and proxy boundaries, and clean up only their own resources. Run development smoke in a clean checkout without `.env`, `.env.local`, or Vite environment files; never remove a user's configuration just to pass it.
+Production smoke starts disposable compiled servers on loopback ports 43137 and 43138. Development smoke starts only the web/API processes and five domain/API-package watchers on 43139 and 43140, excluding the independent design catalog. Task-prefixed streaming logs expose readiness without waiting for persistent tasks to exit. Both use actual PostgreSQL and a private local HTTPS auth fixture, exercise cookie sessions and proxy boundaries, and clean up only their own resources. Run development smoke in a clean checkout without `.env`, `.env.local`, or Vite environment files; never remove a user's configuration just to pass it.
 
 ### Targeted verification and merge protection
 
@@ -254,7 +258,7 @@ The configuration helper detects personal versus organization ownership. Persona
 
 `--report` appends profile/command elapsed times as JSONL, not a qualification receipt. Compare at least three docs/web/full runs with the same runner and cache conditions; report the median, cold-install cost, and runner cost separately. No speed SLA or CI saving is inferred from a plan preview or Turbo cache hit.
 
-Both persistent branches run the full profile, then package/exercise the standalone format-3 single-Worker payload before uploading `corner-release-<sourceSHA>` with 90-day retention. Preserve current/recovery references longer; missing artifacts block promotion. CI itself does not deploy. After successful exact current trusted staging push CI, `.github/workflows/staging.yml` / `scripts/staging-preview.mjs` consume the identical full-stack bundle/assets/migrator without rebuilding and record separate `corner-preview` / `corner-staging-preview` staging ledgers. After successful current main push CI, `.github/workflows/production.yml` dispatches `release.yml` explicitly on main; `scripts/release.mjs deploy` qualifies and promotes that exact artifact without a separate approval or invented human review. Production records one version in its format-3 `corner-release` / `corner-production` receipt. [HOSTING.md](HOSTING.md#build-migrate-and-release) owns activation, credentials, automatic updates, explicit operator releases, verification states, and recovery.
+Both persistent branches run the full profile, then package/exercise the standalone format-4 single-Worker payload before uploading `corner-release-<sourceSHA>` with 90-day retention. Preserve current/recovery references longer; missing artifacts block promotion. CI itself does not deploy. After successful exact current trusted staging push CI, `.github/workflows/staging.yml` / `scripts/staging-preview.mjs` consume the identical full-stack bundle/assets/Drizzle migrator without rebuilding and record separate `corner-preview` / `corner-staging-preview` staging ledgers. After successful current main push CI, `.github/workflows/production.yml` dispatches `release.yml` explicitly on main; `scripts/release.mjs deploy` qualifies and promotes that exact artifact without a separate approval or invented human review. Production records one version in its format-4 `corner-release` / `corner-production` receipt. Pre-Drizzle artifacts and receipts are not recovery targets. [HOSTING.md](HOSTING.md#build-migrate-and-release) owns activation, credentials, automatic updates, explicit operator releases, verification states, and recovery.
 
 The provider contract is implemented against the official documentation above. A real account must complete consent before live subscription inference can be verified. Browser visual verification and Docker execution are reported separately in the release notes; automated success should not be mistaken for those checks.
 
@@ -276,7 +280,10 @@ Old feature-preview provisioning workflows are removed. Never recreate removed l
 | ---------------------- | ------------------------------------------------------------------------------------------------ |
 | `apps/web/src/`        | React account UI, profile/import settings, meal planner, recipes, workouts, and agent review     |
 | `apps/server/src/`     | Managed Auth boundary, PostgreSQL persistence, oRPC procedures, model connection, and planning agent |
-| `packages/shared/src/` | Shared models, validation, nutrition/training calculations, proposal rules, and exercise data    |
+| `packages/nutrition/src/` | Food and recipe types/schemas, meal calendar, macro/grocery calculations, and food estimates |
+| `packages/training/src/` | Workout types/rules, result prefill, exercise catalog, and provenance data |
+| `packages/workspace/src/` | Combined state/settings, validated mutation composition, training-aware nutrition targets, and initial state |
+| `packages/agent/src/` | Planning proposal contracts, allowed changes, and proposal-to-mutation validation |
 | `packages/api/src/`    | Browser-safe oRPC contract, transport schemas, and inferred client types                        |
 | `apps/web/tests/`      | Rendered account/connection controls and development configuration checks                        |
 | `apps/server/tests/`   | Accounts, email, data isolation, agent, provider, and proxy regression checks                    |
@@ -290,12 +297,12 @@ Old feature-preview provisioning workflows are removed. Never recreate removed l
 - [ARCHITECTURE.md](ARCHITECTURE.md): component responsibilities, data flows, and safety boundaries.
 - [AGENTS.md](AGENTS.md): repository operations and change-specific verification.
 - [HOSTING.md](HOSTING.md): current deployment, proxy, backup, and recovery procedures.
-- [RELEASE-NOTES.md](RELEASE-NOTES.md): release history and historical verification limits.
+- [RELEASE-NOTES.md](RELEASE-NOTES.md): unreleased implementation baseline and verification limits.
 
 The four contributor guides above are available in repository checkouts. The current source-ZIP allowlist does not include them; the ZIP still includes this README, hosting guidance, and release notes.
 
 ## Exercise data and third-party notices
 
-The exercise catalog is derived from [hasaneyldrm/exercises-dataset](https://github.com/hasaneyldrm/exercises-dataset). Its source metadata is in `packages/shared/src/data/exercises-source.json`; its supplied license and attribution notice are preserved in `apps/web/public/licenses/`. Exercise information is a movement reference, not a personalized prescribed load.
+The exercise catalog is derived from [hasaneyldrm/exercises-dataset](https://github.com/hasaneyldrm/exercises-dataset). Its source metadata is in `packages/training/src/data/exercises-source.json`; its supplied license and attribution notice are preserved in `apps/web/public/licenses/`. Exercise information is a movement reference, not a personalized prescribed load.
 
 The source package contains no personal workspace export, private database, runtime secret, ChatGPT token, original Sites deployment identity, or `node_modules`. Dependency versions and integrity hashes are recorded in `pnpm-lock.yaml`.

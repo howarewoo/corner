@@ -2,8 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { BookOpen, Check, ChevronDown, Dumbbell, Loader2, Plus, Search, X } from 'lucide-react';
-import type { ExerciseCatalogEntry } from '@packages/shared/exercise-catalog';
-import type * as ExerciseCatalog from '@packages/shared/exercise-catalog';
+import type { ExerciseCatalogEntry } from '@packages/training/exercise-catalog';
+import type * as ExerciseCatalog from '@packages/training/exercise-catalog';
 import {
   Button,
   Collapsible,
@@ -34,7 +34,7 @@ function useCatalog() {
   useEffect(() => {
     let active = true;
     setError(false);
-    import('@packages/shared/exercise-catalog')
+    import('@packages/training/exercise-catalog')
       .then((value) => {
         if (active) setCatalog(value);
       })

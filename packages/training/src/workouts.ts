@@ -8,7 +8,7 @@ import type {
   TrainingStats,
   WorkoutSession,
   WorkoutTemplate,
-} from './training-types.js';
+} from './types.js';
 
 const id = z
   .string()
@@ -273,8 +273,6 @@ export const TrainingStateSchema = z
   })
   .strict();
 
-export const STARTER_TEMPLATES: WorkoutTemplate[] = [];
-
 function plusDays(date: string, days: number): string {
   TrainingDateSchema.parse(date);
   const value = new Date(date + 'T12:00:00Z');
@@ -342,10 +340,7 @@ export function starterTrainingWeek(
   }
   return sessions;
 }
-export function createTrainingState(
-  _date?: string,
-  _schedule?: Record<string, string>,
-): TrainingState {
+export function createTrainingState(): TrainingState {
   return {
     templates: [],
     sessions: [],
@@ -355,12 +350,9 @@ export function createTrainingState(
     scheduledDates: [],
   };
 }
-export function ensureTrainingState<
-  T extends {
-    settings: { timezone: string; schedule: Record<string, string> };
-    training?: TrainingState;
-  },
->(state: T, _date?: string): T & { training: TrainingState } {
+export function ensureTrainingState<T extends { training?: TrainingState }>(
+  state: T,
+): T & { training: TrainingState } {
   if (!state.training) return { ...state, training: createTrainingState() };
   const training = state.training.scheduledDates
     ? state.training

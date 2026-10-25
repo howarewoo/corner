@@ -9,6 +9,14 @@ import {
 } from 'node:crypto';
 import type { Pool } from 'pg';
 import { createLocalJWKSet, jwtVerify, type JSONWebKeySet, type JWTPayload } from 'jose';
+import { and, eq, lt, or, sql } from 'drizzle-orm';
+import { createQueries, type Database } from './queries.js';
+import {
+  subscriptionAccounts,
+  subscriptionAttempts,
+  subscriptionGenerations,
+  subscriptionMeta,
+} from './schema.js';
 
 /**
  * OpenAI's documented SIWC flow for user-run, open-source local applications.
@@ -130,14 +138,6 @@ interface PendingAttempt {
   issuer: string | null;
   subject: string | null;
   generation: number;
-}
-
-interface AttemptRow {
-  state_hash: string;
-  user_id: string;
-  session_hash: string;
-  encrypted: string;
-  expires_at: number;
 }
 
 interface Discovery {
@@ -325,7 +325,7 @@ async function jsonResponse(response: Response, signal: AbortSignal): Promise<un
 }
 
 export class SubscriptionProvider {
-  private readonly db: Pool;
+  private readonly db: Database;
   private readonly config: SubscriptionConfig;
   private readonly fetcher: Fetch;
   private hostId = '';
@@ -351,19 +351,18 @@ export class SubscriptionProvider {
     ) {
       throw new Error('Subscription token encryption requires a 32-byte key.');
     }
-    this.db = db;
+    this.db = createQueries(db);
     this.config = config;
     this.fetcher = fetcher;
   }
 
   async initialize(): Promise<void> {
-    await this.db.query(
-      'INSERT INTO corner_subscription_meta(key, value) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING',
-      ['host_id', `urn:uuid:${randomUUID()}`],
-    );
-    this.hostId = (
-      await this.db.query('SELECT value FROM corner_subscription_meta WHERE key = $1', ['host_id'])
-    ).rows[0].value;
+    await this.db.insert(subscriptionMeta).values({
+      key: 'host_id',
+      value: `urn:uuid:${randomUUID()}`,
+    }).onConflictDoNothing({ target: subscriptionMeta.key });
+    this.hostId = (await this.db.select({ value: subscriptionMeta.value })
+      .from(subscriptionMeta).where(eq(subscriptionMeta.key, 'host_id')))[0].value;
   }
 
   private supported(): boolean {
@@ -443,16 +442,9 @@ export class SubscriptionProvider {
   }
 
   private async version(userId: string): Promise<number | null> {
-    return (
-      (
-        (
-          await this.db.query(
-            'SELECT version FROM corner_subscription_accounts WHERE user_id = $1',
-            [userId],
-          )
-        ).rows[0] as { version: number } | undefined
-      )?.version ?? null
-    );
+    const [row] = await this.db.select({ version: subscriptionAccounts.version })
+      .from(subscriptionAccounts).where(eq(subscriptionAccounts.user_id, userId));
+    return row?.version ?? null;
   }
 
   private async registration(userId: string): Promise<Registration | null> {
@@ -463,14 +455,15 @@ export class SubscriptionProvider {
   private async registrationSnapshot(
     userId: string,
   ): Promise<{ registration: Registration | null; version: number | null }> {
-    const row = (
-      await this.db.query(
-        'SELECT a.encrypted, COALESCE(g.generation, 0) AS generation, a.version FROM corner_subscription_accounts a LEFT JOIN corner_subscription_generations g ON g.user_id = a.user_id WHERE a.user_id = $1',
-        [userId],
-      )
-    ).rows[0];
+    const [row] = await this.db.select({
+      encrypted: subscriptionAccounts.encrypted,
+      generation: subscriptionGenerations.generation,
+      version: subscriptionAccounts.version,
+    }).from(subscriptionAccounts)
+      .leftJoin(subscriptionGenerations, eq(subscriptionGenerations.user_id, subscriptionAccounts.user_id))
+      .where(eq(subscriptionAccounts.user_id, userId));
     const registration = row ? this.unseal<Registration>(userId, 'account', row.encrypted) : null;
-    if (registration) registration.generation = row.generation;
+    if (registration) registration.generation = row.generation ?? 0;
     return { registration, version: row?.version ?? null };
   }
 
@@ -488,18 +481,14 @@ export class SubscriptionProvider {
     },
     merge: (latest: Registration) => Registration | null,
   ): Promise<Registration> {
-    const connection = await this.db.connect();
-    try {
-      await connection.query('BEGIN');
-      await connection.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [
-        `corner:subscription:${userId}`,
-      ]);
-      const row = (
-        await connection.query(
-          'SELECT a.encrypted, COALESCE(g.generation, 0) AS generation FROM corner_subscription_accounts a LEFT JOIN corner_subscription_generations g ON g.user_id = a.user_id WHERE a.user_id = $1',
-          [userId],
-        )
-      ).rows[0];
+    return this.db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`corner:subscription:${userId}`}, 0))`);
+      const [row] = await tx.select({
+        encrypted: subscriptionAccounts.encrypted,
+        generation: subscriptionGenerations.generation,
+      }).from(subscriptionAccounts)
+        .leftJoin(subscriptionGenerations, eq(subscriptionGenerations.user_id, subscriptionAccounts.user_id))
+        .where(eq(subscriptionAccounts.user_id, userId));
       if (!row)
         throw new SubscriptionError(
           'connection_changed',
@@ -507,7 +496,7 @@ export class SubscriptionProvider {
           409,
         );
       const latest = this.unseal<Registration>(userId, 'account', row.encrypted);
-      latest.generation = row.generation;
+      latest.generation = row.generation ?? 0;
       if (
         latest.generation !== identity.generation ||
         latest.clientId !== identity.clientId ||
@@ -525,22 +514,13 @@ export class SubscriptionProvider {
       // renewed; any interleaved change fails closed instead of resurrecting
       // stale credentials or discarding another writer's fresh fields.
       const next = merge(latest);
-      if (!next) {
-        await connection.query('COMMIT');
-        return latest;
-      }
-      await connection.query(
-        'UPDATE corner_subscription_accounts SET encrypted = $2, version = version + 1 WHERE user_id = $1',
-        [userId, this.seal(userId, 'account', next)],
-      );
-      await connection.query('COMMIT');
+      if (!next) return latest;
+      await tx.update(subscriptionAccounts).set({
+        encrypted: this.seal(userId, 'account', next),
+        version: sql`${subscriptionAccounts.version} + 1`,
+      }).where(eq(subscriptionAccounts.user_id, userId));
       return next;
-    } catch (error) {
-      await connection.query('ROLLBACK');
-      throw error;
-    } finally {
-      connection.release();
-    }
+    });
   }
 
   private async save(
@@ -548,43 +528,27 @@ export class SubscriptionProvider {
     registration: Registration,
     expectedVersion: number | null,
   ): Promise<void> {
-    const connection = await this.db.connect();
-    try {
-      await connection.query('BEGIN');
-      await connection.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [
-        `corner:subscription:${userId}`,
-      ]);
-      const generation =
-        (
-          await connection.query(
-            'SELECT generation FROM corner_subscription_generations WHERE user_id = $1',
-            [userId],
-          )
-        ).rows[0]?.generation ?? 0;
-      const version =
-        (
-          await connection.query(
-            'SELECT version FROM corner_subscription_accounts WHERE user_id = $1',
-            [userId],
-          )
-        ).rows[0]?.version ?? null;
+    await this.db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`corner:subscription:${userId}`}, 0))`);
+      const [generationRow] = await tx.select({ generation: subscriptionGenerations.generation })
+        .from(subscriptionGenerations).where(eq(subscriptionGenerations.user_id, userId));
+      const generation = generationRow?.generation ?? 0;
+      const [versionRow] = await tx.select({ version: subscriptionAccounts.version })
+        .from(subscriptionAccounts).where(eq(subscriptionAccounts.user_id, userId));
+      const version = versionRow?.version ?? null;
       if (generation !== registration.generation || version !== expectedVersion)
         throw new SubscriptionError(
           'connection_changed',
           'The ChatGPT connection changed. Please try again.',
           409,
         );
-      await connection.query(
-        'INSERT INTO corner_subscription_accounts(user_id, encrypted) VALUES ($1, $2) ON CONFLICT(user_id) DO UPDATE SET encrypted = excluded.encrypted, version = corner_subscription_accounts.version + 1',
-        [userId, this.seal(userId, 'account', registration)],
-      );
-      await connection.query('COMMIT');
-    } catch (error) {
-      await connection.query('ROLLBACK');
-      throw error;
-    } finally {
-      connection.release();
-    }
+      const encrypted = this.seal(userId, 'account', registration);
+      await tx.insert(subscriptionAccounts).values({ user_id: userId, encrypted })
+        .onConflictDoUpdate({
+          target: subscriptionAccounts.user_id,
+          set: { encrypted, version: sql`${subscriptionAccounts.version} + 1` },
+        });
+    });
   }
 
   private sessionHash(sessionBinding?: string): string {
@@ -599,39 +563,22 @@ export class SubscriptionProvider {
   }
 
   private async nextGeneration(userId: string): Promise<number> {
-    const connection = await this.db.connect();
-    try {
-      await connection.query('BEGIN');
-      await connection.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [
-        `corner:subscription:${userId}`,
-      ]);
-      const row = (
-        await connection.query(
-          'INSERT INTO corner_subscription_generations(user_id, generation) VALUES ($1, 1) ON CONFLICT(user_id) DO UPDATE SET generation = corner_subscription_generations.generation + 1 RETURNING generation',
-          [userId],
-        )
-      ).rows[0];
-      await connection.query('COMMIT');
+    return this.db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`corner:subscription:${userId}`}, 0))`);
+      const [row] = await tx.insert(subscriptionGenerations)
+        .values({ user_id: userId, generation: 1 })
+        .onConflictDoUpdate({
+          target: subscriptionGenerations.user_id,
+          set: { generation: sql`${subscriptionGenerations.generation} + 1` },
+        }).returning({ generation: subscriptionGenerations.generation });
       return row.generation;
-    } catch (error) {
-      await connection.query('ROLLBACK');
-      throw error;
-    } finally {
-      connection.release();
-    }
+    });
   }
 
   private async generation(userId: string): Promise<number> {
-    return (
-      (
-        (
-          await this.db.query(
-            'SELECT generation FROM corner_subscription_generations WHERE user_id = $1',
-            [userId],
-          )
-        ).rows[0] as { generation: number } | undefined
-      )?.generation ?? 0
-    );
+    const [row] = await this.db.select({ generation: subscriptionGenerations.generation })
+      .from(subscriptionGenerations).where(eq(subscriptionGenerations.user_id, userId));
+    return row?.generation ?? 0;
   }
 
   async status(userId: string): Promise<SubscriptionStatus> {
@@ -721,20 +668,17 @@ export class SubscriptionProvider {
       subject: registration?.subject ?? null,
       generation: await this.nextGeneration(userId),
     };
-    await this.db.query(
-      'DELETE FROM corner_subscription_attempts WHERE expires_at < $1 OR user_id = $2',
-      [Date.now(), userId],
-    );
-    await this.db.query(
-      'INSERT INTO corner_subscription_attempts(state_hash, user_id, session_hash, encrypted, expires_at) VALUES ($1, $2, $3, $4, $5)',
-      [
-        hash(state),
-        userId,
-        sessionHash,
-        this.seal(userId, 'attempt', pending),
-        Date.now() + ATTEMPT_LIFETIME_MS,
-      ],
-    );
+    await this.db.delete(subscriptionAttempts).where(or(
+      lt(subscriptionAttempts.expires_at, Date.now()),
+      eq(subscriptionAttempts.user_id, userId),
+    ));
+    await this.db.insert(subscriptionAttempts).values({
+      state_hash: hash(state),
+      user_id: userId,
+      session_hash: sessionHash,
+      encrypted: this.seal(userId, 'attempt', pending),
+      expires_at: Date.now() + ATTEMPT_LIFETIME_MS,
+    });
     const url = new URL(AUTHORIZE_URL);
     url.search = new URLSearchParams({
       client_id: pending.clientId ?? REGISTRATION_CLIENT,
@@ -783,11 +727,8 @@ export class SubscriptionProvider {
     }
     const state = boundedString(url.searchParams.get('state'), 256);
     const row = state
-      ? ((
-          await this.db.query('SELECT * FROM corner_subscription_attempts WHERE state_hash = $1', [
-            hash(state),
-          ])
-        ).rows[0] as AttemptRow | undefined)
+      ? (await this.db.select().from(subscriptionAttempts)
+          .where(eq(subscriptionAttempts.state_hash, hash(state))))[0]
       : undefined;
     if (
       !row ||
@@ -808,12 +749,11 @@ export class SubscriptionProvider {
         'This ChatGPT sign-in was superseded. Start again.',
         400,
       );
-    const consumed = (
-      await this.db.query(
-        'DELETE FROM corner_subscription_attempts WHERE state_hash = $1 AND user_id = $2 AND session_hash = $3',
-        [row.state_hash, userId, sessionHash],
-      )
-    ).rowCount;
+    const consumed = (await this.db.delete(subscriptionAttempts).where(and(
+      eq(subscriptionAttempts.state_hash, row.state_hash),
+      eq(subscriptionAttempts.user_id, userId),
+      eq(subscriptionAttempts.session_hash, sessionHash),
+    ))).rowCount;
     if (consumed !== 1)
       throw new SubscriptionError(
         'invalid_oauth_state',
@@ -1225,12 +1165,13 @@ export class SubscriptionProvider {
           'Your ChatGPT connection has expired. Please reconnect.',
           401,
         );
-      const acquired = (
-        await this.db.query(
-          'UPDATE corner_subscription_accounts SET refresh_owner = $1, refresh_until = $2 WHERE user_id = $3 AND refresh_until < $4',
-          [lockId, Date.now() + REFRESH_LEASE_MS, userId, Date.now()],
-        )
-      ).rowCount;
+      const acquired = (await this.db.update(subscriptionAccounts).set({
+        refresh_owner: lockId,
+        refresh_until: Date.now() + REFRESH_LEASE_MS,
+      }).where(and(
+        eq(subscriptionAccounts.user_id, userId),
+        lt(subscriptionAccounts.refresh_until, Date.now()),
+      ))).rowCount;
       if (acquired === 1) break;
       if (Date.now() >= deadline)
         throw new SubscriptionError(
@@ -1328,10 +1269,13 @@ export class SubscriptionProvider {
         );
       return next;
     } finally {
-      await this.db.query(
-        'UPDATE corner_subscription_accounts SET refresh_owner = NULL, refresh_until = 0 WHERE user_id = $1 AND refresh_owner = $2',
-        [userId, lockId],
-      );
+      await this.db.update(subscriptionAccounts).set({
+        refresh_owner: null,
+        refresh_until: 0,
+      }).where(and(
+        eq(subscriptionAccounts.user_id, userId),
+        eq(subscriptionAccounts.refresh_owner, lockId),
+      ));
     }
   }
 
@@ -1444,23 +1388,16 @@ export class SubscriptionProvider {
   async disconnect(userId: string): Promise<SubscriptionStatus & { revocationConfirmed: boolean }> {
     userKey(userId);
     for (const controller of this.activeRequests.get(userId) ?? []) controller.abort();
-    const connection = await this.db.connect();
-    let registration: Registration | null = null;
-    try {
-      await connection.query('BEGIN');
-      await connection.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [
-        `corner:subscription:${userId}`,
-      ]);
-      await connection.query(
-        'INSERT INTO corner_subscription_generations(user_id, generation) VALUES ($1, 1) ON CONFLICT(user_id) DO UPDATE SET generation = corner_subscription_generations.generation + 1',
-        [userId],
-      );
-      const row = (
-        await connection.query(
-          'SELECT encrypted FROM corner_subscription_accounts WHERE user_id = $1',
-          [userId],
-        )
-      ).rows[0];
+    const registration = await this.db.transaction(async (tx) => {
+      let registration: Registration | null = null;
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`corner:subscription:${userId}`}, 0))`);
+      await tx.insert(subscriptionGenerations).values({ user_id: userId, generation: 1 })
+        .onConflictDoUpdate({
+          target: subscriptionGenerations.user_id,
+          set: { generation: sql`${subscriptionGenerations.generation} + 1` },
+        });
+      const [row] = await tx.select({ encrypted: subscriptionAccounts.encrypted })
+        .from(subscriptionAccounts).where(eq(subscriptionAccounts.user_id, userId));
       if (row) {
         try {
           registration = this.unseal<Registration>(userId, 'account', row.encrypted);
@@ -1468,9 +1405,7 @@ export class SubscriptionProvider {
           /* Disconnect also clears unreadable credentials. */
         }
       }
-      await connection.query('DELETE FROM corner_subscription_attempts WHERE user_id = $1', [
-        userId,
-      ]);
+      await tx.delete(subscriptionAttempts).where(eq(subscriptionAttempts.user_id, userId));
       if (registration) {
         const cleared = {
           ...registration,
@@ -1480,21 +1415,15 @@ export class SubscriptionProvider {
           modelsUpdatedAt: 0,
           needsReauth: false,
         };
-        await connection.query(
-          'UPDATE corner_subscription_accounts SET encrypted = $1, version = version + 1 WHERE user_id = $2',
-          [this.seal(userId, 'account', cleared), userId],
-        );
-      } else
-        await connection.query('DELETE FROM corner_subscription_accounts WHERE user_id = $1', [
-          userId,
-        ]);
-      await connection.query('COMMIT');
-    } catch (error) {
-      await connection.query('ROLLBACK');
-      throw error;
-    } finally {
-      connection.release();
-    }
+        await tx.update(subscriptionAccounts).set({
+          encrypted: this.seal(userId, 'account', cleared),
+          version: sql`${subscriptionAccounts.version} + 1`,
+        }).where(eq(subscriptionAccounts.user_id, userId));
+      } else {
+        await tx.delete(subscriptionAccounts).where(eq(subscriptionAccounts.user_id, userId));
+      }
+      return registration;
+    });
     let revocationConfirmed = !registration?.tokens;
     if (registration?.tokens?.refreshToken && this.supported()) {
       try {

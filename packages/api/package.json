@@ -16,7 +16,9 @@
   },
   "dependencies": {
     "@orpc/contract": "1.16.1",
-    "@packages/shared": "workspace:*",
+    "@packages/agent": "workspace:*",
+    "@packages/nutrition": "workspace:*",
+    "@packages/workspace": "workspace:*",
     "zod": "3.25.76"
   },
   "devDependencies": {

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { AppState } from '@packages/shared/types';
-import { applyMutation } from '@packages/shared/domain';
+import type { AppState } from '@packages/workspace/types';
+import { applyMutation } from '@packages/workspace/mutations';
 import { createToastManager } from '@packages/ui';
 import { useMutation } from '@tanstack/react-query';
 import type { WorkspaceMutationInput } from '@packages/api/schemas';

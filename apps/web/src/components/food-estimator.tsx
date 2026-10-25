@@ -9,7 +9,7 @@ import {
   FoodDescriptionSchema,
   type EstimatedFood,
   type FoodEstimateResult,
-} from '@packages/shared/food-estimate';
+} from '@packages/nutrition/food-estimate';
 import {
   Alert,
   AlertDescription,
