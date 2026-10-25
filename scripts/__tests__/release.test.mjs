@@ -1367,7 +1367,14 @@ test('production adoption rejects mismatched approved and protected database des
       { host: 'different.invalid' },
       { direct: 'postgresql://synthetic-pooler.invalid/unused' },
       { direct: 'postgresql://synthetic.invalid/unused?options=-c%20search_path%3Dother' },
+      ...['host=different.invalid', 'hostaddr=127.0.0.1', 'port=5433', 'user=other', 'database=other',
+        'dbname=other', 'options=-c%20search_path%3Dother', '%68ost=different.invalid'].flatMap(query => [
+        { direct: `postgresql://synthetic.invalid/unused?${query}` },
+        { pooled: `postgresql://synthetic.invalid/unused?${query}` },
+      ]),
       { pooled: 'postgresql://other.invalid/unused' },
+      { pooled: 'postgresql://synthetic.invalid:5433/unused' },
+      { pooled: 'https://synthetic.invalid/unused' },
       { pooled: 'postgresql://owner@synthetic.invalid/unused' },
       { pooled: 'postgresql://synthetic.invalid/other' },
     ]) {
@@ -1387,7 +1394,9 @@ test('production adoption rejects mismatched approved and protected database des
         baselineId: null, operatorRequired: true,
         qualification: { ...report, bootstrap: true, previousDigest: null },
       });
-      await assert.rejects(promote(f.options));
+      await assert.rejects(promote(f.options), mismatch.pooled?.startsWith('https:')
+        ? /Invalid bootstrap database binding/
+        : /Production adoption database destinations differ from the approved host/);
       assert.deepEqual(f.effects, []);
     }
   } finally {

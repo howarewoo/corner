@@ -44,7 +44,8 @@ export async function migrate(database: Pool, folder = migrationsFolder, legacyA
 export function directDatabaseUrl(value: string | undefined): string {
   if (!value) throw new Error('DATABASE_URL_UNPOOLED is required for schema operations.');
   const url = new URL(value);
-  if (!['postgres:', 'postgresql:'].includes(url.protocol) || url.hostname.includes('-pooler.') || url.searchParams.has('options'))
+  if (!['postgres:', 'postgresql:'].includes(url.protocol) || url.hostname.includes('-pooler.') ||
+      [...url.searchParams.keys()].some(key => key !== 'sslmode' && key !== 'channel_binding'))
     throw new Error('Schema operations require a direct PostgreSQL URL without connection overrides.');
   return value;
 }
