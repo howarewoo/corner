@@ -908,6 +908,59 @@ export async function promote({
     'success',
   );
 }
+export async function complete({
+  github,
+  deploymentId,
+  configuration,
+  work,
+  cf = cloudflare,
+  checkPublic = publicChecks,
+}) {
+  const current = await github.baseline();
+  need(
+    current && String(current.id) === id(deploymentId) &&
+      ['deployed', 'public-passed'].includes(current.payload.phase),
+    'Completion requires the exact current incomplete deployment',
+  );
+  const p = validateReceipt(current.payload);
+  const config = validateConfiguration(configuration);
+  need(
+    p.origin === config.origin && p.runtimeConfigurationDigest === config.digest,
+    'Completion configuration differs from the deployed release',
+  );
+  const schema = await github.schema();
+  if (p.rollback) assertBaseline(p.schemaId, schema?.id);
+  else need(
+    schema && schema.payload.planId === p.planId &&
+      schema.payload.candidateDigest === p.candidateDigest,
+    'Completion schema journal differs from the deployed release',
+  );
+  const candidate = await github.artifact(p, join(work, 'candidate'));
+  need(
+    candidate.digest === p.candidateDigest &&
+      candidate.manifest.configurationSha256 === p.configurationSha256,
+    'Deployed artifact changed',
+  );
+  const assertLive = async () => {
+    const live = await cf(`workers/scripts/${releaseTarget().workerName}/deployments`);
+    need(
+      live.deployments?.[0]?.versions?.length === 1 &&
+        live.deployments[0].versions[0].version_id === p.versionId &&
+        live.deployments[0].versions[0].percentage === 100,
+      'Cloudflare traffic does not match the incomplete release',
+    );
+  };
+  await assertLive();
+  await checkPublic(p.origin, p.versionId);
+  assertBaseline(current.id, (await github.baseline())?.id);
+  assertBaseline(schema?.id, (await github.schema())?.id);
+  await assertLive();
+  const publicRecord = await github.record({ ...p, phase: 'public-passed' });
+  return github.record(
+    { ...p, phase: 'complete', publicDeploymentId: String(publicRecord.id) },
+    'success',
+  );
+}
 export async function deploy(options) {
   const prepared = await plan({
     ...options,
@@ -963,7 +1016,14 @@ async function main() {
         configuration: process.env[`${target.prefix}_CONFIG_JSON`],
         work,
       });
-    else throw new Error('Usage: node scripts/release.mjs deploy|plan|promote');
+    else if (action === 'complete')
+      record = await complete({
+        github,
+        deploymentId: process.env.RELEASE_DEPLOYMENT_ID,
+        configuration: process.env[`${target.prefix}_CONFIG_JSON`],
+        work,
+      });
+    else throw new Error('Usage: node scripts/release.mjs deploy|plan|promote|complete');
     if (process.env.GITHUB_OUTPUT)
       await writeFile(process.env.GITHUB_OUTPUT, `deployment_id=${record.id}\n`, { flag: 'a' });
     console.log(

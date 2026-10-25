@@ -12,6 +12,7 @@ import {
   GitHub,
   plan,
   promote,
+  complete,
   deploy,
   publicChecks,
   validateLiveRollback,
@@ -779,7 +780,7 @@ test('bootstrap validates all required bindings before any production mutation',
     else process.env.CORNER_WORKER_SECRETS_JSON = before;
   }
 });
-test('explicit bootstrap migrates before first creation and completes after public checks', async () => {
+test('first bootstrap recovers from transient public failure without migrating or deploying again', async () => {
   const f = fixture();
   f.github.baseline = async () => null;
   Object.assign(f.payload, {
@@ -810,8 +811,29 @@ test('explicit bootstrap migrates before first creation and completes after publ
     await assert.rejects(promote(f.options), /Bootstrap Worker already exists/);
     assert.deepEqual(f.effects, []);
     f.options.cf = cf;
-    const result = await promote(f.options);
+    f.options.checkPublic = async () => { throw new Error('transient public failure'); };
+    await assert.rejects(promote(f.options), /transient public failure/);
+    const deployed = { id: 22, payload: f.records.at(-1) };
+    assert.equal(deployed.payload.phase, 'deployed');
+    f.github.baseline = async () => deployed;
+    f.github.schema = async () => ({ id: 21, payload: f.records[0] });
+    const retry = { ...f.options, deploymentId: String(deployed.id) };
+    const invocationCount = invocations.length;
+    await assert.rejects(complete(retry), /transient public failure/);
+    assert.equal(f.records.at(-1).phase, 'deployed');
+    retry.checkPublic = async (origin, version) => {
+      assert.equal(origin, config.origin);
+      assert.equal(version, versionId);
+      f.effects.push('public');
+    };
+    const result = await complete(retry);
     assert.equal(result.payload.phase, 'complete');
+    assert.equal(invocations.length, invocationCount);
+    f.github.baseline = async () => result;
+    await plan({
+      github: f.github, runId: '1', sourceSha: source, configuration, work,
+      qualify: async () => ({ ...report, previousDigest: candidateDigest }),
+    });
     assert(f.effects.indexOf('migrate') < f.effects.indexOf('deploy'));
     assert(invocations[1].includes('--secrets-file'));
     assert(invocations[1].includes('--no-bundle'));
@@ -822,6 +844,53 @@ test('explicit bootstrap migrates before first creation and completes after publ
     else process.env.DATABASE_URL = before.database;
     if (before.worker === undefined) delete process.env.CORNER_WORKER_SECRETS_JSON;
     else process.env.CORNER_WORKER_SECRETS_JSON = before.worker;
+  }
+});
+
+test('completion retries support public-passed receipts and rollback schema journals', async () => {
+  for (const rollback of [false, true]) {
+    const f = fixture();
+    const p = {
+      ...f.payload, phase: 'public-passed', versionId, planId: '11', rollback,
+      schemaId: '21',
+    };
+    f.github.baseline = async () => ({ id: 22, payload: p });
+    f.github.schema = async () => ({
+      id: 21,
+      payload: rollback ? receipt : { ...p, phase: 'schema-attempted' },
+    });
+    f.effects.push('deploy');
+    const result = await complete({ ...f.options, deploymentId: '22' });
+    assert.equal(result.payload.phase, 'complete');
+    assert.deepEqual(f.effects, ['deploy', 'public', 'public-passed', 'complete']);
+  }
+});
+
+test('completion retry rejects stale identities, changed artifacts, schema/configuration and live drift', async (t) => {
+  for (const scenario of ['receipt', 'phase', 'artifact', 'configuration', 'schema', 'live', 'probe-drift', 'schema-drift', 'rollback-schema']) {
+    await t.test(scenario, async () => {
+      const f = fixture();
+      const p = { ...f.payload, phase: 'deployed', versionId, planId: '11' };
+      f.github.baseline = async () => ({ id: 22, payload: p });
+      f.github.schema = async () => ({ id: 21, payload: { ...p, phase: 'schema-attempted' } });
+      f.effects.push('deploy');
+      const options = { ...f.options, deploymentId: '22' };
+      if (scenario === 'receipt') options.deploymentId = '23';
+      if (scenario === 'phase') p.phase = 'complete';
+      if (scenario === 'artifact') p.configurationSha256 = 'f'.repeat(64);
+      if (scenario === 'configuration') p.runtimeConfigurationDigest = 'f'.repeat(64);
+      if (scenario === 'schema') f.github.schema = async () => ({ id: 23, payload: { ...p, planId: '12' } });
+      if (scenario === 'live') options.cf = async () => ({ deployments: [] });
+      if (scenario === 'probe-drift') options.checkPublic = async () => {
+        f.github.baseline = async () => ({ id: 23, payload: p });
+      };
+      if (scenario === 'schema-drift') options.checkPublic = async () => {
+        f.github.schema = async () => ({ id: 23, payload: p });
+      };
+      if (scenario === 'rollback-schema') Object.assign(p, { rollback: true, schemaId: '20' });
+      await assert.rejects(complete(options), /exact current|artifact changed|configuration differs|schema journal|traffic does not match|Stale plan/);
+      assert.deepEqual(f.records, []);
+    });
   }
 });
 
