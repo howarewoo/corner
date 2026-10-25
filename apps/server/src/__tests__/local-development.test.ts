@@ -7,6 +7,7 @@ import { testDatabase, closeTestDatabase, neonTestConfig } from '../../tests/hel
 import { createAuth } from '../auth.ts';
 import { createApp } from '../app.ts';
 import { WorkspaceStore } from '../store.ts';
+import { createQueries } from '../queries.ts';
 import type { Config } from '../config.ts';
 
 import * as local from '../../scripts/local-services.mjs';
@@ -41,7 +42,7 @@ test('local seeding recovers lost signup/import acknowledgements and never overw
     await (await getMigrations(options)).runMigrations();
     const managed = betterAuth(options);
     await managed.$context;
-    const store = new WorkspaceStore(database);
+    const store = new WorkspaceStore(createQueries(database));
     const app = createApp({
       config,
       store,

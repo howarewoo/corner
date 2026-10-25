@@ -14,6 +14,7 @@ import type { Config } from '../src/config.ts';
 import type { SubscriptionProvider } from '../src/subscription.ts';
 import type { PlanningAgent } from '../src/planning-agent.ts';
 import { WorkspaceStore } from '../src/store.ts';
+import { createQueries } from '../src/queries.ts';
 import { createInitialState } from '@packages/workspace/initial-state';
 
 const config: Config = {
@@ -85,7 +86,7 @@ async function expectError(response: Response, status: number, expectedCode: str
 before(async () => {
   db = await testDatabase();
   auth = await createTestAuth(config, db);
-  store = new WorkspaceStore(db);
+  store = new WorkspaceStore(createQueries(db));
   const provider = {
     async callback(owner: string, _url: URL, sessionId: string) {
       callbackOwner = { owner, hasVerifiedSession: Boolean(sessionId) };

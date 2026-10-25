@@ -1,7 +1,6 @@
 import { createHash } from 'node:crypto';
-import type { Pool } from 'pg';
 import { and, desc, eq, inArray, sql } from 'drizzle-orm';
-import { createQueries, type Database, type QueryConnection, type Transaction } from './queries.js';
+import type { Database, Transaction } from './queries.js';
 import { mutationReceipts, workspaceState } from './schema.js';
 import { z } from 'zod';
 import { applyMutation, MutationSchema, SettingsSchema } from '@packages/workspace/mutations';
@@ -171,14 +170,14 @@ export function isEmptyWorkspace(state: AppState): boolean {
 export class WorkspaceStore {
   readonly db: Database;
 
-  constructor(pool: Pool) {
-    this.db = createQueries(pool);
+  constructor(db: Database) {
+    this.db = db;
   }
 
   async read(
     userId: string,
     name?: string,
-    connection: QueryConnection = this.db,
+    connection: Database = this.db,
   ): Promise<WorkspaceSnapshot> {
     userSchema.parse(userId);
     const row = (

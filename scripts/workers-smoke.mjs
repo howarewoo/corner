@@ -3,6 +3,7 @@
 import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm, access, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
+import { connect } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -43,17 +44,20 @@ const previousMigrator = options['--previous-migration-entry']
   : undefined;
 const directory = await mkdtemp(join(tmpdir(), 'corner-workers-smoke-'));
 const origin = 'https://corner.example.test';
-let backend;
-let worker;
-let dispatcher;
+const cleanup = new AsyncDisposableStack();
+cleanup.defer(() => rm(directory, { recursive: true, force: true }));
 try {
-  backend = await startSmokeServices(
+  const backend = await startSmokeServices(
     directory,
     origin,
     previousMigrator?.migrate ?? candidateMigrator?.migrate,
     candidateMigrator?.createDatabase,
   );
-  dispatcher = new Agent({ connect: { ca: await readFile(backend.certificate) } });
+  cleanup.defer(() => backend.close());
+  const dispatcher = new Agent({ connect: { ca: await readFile(backend.certificate) } });
+  cleanup.defer(() => dispatcher.close());
+  let worker;
+  cleanup.defer(() => worker?.dispose());
   const bindings = {
     CORNER_ORIGIN: origin,
     DATABASE_URL: backend.databaseUrl,
@@ -63,11 +67,73 @@ try {
     CORNER_TOKEN_ENCRYPTION_KEY: Buffer.alloc(32, 42).toString('base64'),
   };
   let workerNumber = 0;
-  const startWorker = async (config) => {
+  const startWorker = async (config, candidate = true) => {
     const miniflareRequire = createRequire(require.resolve('wrangler'));
-    const { Miniflare, convertV4MiniflareOptions } = await import(
+    const { Miniflare, convertV4MiniflareOptions, WebSocketPair, Response, Log } = await import(
       miniflareRequire.resolve('miniflare')
     );
+    const databaseUrl = new URL(backend.databaseUrl);
+    // Neon 1.2 defaults to wss://<database hostname>/v2, without the database port.
+    // Only this exact handshake is intercepted; its binary SQL stream goes to the
+    // fixture's fixed TCP address, never a destination supplied by the request.
+    const proxyUrl = new URL(`https://${databaseUrl.hostname}/v2`);
+    const bridges = new Set();
+    const proxyErrors = [];
+    const diagnostics = [];
+    let disposed = false;
+    class SmokeLog extends Log {
+      logWithLevel(level, message) {
+        if (message.includes('CORNER_DATABASE_CONNECTION_FAILED')) diagnostics.push(message);
+        super.logWithLevel(level, message);
+      }
+    }
+    const upgrade = (request) => {
+      assert.equal(request.url, proxyUrl.href, 'Unexpected database WebSocket destination.');
+      assert.equal(request.method, 'GET');
+      assert.equal(request.headers.get('Upgrade')?.toLowerCase(), 'websocket');
+      const pair = new WebSocketPair();
+      const socket = connect({
+        host: databaseUrl.hostname.replace(/^\[|\]$/g, ''),
+        port: Number(databaseUrl.port || 5432),
+      });
+      pair[1].accept();
+      const close = () => {
+        socket.destroy();
+        if (pair[1].readyState === 1) pair[1].close(1000);
+      };
+      bridges.add(close);
+      const fail = (error) => {
+        if (!disposed) proxyErrors.push(error);
+        close();
+      };
+      socket.setTimeout(20_000, () => fail(new Error('Database WebSocket bridge timed out.')));
+      socket.on('error', fail);
+      socket.on('data', (data) => {
+        try {
+          pair[1].send(data);
+        } catch (error) {
+          fail(error);
+        }
+      });
+      socket.on('end', close);
+      socket.on('close', () => {
+        close();
+        bridges.delete(close);
+      });
+      pair[1].addEventListener('message', ({ data }) => {
+        try {
+          assert.notEqual(typeof data, 'string', 'PostgreSQL WebSocket frames must be binary.');
+          socket.write(Buffer.from(data));
+        } catch (error) {
+          fail(error);
+        }
+      });
+      pair[1].addEventListener('error', (event) =>
+        fail(event.error ?? new Error('Database WebSocket bridge failed.')),
+      );
+      pair[1].addEventListener('close', close);
+      return new Response(null, { status: 101, webSocket: pair[0] });
+    };
     const { rawConfig: original } = experimental_readRawConfig({ config });
     const bundle = original.no_bundle
       ? resolve(dirname(config), original.main)
@@ -96,6 +162,11 @@ try {
         scriptPath: bundle,
         bindings,
         outboundService: async (request) => {
+          if (
+            request.headers.get('Upgrade')?.toLowerCase() === 'websocket' ||
+            new URL(request.url).origin === proxyUrl.origin
+          )
+            return upgrade(request);
           assert.equal(
             new URL(request.url).origin,
             new URL(backend.authUrl).origin,
@@ -114,19 +185,37 @@ try {
       ...externalWorkers,
     ];
     const runtime = new Miniflare(
-      convertV4MiniflareOptions({ workers, host: '127.0.0.1', port: 0 }),
+      convertV4MiniflareOptions({
+        workers,
+        host: '127.0.0.1',
+        port: 0,
+        log: new SmokeLog(),
+      }),
     );
     return {
       ready: runtime.ready,
       fetch: (...args) => runtime.dispatchFetch(...args),
-      dispose: () => runtime.dispose(),
+      dispose: async () => {
+        if (disposed) return;
+        try {
+          await runtime.dispose();
+        } finally {
+          disposed = true;
+          for (const close of bridges) close();
+          bridges.clear();
+        }
+        assert.deepEqual(proxyErrors, [], 'Database WebSocket bridge must not fail.');
+        if (candidate) {
+          assert.deepEqual(diagnostics, [], 'Candidate database operations and shutdown must be clean.');
+        }
+      },
     };
   };
   let priorCookie;
   let priorState;
   if (previousMigrator) {
     // Prior schema and Worker must genuinely function before upgrading that schema.
-    worker = await startWorker(options['--previous-config']);
+    worker = await startWorker(options['--previous-config'], false);
     await worker.ready;
     assert.deepEqual(await (await worker.fetch(new URL('/api/health', origin))).json(), {
       ok: true,
@@ -289,6 +378,41 @@ try {
   }
   assert.equal((await state(alice)).state.settings.name, 'Saved on Workers');
   assert.equal((await state(bob)).state.settings.name, 'Bob');
+  const beforeRollback = await state(alice);
+  const rejectedRequestId = 'workers-rollback-rejected-receipt';
+  await backend.database.query(
+    `ALTER TABLE mutation_receipts ADD CONSTRAINT workers_smoke_reject_receipt
+     CHECK (request_id <> '${rejectedRequestId}')`,
+  );
+  try {
+    const rejected = await rpc(
+      'workspace/mutate',
+      {
+        requestId: rejectedRequestId,
+        mutation: {
+          type: 'settings.save',
+          data: { ...beforeRollback.state.settings, name: 'Must be rolled back' },
+        },
+      },
+      { Cookie: alice },
+    );
+    assert.equal(rejected.status, 503, await rejected.clone().text());
+    assert.deepEqual(
+      await state(alice),
+      beforeRollback,
+      'A receipt failure after the workspace write must roll back both state and revision.',
+    );
+    const receipts = await backend.database.query(
+      'SELECT request_id FROM mutation_receipts WHERE request_id = $1',
+      [rejectedRequestId],
+    );
+    assert.equal(receipts.rowCount, 0, 'A failed transaction must not leave a mutation receipt.');
+    assert.equal((await state(bob)).state.settings.name, 'Bob');
+  } finally {
+    await backend.database.query(
+      'ALTER TABLE mutation_receipts DROP CONSTRAINT workers_smoke_reject_receipt',
+    );
+  }
   if (previousMigrator) {
     const fixtures = [
       {
@@ -341,7 +465,7 @@ try {
     }
     const candidateWritten = await state(alice);
     await worker.dispose();
-    worker = await startWorker(options['--previous-config']);
+    worker = await startWorker(options['--previous-config'], false);
     await worker.ready;
     assert.deepEqual(
       await state(alice),
@@ -411,12 +535,9 @@ try {
   const signedOut = await rpc('workspace/get', undefined, { Cookie: alice });
   assert.equal(signedOut.status, 401);
   assert.equal((await signedOut.json()).json.code, 'SIGN_IN_REQUIRED');
-  process.stdout.write(
-    `Passed fullstack Worker assets, version identity, canonical origin, secure account cookies, isolated PostgreSQL writes/retries, sign-out, and hosted AI gate${previousMigrator ? ', including prior-schema writes and candidate/recovery compatibility' : ''}.\nNo live cloud, account email, or model requests were made.\n`,
-  );
 } finally {
-  await worker?.dispose();
-  await dispatcher?.close();
-  await backend?.close();
-  await rm(directory, { recursive: true, force: true });
+  await cleanup.disposeAsync();
 }
+process.stdout.write(
+  `Passed fullstack Worker assets, version identity, canonical origin, secure account cookies, isolated PostgreSQL writes/retries/rollback, clean candidate database shutdown, sign-out, and hosted AI gate${previousMigrator ? ', including prior-schema writes and candidate/recovery compatibility' : ''}.\nNo live cloud, account email, or model requests were made.\n`,
+);

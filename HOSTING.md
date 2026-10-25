@@ -19,7 +19,7 @@ Both serve assets, `/api/*`, and `/auth/callback` through `apps/server/src/worke
 
 The unreleased application's initial deployment baseline is native oRPC at `/api/rpc`. The browser and backend share `@packages/api`; managed Auth `/api/auth`, OAuth `/auth/callback`, and `GET /api/health` retain their own protocols. Old application REST URLs and historical unpublished REST artifacts are not supported. Live admin/cutover actions below remain separately authorized operator work.
 
-Workers use request-scoped PostgreSQL pools and the existing owner locks, transactions, and mutation receipts. They never initialize process-wide agent recovery, read repository environment files, or start inference. Stop the old Node process before moving its database to Workers.
+Workers use request-scoped `@neondatabase/serverless` WebSocket pools with Drizzle's `neon-serverless` adapter and the existing owner locks, interactive transactions, and mutation receipts. They retain the same pooled `DATABASE_URL`; no Hyperdrive binding or new secret is required. Node/local runtimes and explicit direct-connection migrations retain native `pg`. Workers never initialize process-wide agent recovery, read repository environment files, or start inference. Stop the old Node process before moving its database to Workers.
 
 Prerequisites: a Cloudflare account (a domain only for optional custom-domain hosting), the existing Neon project with production and schema-only staging branches, independent staging Auth/configuration, Node 24, and pinned pnpm dependencies. No new paid binding or Neon upgrade is assumed. Confirm schema-only branch quota before provisioning.
 
