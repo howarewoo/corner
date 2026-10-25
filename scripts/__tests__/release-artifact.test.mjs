@@ -9,6 +9,14 @@ import test from 'node:test';
 import { packageArtifact, verifyArtifact, qualifyArtifact } from '../release-artifact.mjs';
 
 const hash = (bytes) => createHash('sha256').update(bytes).digest('hex');
+
+test('published initial migration snapshot retains its immutable digest', async () => {
+  const snapshot = await readFile(
+    new URL('../../apps/server/migrations/meta/0000_snapshot.json', import.meta.url),
+  );
+  assert.equal(hash(snapshot), '6fc033de3477b3926ebfa00dd322c44c0e6306b22d18d82d1f6213dd4642cf9c');
+});
+
 async function fixture(t, migration = 'CREATE TABLE example (id int);') {
   const directory = await mkdtemp(join(tmpdir(), 'corner-artifact-test-'));
   t.after(() => rm(directory, { recursive: true, force: true }));

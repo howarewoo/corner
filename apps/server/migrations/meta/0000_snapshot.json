@@ -128,7 +128,11 @@
         "corner_ai_runs_user_id_kind_request_id_key": {
           "name": "corner_ai_runs_user_id_kind_request_id_key",
           "nullsNotDistinct": false,
-          "columns": ["user_id", "kind", "request_id"]
+          "columns": [
+            "user_id",
+            "kind",
+            "request_id"
+          ]
         }
       },
       "policies": {},
@@ -197,7 +201,10 @@
       "compositePrimaryKeys": {
         "mutation_receipts_pkey": {
           "name": "mutation_receipts_pkey",
-          "columns": ["user_id", "request_id"]
+          "columns": [
+            "user_id",
+            "request_id"
+          ]
         }
       },
       "uniqueConstraints": {},
