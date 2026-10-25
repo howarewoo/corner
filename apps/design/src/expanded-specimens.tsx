@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import * as UI from '@packages/ui';
 import { ArrowRight, Bookmark, Check, Dumbbell, Info, Plus, Search, Settings2 } from 'lucide-react';
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from 'recharts';
 import { DataTableSpecimen } from './table-specimen';
 import { ConversationSpecimen } from './conversation-specimens';
 import { catalogHref } from './catalog';
+import { CatalogThemeContext } from './catalog-theme';
 
 // Compositions sourced from the live shadcn Base UI documentation on 2026-10-23.
 // Each ID maps to https://ui.shadcn.com/docs/components/base/<id>.
@@ -31,6 +32,7 @@ const sidebarDestinations = [
 
 function SidebarSpecimenContent() {
   const sidebar = UI.useSidebar();
+  const theme = useContext(CatalogThemeContext);
   const [selected, setSelected] = useState('overview');
   const [query, setQuery] = useState('');
   const search = useRef<HTMLInputElement>(null);
@@ -79,6 +81,7 @@ function SidebarSpecimenContent() {
             search.current?.focus();
           },
         }}
+        theme={theme}
         profile={{
           name: 'Sample member',
           initial: 'SM',

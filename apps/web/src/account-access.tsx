@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type FormEvent } from 'react';
 import { useLocation, useNavigate } from 'react-router';
-import { ArrowRight, Check, ChevronLeft, Loader2, Mail } from 'lucide-react';
+import { ArrowRight, Check, ChevronLeft, Eye, EyeOff, Loader2, Mail } from 'lucide-react';
 import { createAuthClient, isAuthError } from '@neondatabase/auth';
 import { BetterAuthVanillaAdapter } from '@neondatabase/auth/vanilla/adapters';
 import { useQuery } from '@tanstack/react-query';
@@ -8,6 +8,7 @@ import { rpc } from './rpc';
 import {
   Button,
   Input,
+  ButtonGroup,
   Field,
   FieldLabel,
   FieldDescription,
@@ -95,6 +96,7 @@ export default function AccountAccess({
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [passwordVisible, setPasswordVisible] = useState(false);
   const [confirmation, setConfirmation] = useState('');
   const [verificationCode, setVerificationCode] = useState('');
   const policyQuery = useQuery({
@@ -177,6 +179,7 @@ export default function AccountAccess({
     setError('');
     setNotice(message);
     setPassword('');
+    setPasswordVisible(false);
     setConfirmation('');
     setVerificationCode('');
     setMode(next);
@@ -507,19 +510,32 @@ export default function AccountAccess({
               </Field>
               <Field className="field">
                 <FieldLabel htmlFor="account-password">Password</FieldLabel>
-                <Input
-                  id="account-password"
-                  name="password"
-                  required
-                  type="password"
-                  autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
-                  minLength={mode === 'signup' ? 12 : undefined}
-                  maxLength={128}
-                  value={password}
-                  disabled={busy}
-                  aria-describedby={mode === 'signup' ? 'account-password-hint' : undefined}
-                  onChange={(event) => setPassword(event.target.value)}
-                />
+                <ButtonGroup className="w-full">
+                  <Input
+                    id="account-password"
+                    name="password"
+                    required
+                    type={passwordVisible ? 'text' : 'password'}
+                    autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
+                    minLength={mode === 'signup' ? 12 : undefined}
+                    maxLength={128}
+                    value={password}
+                    disabled={busy}
+                    aria-describedby={mode === 'signup' ? 'account-password-hint' : undefined}
+                    onChange={(event) => setPassword(event.target.value)}
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    aria-label={passwordVisible ? 'Hide password' : 'Show password'}
+                    aria-controls="account-password"
+                    disabled={busy}
+                    onClick={() => setPasswordVisible((visible) => !visible)}
+                  >
+                    {passwordVisible ? <EyeOff aria-hidden="true" /> : <Eye aria-hidden="true" />}
+                  </Button>
+                </ButtonGroup>
                 {mode === 'signup' && (
                   <FieldDescription id="account-password-hint">
                     Use at least 12 characters.
