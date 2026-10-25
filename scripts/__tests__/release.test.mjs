@@ -9,15 +9,13 @@ import {
   validateReceipt,
   assertBaseline,
   rollbackEligible,
-  requiresOperator,
-  manualAttestation,
   GitHub,
   plan,
   promote,
+  complete,
   deploy,
   publicChecks,
   validateLiveRollback,
-  validateOperational,
 } from '../release.mjs';
 import { loadCiArtifact } from '../ci-artifact.mjs';
 import { releaseTarget } from '../release-target.mjs';
@@ -38,7 +36,6 @@ process.env.CORNER_PRODUCTION_BINDINGS_REVISION = 'test-config-1';
 process.env.DATABASE_URL_UNPOOLED = 'postgresql://synthetic.invalid/unused';
 process.env.GITHUB_RUN_ATTEMPT = '1';
 process.env.GITHUB_RUN_ID = '90';
-process.env.GITHUB_ACTOR = 'reviewer';
 delete process.env.CORNER_PRODUCTION_ORIGIN;
 const config = validateConfiguration(configuration);
 const report = {
@@ -78,15 +75,6 @@ manifest.wranglerVersion = JSON.parse(
     'utf8',
   ),
 ).version;
-const review = JSON.stringify({
-  sourceSha: source,
-  reviewer: 'reviewer',
-  affectedFlow: 'Meal planner save and reload',
-  desktopWidth: 1280,
-  phoneWidth: 390,
-  keyboardFocus: 'passed',
-  stagingReview: { sourceSha: previousSource, deploymentId: '5' },
-});
 const work = await mkdtemp(join(tmpdir(), 'corner-release-tests-'));
 const packagedConfig = {
   name: 'corner',
@@ -131,21 +119,13 @@ function fixture(overrides = {}) {
     rollback: false,
     rollbackVersionId: null,
     qualification: report,
-    operatorRequired: false,
     origin: config.origin,
   };
-  payload.manualReview = JSON.parse(review);
   payload.executionRunAttempt = '1';
   const github = {
     repository: 'owner/corner',
     baseline: async () => ({ id: 10, payload: receipt }),
     schema: async () => null,
-    approval: async (environment) => ({
-      runId: '90',
-      attempt: '1',
-      environment,
-      reviewer: 'protected-owner',
-    }),
     api: async (path) => {
       if (path === 'git/ref/heads/main') return { object: { sha: source } };
       const recorded = records[Number(path.match(/^deployments\/(\d+)$/)?.[1]) - 21];
@@ -278,6 +258,7 @@ test('production rejects native Worker hosts and the obsolete staging release en
 });
 test('receipt and rollback require real qualified identities and CURRENT compatibility/configuration', () => {
   validateReceipt(receipt);
+  assert.throws(() => validateReceipt({ ...receipt, phase: 'operational-validated' }));
   assert.throws(() => validateReceipt({ ...receipt, artifactId: 'invented' }), /numeric/);
   assert.throws(
     () => validateReceipt({ ...receipt, qualification: { passed: false } }),
@@ -305,39 +286,17 @@ test('receipt and rollback require real qualified identities and CURRENT compati
     /configuration/,
   );
 });
-test('manual review binds actor/source and records human assertion rather than invented automation', () => {
-  assert.equal(
-    manualAttestation(review, source, 'reviewer').kind,
-    'human-attestation-not-automated-proof',
-  );
-  assert.throws(() => manualAttestation(review, previousSource, 'reviewer'), /bind/);
-  assert.throws(() => manualAttestation(review, source, 'someone-else'), /bind/);
-  assert.throws(
-    () => manualAttestation(review.replace('390', '800'), source, 'reviewer'),
-    /widths/,
-  );
-});
-test('web auth and build changes require operational completion', async () => {
-  const cases = [
-    [
-      ['apps/web/src/components/training-panel.tsx', 'packages/ui/src/catalog/toast.tsx'],
-      'complete',
-    ],
-    [['apps/web/src/main.tsx'], 'public-passed'],
-    [['apps/web/src/api.ts'], 'public-passed'],
-    [['apps/web/vite.config.ts'], 'public-passed'],
-    [['packages/ui/package.json'], 'public-passed'],
-    [['apps/server/src/worker.ts'], 'public-passed'],
-    [['apps/web/src/worker.ts'], 'public-passed'],
-    [['apps/server/migrations/002.sql'], 'public-passed'],
-  ];
-  for (const [files, phase] of cases) {
+test('explicit backend and configuration releases complete after automated public checks', async () => {
+  for (const changedConfiguration of [false, true]) {
     const f = fixture();
+    if (changedConfiguration)
+      f.github.baseline = async () => ({
+        id: 10,
+        payload: { ...receipt, runtimeConfigurationDigest: 'f'.repeat(64) },
+      });
     const api = f.github.api;
     let prepared;
     f.github.api = async (path) => {
-      if (path.startsWith('compare/'))
-        return { status: 'ahead', files: files.map((filename) => ({ filename })) };
       if (prepared && path === `deployments/${prepared.id}`)
         return JSON.parse(JSON.stringify({ ...prepared, environment: 'production-plan' }));
       return api(path);
@@ -346,42 +305,39 @@ test('web auth and build changes require operational completion', async () => {
       ...f.options,
       runId: '1',
       sourceSha: source,
-      attestation: review,
-      actor: 'reviewer',
       qualify: async () => report,
     });
     const result = await promote({ ...f.options, planId: String(prepared.id) });
-    assert.equal(result.payload.phase, phase, files.join(', '));
-    assert.equal(
-      f.records.some((row) => row.phase === 'complete'),
-      phase === 'complete',
-    );
-    assert(!f.records.some((row) => row.phase === 'operational-validated'));
+    assert.equal(result.payload.phase, 'complete');
+    assert(f.effects.indexOf('public') < f.effects.indexOf('complete'));
   }
-  assert.equal(requiresOperator([], true, null, manifest, config.digest), true);
 });
 test('stale approved baseline fails before artifact execution or effects', async () => {
-  assert.throws(() => assertBaseline('10', '12'), /Stale approval/);
+  assert.throws(() => assertBaseline('10', '12'), /Stale plan/);
   const f = fixture();
   f.github.baseline = async () => ({ id: 12, payload: receipt });
-  await assert.rejects(promote(f.options), /Stale approval/);
+  await assert.rejects(promote(f.options), /Stale plan/);
   assert.deepEqual(f.effects, []);
 });
 test('stale schema journal or cross-run plan fails before effects', async () => {
   const f = fixture();
   f.github.schema = async () => ({ id: 99 });
-  await assert.rejects(promote(f.options), /Stale approval/);
+  await assert.rejects(promote(f.options), /Stale plan/);
   assert.deepEqual(f.effects, []);
   f.github.schema = async () => null;
   f.payload.executionRunId = 'other-run';
-  await assert.rejects(promote(f.options), /different approval/);
+  await assert.rejects(promote(f.options), /different execution/);
+  assert.deepEqual(f.effects, []);
+  f.payload.executionRunId = '90';
+  f.payload.executionRunAttempt = '2';
+  await assert.rejects(promote(f.options), /different execution/);
   assert.deepEqual(f.effects, []);
 });
 test('missing baseline never silently bootstraps', async () => {
   const f = fixture();
   f.github.baseline = async () => null;
   await assert.rejects(
-    plan({ ...f.options, runId: '1', sourceSha: source, attestation: review, actor: 'reviewer' }),
+    plan({ ...f.options, runId: '1', sourceSha: source }),
     /explicit bootstrap/,
   );
   assert.deepEqual(f.effects, []);
@@ -395,22 +351,18 @@ test('provisioned Worker version pins cannot be used for an ordinary release', a
       runId: '1',
       sourceSha: source,
       provisionedVersionId: oldVersion,
-      attestation: review,
-      actor: 'reviewer',
     }),
     /valid only for explicit bootstrap/,
   );
   assert.deepEqual(f.effects, []);
 });
-test('qualification failure occurs before approval record', async () => {
+test('qualification failure occurs before plan persistence', async () => {
   const f = fixture();
   await assert.rejects(
     plan({
       ...f.options,
       runId: '1',
       sourceSha: source,
-      attestation: review,
-      actor: 'reviewer',
       qualify: async () => {
         throw new Error('incompatible documents');
       },
@@ -419,14 +371,12 @@ test('qualification failure occurs before approval record', async () => {
   );
   assert.deepEqual(f.records, []);
 });
-test('plan persists exact real artifact and baseline qualification before approval', async () => {
+test('plan persists exact real artifact and baseline qualification', async () => {
   const f = fixture();
   const result = await plan({
     ...f.options,
     runId: '1',
     sourceSha: source,
-    attestation: review,
-    actor: 'reviewer',
     qualify: async () => report,
   });
   assert.equal(result.payload.artifactId, '2');
@@ -442,9 +392,6 @@ test('successful current main CI deploys backend changes without a second human 
     path.startsWith('compare/')
       ? { status: 'ahead', files: [{ filename: 'apps/server/src/worker.ts' }] }
       : api(path);
-  f.github.approval = async () => {
-    throw new Error('Automatic releases must not request human approval');
-  };
   const options = {
     ...f.options,
     runId: '1',
@@ -455,8 +402,6 @@ test('successful current main CI deploys backend changes without a second human 
   assert.equal(result.payload.phase, 'complete');
   assert.equal(result.payload.sourceSha, source);
   assert.equal(result.payload.versionId, versionId);
-  assert.equal(result.payload.manualReview, null);
-  assert.equal(result.payload.approval.kind, 'successful-main-ci');
   assert(f.effects.indexOf('migrate') < f.effects.indexOf('deploy'));
   assert(f.effects.indexOf('public') < f.effects.indexOf('complete'));
   f.github.baseline = async () => result;
@@ -631,7 +576,7 @@ test('automatic production cannot bootstrap or recover an unvalidated release', 
   f.github.baseline = async () => ({ id: 10, payload: { ...receipt, phase: 'public-passed' } });
   await assert.rejects(
     deploy({ ...f.options, runId: '1', sourceSha: source }),
-    /still requires public\/operational validation/,
+    /Current release is incomplete/,
   );
   assert.deepEqual(f.effects, []);
 });
@@ -731,7 +676,7 @@ test('a changed deployment toolchain blocks before migration or traffic', async 
   await assert.rejects(promote(f.options), /deployment tool differs/);
   assert.deepEqual(f.effects, []);
 });
-test('public failure preserves deployed state and cannot claim public/operational success', async () => {
+test('public failure preserves deployed state and cannot claim completion', async () => {
   const f = fixture();
   f.options.checkPublic = async () => {
     throw new Error('wrong deployed version');
@@ -740,7 +685,7 @@ test('public failure preserves deployed state and cannot claim public/operationa
   assert.equal(f.records.at(-1).phase, 'deployed');
   assert(!f.records.some((row) => row.phase === 'complete'));
 });
-test('artifact identity is rechecked after protected approval', async () => {
+test('artifact identity is rechecked against the qualified plan', async () => {
   const f = fixture();
   f.github.artifact = async () => ({ manifest, directory: work, digest: previousDigest });
   await assert.rejects(promote(f.options), /Approved candidate changed/);
@@ -817,29 +762,12 @@ test('live rollback validates actual stored documents read-only without logging 
   assert(released && ended);
   assert(!statements.some((sql) => /INSERT|UPDATE|DELETE|ALTER/.test(sql)));
 });
-test('operational validation rejects stale deployment or incomplete human assertion', async () => {
-  const f = fixture();
-  await assert.rejects(
-    validateOperational({ github: f.github, deploymentId: '9', evidence: '{}' }),
-    /exact current/,
-  );
-  f.github.baseline = async () => ({
-    id: 10,
-    payload: { ...receipt, phase: 'public-passed', origin: config.origin },
-  });
-  await assert.rejects(
-    validateOperational({ github: f.github, deploymentId: '10', evidence: '{}' }),
-    /human attestation/,
-  );
-  assert.deepEqual(f.records, []);
-});
 test('bootstrap validates all required bindings before any production mutation', async () => {
   const f = fixture();
   f.github.baseline = async () => null;
   Object.assign(f.payload, {
     bootstrap: true,
     baselineId: null,
-    operatorRequired: true,
     qualification: { ...report, bootstrap: true, previousDigest: null },
   });
   const before = process.env.CORNER_WORKER_SECRETS_JSON;
@@ -852,13 +780,12 @@ test('bootstrap validates all required bindings before any production mutation',
     else process.env.CORNER_WORKER_SECRETS_JSON = before;
   }
 });
-test('explicit bootstrap migrates before first creation and remains operationally incomplete', async () => {
+test('first bootstrap recovers from transient public failure without migrating or deploying again', async () => {
   const f = fixture();
   f.github.baseline = async () => null;
   Object.assign(f.payload, {
     bootstrap: true,
     baselineId: null,
-    operatorRequired: true,
     qualification: { ...report, bootstrap: true, previousDigest: null },
   });
   const before = {
@@ -884,18 +811,86 @@ test('explicit bootstrap migrates before first creation and remains operationall
     await assert.rejects(promote(f.options), /Bootstrap Worker already exists/);
     assert.deepEqual(f.effects, []);
     f.options.cf = cf;
-    const result = await promote(f.options);
-    assert.equal(result.payload.phase, 'public-passed');
+    f.options.checkPublic = async () => { throw new Error('transient public failure'); };
+    await assert.rejects(promote(f.options), /transient public failure/);
+    const deployed = { id: 22, payload: f.records.at(-1) };
+    assert.equal(deployed.payload.phase, 'deployed');
+    f.github.baseline = async () => deployed;
+    f.github.schema = async () => ({ id: 21, payload: f.records[0] });
+    const retry = { ...f.options, deploymentId: String(deployed.id) };
+    const invocationCount = invocations.length;
+    await assert.rejects(complete(retry), /transient public failure/);
+    assert.equal(f.records.at(-1).phase, 'deployed');
+    retry.checkPublic = async (origin, version) => {
+      assert.equal(origin, config.origin);
+      assert.equal(version, versionId);
+      f.effects.push('public');
+    };
+    const result = await complete(retry);
+    assert.equal(result.payload.phase, 'complete');
+    assert.equal(invocations.length, invocationCount);
+    f.github.baseline = async () => result;
+    await plan({
+      github: f.github, runId: '1', sourceSha: source, configuration, work,
+      qualify: async () => ({ ...report, previousDigest: candidateDigest }),
+    });
     assert(f.effects.indexOf('migrate') < f.effects.indexOf('deploy'));
     assert(invocations[1].includes('--secrets-file'));
     assert(invocations[1].includes('--no-bundle'));
     assert(!invocations.some((args) => args.includes('upload')));
-    assert(!f.effects.includes('complete'));
+    assert(f.effects.indexOf('public') < f.effects.indexOf('complete'));
   } finally {
     if (before.database === undefined) delete process.env.DATABASE_URL;
     else process.env.DATABASE_URL = before.database;
     if (before.worker === undefined) delete process.env.CORNER_WORKER_SECRETS_JSON;
     else process.env.CORNER_WORKER_SECRETS_JSON = before.worker;
+  }
+});
+
+test('completion retries support public-passed receipts and rollback schema journals', async () => {
+  for (const rollback of [false, true]) {
+    const f = fixture();
+    const p = {
+      ...f.payload, phase: 'public-passed', versionId, planId: '11', rollback,
+      schemaId: '21',
+    };
+    f.github.baseline = async () => ({ id: 22, payload: p });
+    f.github.schema = async () => ({
+      id: 21,
+      payload: rollback ? receipt : { ...p, phase: 'schema-attempted' },
+    });
+    f.effects.push('deploy');
+    const result = await complete({ ...f.options, deploymentId: '22' });
+    assert.equal(result.payload.phase, 'complete');
+    assert.deepEqual(f.effects, ['deploy', 'public', 'public-passed', 'complete']);
+  }
+});
+
+test('completion retry rejects stale identities, changed artifacts, schema/configuration and live drift', async (t) => {
+  for (const scenario of ['receipt', 'phase', 'artifact', 'configuration', 'schema', 'live', 'probe-drift', 'schema-drift', 'rollback-schema']) {
+    await t.test(scenario, async () => {
+      const f = fixture();
+      const p = { ...f.payload, phase: 'deployed', versionId, planId: '11' };
+      f.github.baseline = async () => ({ id: 22, payload: p });
+      f.github.schema = async () => ({ id: 21, payload: { ...p, phase: 'schema-attempted' } });
+      f.effects.push('deploy');
+      const options = { ...f.options, deploymentId: '22' };
+      if (scenario === 'receipt') options.deploymentId = '23';
+      if (scenario === 'phase') p.phase = 'complete';
+      if (scenario === 'artifact') p.configurationSha256 = 'f'.repeat(64);
+      if (scenario === 'configuration') p.runtimeConfigurationDigest = 'f'.repeat(64);
+      if (scenario === 'schema') f.github.schema = async () => ({ id: 23, payload: { ...p, planId: '12' } });
+      if (scenario === 'live') options.cf = async () => ({ deployments: [] });
+      if (scenario === 'probe-drift') options.checkPublic = async () => {
+        f.github.baseline = async () => ({ id: 23, payload: p });
+      };
+      if (scenario === 'schema-drift') options.checkPublic = async () => {
+        f.github.schema = async () => ({ id: 23, payload: p });
+      };
+      if (scenario === 'rollback-schema') Object.assign(p, { rollback: true, schemaId: '20' });
+      await assert.rejects(complete(options), /exact current|artifact changed|configuration differs|schema journal|traffic does not match|Stale plan/);
+      assert.deepEqual(f.records, []);
+    });
   }
 });
 
@@ -920,7 +915,6 @@ test('explicit adoption pins the existing Worker before migration and again befo
           bootstrap: true,
           provisionedVersionId: oldVersion,
           baselineId: null,
-          operatorRequired: true,
           qualification: { ...report, bootstrap: true, previousDigest: null },
         });
         f.options.cf = async (path) => {
@@ -948,9 +942,9 @@ test('explicit adoption pins the existing Worker before migration and again befo
         if (scenario === 'stable') {
           const result = await promote(f.options);
           assert.equal(result.payload.versionId, versionId);
-          assert.equal(result.payload.phase, 'public-passed');
+          assert.equal(result.payload.phase, 'complete');
           assert(f.effects.indexOf('migrate') < f.effects.indexOf('deploy'));
-          assert(!f.effects.includes('complete'));
+          assert(f.effects.indexOf('public') < f.effects.indexOf('complete'));
         } else {
           await assert.rejects(promote(f.options), /Provisioned Worker changed/);
           assert(!f.effects.includes('deploy'));
@@ -992,59 +986,6 @@ test('missing inherited secret bindings and live version drift block before migr
   await assert.rejects(promote(f.options), /drifted/);
   assert.deepEqual(f.effects, []);
 });
-test('protected operational recovery rechecks exact version, records public evidence and then human evidence separately', async () => {
-  const f = fixture();
-  f.github.baseline = async () => ({
-    id: 10,
-    payload: { ...receipt, phase: 'deployed', origin: config.origin },
-  });
-  const evidence = JSON.stringify({
-    sourceSha: previousSource,
-    versionId: oldVersion,
-    reviewer: 'reviewer',
-    accountAccess: 'passed',
-    saveReload: 'passed',
-    recovery: 'passed',
-    authOriginRoutingSecretsPersistence: 'passed',
-  });
-  const result = await validateOperational({
-    github: f.github,
-    deploymentId: '10',
-    evidence,
-    checkPublic: async (origin, version) => {
-      assert.equal(origin, config.origin);
-      assert.equal(version, oldVersion);
-      f.effects.push('public');
-    },
-  });
-  assert.deepEqual(f.effects, ['public', 'public-passed', 'operational-validated']);
-  assert.equal(result.payload.evidence.kind, 'human-attestation-not-automated-proof');
-});
-test('fixed-SHA source comparison treats API truncation and renames across boundaries conservatively', async () => {
-  for (const files of [
-    Array.from({ length: 300 }, (_, index) => ({ filename: `apps/web/src/${index}.tsx` })),
-    [{ filename: 'apps/web/src/moved.ts', previous_filename: 'apps/server/src/store.ts' }],
-  ]) {
-    const f = fixture();
-    const api = f.github.api;
-    f.github.api = async (path) => {
-      if (path.startsWith('compare/')) {
-        assert.equal(path, `compare/${previousSource}...${source}`);
-        return { status: 'ahead', files };
-      }
-      return api(path);
-    };
-    const result = await plan({
-      ...f.options,
-      runId: '1',
-      sourceSha: source,
-      attestation: review,
-      actor: 'reviewer',
-      qualify: async () => report,
-    });
-    assert.equal(result.payload.operatorRequired, true);
-  }
-});
 test('explicit rollback qualifies completed target against current attempted schema artifact, not invented baseline', async () => {
   const f = fixture();
   f.github.baseline = async () => ({
@@ -1062,8 +1003,6 @@ test('explicit rollback qualifies completed target against current attempted sch
   const result = await plan({
     ...f.options,
     rollbackId: '9',
-    attestation: review.replace(source, previousSource),
-    actor: 'reviewer',
     qualify: async (options) => {
       qualified = options;
       return report;
@@ -1076,7 +1015,6 @@ test('explicit rollback qualifies completed target against current attempted sch
   assert.equal(result.payload.candidateDigest, previousDigest);
   assert.equal(result.payload.qualification.candidateDigest, candidateDigest);
   assert.equal(result.payload.targetQualification.candidateDigest, previousDigest);
-  assert.equal(result.payload.operatorRequired, true);
   f.github.api = async () => ({
     id: 9,
     environment: 'production',
@@ -1084,9 +1022,82 @@ test('explicit rollback qualifies completed target against current attempted sch
     payload: { ...receipt, phase: 'public-passed' },
   });
   await assert.rejects(
-    plan({ ...f.options, rollbackId: '9', attestation: review, actor: 'reviewer' }),
-    /completed operational/,
+    plan({ ...f.options, rollbackId: '9' }),
+    /completed qualification/,
   );
+});
+test('explicit rollback completes only after live data validation and public checks', async () => {
+  for (const failPublic of [false, true]) {
+    const f = fixture();
+    const current = { ...receipt, sourceSha: source, candidateDigest, qualification: report };
+    f.github.baseline = async () => ({ id: 10, payload: current });
+    Object.assign(f.payload, {
+      sourceSha: previousSource,
+      candidateDigest: previousDigest,
+      rollback: true,
+      rollbackVersionId: oldVersion,
+      targetQualification: receipt.qualification,
+    });
+    const directory = await mkdtemp(join(work, 'rollback-'));
+    const migrationEntry = 'migrate.mjs';
+    await writeFile(join(directory, migrationEntry), `
+      export const currentSchema = async () => 'public';
+      export const migrationHistory = async () => {};
+      export const inspectImport = raw => ({ state: raw });
+      export const createDatabase = () => ({
+        connect: async () => ({
+          query: async () => ({ rows: [{ user_id: 'owner', data: '{"saved":true}' }] }),
+          release() {},
+        }),
+        async end() {},
+      });
+    `);
+    await writeFile(join(directory, manifest.configurationEntry), JSON.stringify(packagedConfig));
+    const artifact = f.github.artifact;
+    f.github.artifact = async (...args) => {
+      const result = await artifact(...args);
+      return { ...result, directory, manifest: { ...result.manifest, migrationEntry } };
+    };
+    f.options.verify = async () => ({ digest: previousDigest });
+    f.options.qualify = async () => report;
+    f.options.cf = async path => path.endsWith('/settings')
+      ? { bindings: ['DATABASE_URL', 'NEON_AUTH_BASE_URL', 'BETTER_AUTH_SECRET',
+          'CORNER_TOKEN_ENCRYPTION_KEY'].map(name => ({ name, type: 'secret_text' })) }
+      : { deployments: [{ versions: [{ version_id: oldVersion, percentage: 100 }] }] };
+    if (failPublic) {
+      f.options.checkPublic = async () => { throw new Error('public probe failed'); };
+      await assert.rejects(promote(f.options), /public probe failed/);
+      assert.equal(f.records.at(-1).phase, 'deployed');
+      assert(!f.effects.includes('complete'));
+    } else {
+      const result = await promote(f.options);
+      assert.equal(result.payload.phase, 'complete');
+      assert.equal(result.payload.versionId, oldVersion);
+      assert(f.effects.indexOf('public') < f.effects.indexOf('complete'));
+    }
+    assert(!f.effects.includes('migrate'));
+    assert(!f.effects.includes('upload'));
+  }
+});
+
+test('normal promotion preserves fixed-SHA forward-only comparison without per-file classification', async () => {
+  for (const status of ['ahead', 'behind', 'diverged', 'identical']) {
+    const f = fixture();
+    const api = f.github.api;
+    f.github.api = async path => {
+      if (path.startsWith('compare/')) {
+        assert.equal(path, `compare/${previousSource}...${source}`);
+        return { status };
+      }
+      return api(path);
+    };
+    const options = { ...f.options, runId: '1', sourceSha: source, qualify: async () => report };
+    if (status === 'ahead') assert.equal((await plan(options)).payload.phase, 'planned');
+    else {
+      await assert.rejects(plan(options), /forward source change/);
+      assert.deepEqual(f.records, []);
+    }
+  }
 });
 test('archive digest mismatch fails before unpacking or executing artifacts', async () => {
   const github = new GitHub({ repository: 'owner/corner', token: 'synthetic' });
@@ -1106,29 +1117,6 @@ test('archive digest mismatch fails before unpacking or executing artifacts', as
     /archive digest/,
   );
 });
-test('effectful jobs require actual protected-environment approval records, not an environment name', async () => {
-  const github = new GitHub({ repository: 'owner/corner', token: 'synthetic' });
-  github.api = async (path) => {
-    assert.equal(path, 'actions/runs/90/approvals');
-    return [];
-  };
-  await assert.rejects(github.approval('production-operations'), /actual protected/);
-  github.api = async () => [
-    {
-      state: 'approved',
-      environments: [{ name: 'production-validation' }],
-      user: { login: 'owner', type: 'User', id: 123 },
-    },
-  ];
-  await assert.rejects(github.approval('production-operations'), /actual protected/);
-  assert.equal((await github.approval('production-validation')).reviewer, 'owner');
-  const f = fixture();
-  f.github.approval = async () => {
-    throw new Error('approval missing');
-  };
-  await assert.rejects(promote(f.options), /approval missing/);
-  assert.deepEqual(f.effects, []);
-});
 test('post-upload payload changes block before migrations or traffic changes', async () => {
   const f = fixture();
   f.options.verify = async () => ({ digest: previousDigest });
@@ -1136,19 +1124,6 @@ test('post-upload payload changes block before migrations or traffic changes', a
   assert.deepEqual(f.effects, ['upload']);
 });
 
-test('production manual review requires staging evidence or an explicit emergency exception', () => {
-  const value = JSON.parse(review);
-  delete value.stagingReview;
-  assert.throws(
-    () => manualAttestation(JSON.stringify(value), source, 'reviewer'),
-    /reviewed staging/,
-  );
-  value.hotfixReason = 'Urgent production authentication repair';
-  assert.equal(
-    manualAttestation(JSON.stringify(value), source, 'reviewer').hotfixReason,
-    value.hotfixReason,
-  );
-});
 
 test('public probes require a canonical native protected RPC error, not an obsolete REST 401', async () => {
   const requests = [];
@@ -1326,7 +1301,7 @@ test('single runtime traffic-switch failure never records a deployed receipt', a
 test('legacy production adoption requires a current explicitly pinned bootstrap plan', async () => {
   const adoption = {
     runId: '1', sourceSha: source, bootstrap: true, provisionedVersionId: oldVersion,
-    productionAdoptionHost: 'synthetic.invalid', attestation: review, actor: 'reviewer',
+    productionAdoptionHost: 'synthetic.invalid',
   };
   for (const override of [
     { automatic: true }, { bootstrap: false }, { provisionedVersionId: null },
@@ -1349,7 +1324,6 @@ test('legacy production adoption requires a current explicitly pinned bootstrap 
     qualify: async () => ({ ...report, bootstrap: true, previousDigest: null }),
   });
   assert.equal(prepared.payload.productionAdoptionHost, adoption.productionAdoptionHost);
-  assert.equal(prepared.payload.operatorRequired, true);
   f.github.schema = async () => ({ payload: {
     productionAdoptionHost: 'different.invalid',
   } });
@@ -1391,7 +1365,7 @@ test('production adoption rejects mismatched approved and protected database des
       Object.assign(f.payload, {
         bootstrap: true, provisionedVersionId: oldVersion,
         productionAdoptionHost: mismatch.host ?? 'synthetic.invalid',
-        baselineId: null, operatorRequired: true,
+        baselineId: null,
         qualification: { ...report, bootstrap: true, previousDigest: null },
       });
       await assert.rejects(promote(f.options), mismatch.pooled?.startsWith('https:')

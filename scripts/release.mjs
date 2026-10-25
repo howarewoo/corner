@@ -7,7 +7,6 @@ import { pathToFileURL } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
 import { createRequire } from 'node:module';
 import { verifyArtifact, qualifyArtifact } from './release-artifact.mjs';
-import { classifyChanges } from './verify.mjs';
 import { releaseTarget } from './release-target.mjs';
 import { loadCiArtifact } from './ci-artifact.mjs';
 
@@ -15,7 +14,7 @@ const sha = /^[a-f0-9]{40}$/;
 const digest = /^[a-f0-9]{64}$/;
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 const databaseHost = /^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/;
-const phases = new Set(['deployed', 'public-passed', 'operational-validated', 'complete']);
+const phases = new Set(['deployed', 'public-passed', 'complete']);
 const hash = (value) => createHash('sha256').update(value).digest('hex');
 class ReleaseError extends Error {}
 const need = (value, message) => {
@@ -111,7 +110,7 @@ export function assertBaseline(expected, current) {
   const normalize = (value) => (value === null || value === undefined ? null : String(value));
   need(
     normalize(expected) === normalize(current),
-    'Stale approval: production baseline changed; prepare a new plan',
+    'Stale plan: production baseline changed; prepare a new plan',
   );
 }
 export function rollbackEligible(target, current, qualification, runtimeDigest) {
@@ -130,68 +129,6 @@ export function rollbackEligible(target, current, qualification, runtimeDigest) 
       qualification.bootstrap === false,
     'Rollback target is not compatible with CURRENT schema and written data',
   );
-}
-export function requiresOperator(files, bootstrap, previous, candidate, runtimeDigest) {
-  if (
-    bootstrap ||
-    !previous ||
-    previous.configurationSha256 !== candidate.configurationSha256 ||
-    previous.runtimeConfigurationDigest !== runtimeDigest
-  )
-    return true;
-  return files.some((file) => {
-    const { profile } = classifyChanges([file]);
-    return profile !== 'web' && profile !== 'ui';
-  });
-}
-export function manualAttestation(raw, sourceSha, actor) {
-  const value = JSON.parse(raw);
-  need(
-    value &&
-      value.sourceSha === sourceSha &&
-      value.reviewer === actor &&
-      /^[\w-]+$/.test(actor ?? ''),
-    'Manual review must bind source SHA and dispatch actor',
-  );
-  need(
-    typeof value.affectedFlow === 'string' &&
-      value.affectedFlow.length >= 8 &&
-      value.affectedFlow.length <= 500 &&
-      Number.isInteger(value.desktopWidth) &&
-      value.desktopWidth >= 1024 &&
-      Number.isInteger(value.phoneWidth) &&
-      value.phoneWidth >= 320 &&
-      value.phoneWidth <= 480 &&
-      value.keyboardFocus === 'passed',
-    'Manual review requires affected flow, desktop/phone widths and keyboard/focus result',
-  );
-  const stagingReview = value.stagingReview;
-  const hotfixReason = value.hotfixReason;
-  need(
-    stagingReview
-      ? hotfixReason === undefined &&
-          sha.test(stagingReview.sourceSha) &&
-          /^[1-9][0-9]*$/.test(String(stagingReview.deploymentId))
-      : typeof hotfixReason === 'string' && hotfixReason.length >= 8 && hotfixReason.length <= 500,
-    'Record the reviewed staging source/deployment or explicit hotfix reason, not both',
-  );
-  return {
-    sourceSha,
-    reviewer: actor,
-    affectedFlow: value.affectedFlow,
-    desktopWidth: value.desktopWidth,
-    phoneWidth: value.phoneWidth,
-    keyboardFocus: value.keyboardFocus,
-    ...(stagingReview
-      ? {
-          stagingReview: {
-            sourceSha: stagingReview.sourceSha,
-            deploymentId: String(stagingReview.deploymentId),
-          },
-        }
-      : { hotfixReason }),
-    kind: 'human-attestation-not-automated-proof',
-  };
 }
 function command(binary, args, options = {}) {
   const result = spawnSync(binary, args, {
@@ -247,28 +184,6 @@ export class GitHub {
     if (!record) return null;
     validateReceipt(record.payload);
     return record;
-  }
-  async approval(environment) {
-    const runId = id(process.env.GITHUB_RUN_ID);
-    const reviews = await this.api(`actions/runs/${runId}/approvals`);
-    const approved = reviews.find(
-      (review) =>
-        review.state === 'approved' &&
-        review.environments?.some((item) => item.name === environment),
-    );
-    need(
-      approved &&
-        approved.user?.type === 'User' &&
-        Number.isSafeInteger(approved.user.id) &&
-        /^[\w-]+$/.test(approved.user.login ?? ''),
-      `An actual protected ${environment} reviewer approval is required`,
-    );
-    return {
-      runId,
-      attempt: process.env.GITHUB_RUN_ATTEMPT,
-      environment,
-      reviewer: approved.user.login,
-    };
   }
   async schema() {
     const records = await this.all(
@@ -331,17 +246,12 @@ export class GitHub {
     });
   }
 }
-async function changedFiles(github, previous, source) {
-  if (!previous) return [];
+async function assertForwardSource(github, previous, source) {
+  if (!previous) return;
   const comparison = await github.api(`compare/${previous.sourceSha}...${source}`);
   need(
     comparison.status === 'ahead',
     'Normal promotion must be a forward source change; use explicit rollback for recovery',
-  );
-  if (!Array.isArray(comparison.files) || comparison.files.length >= 300)
-    return ['uninspectable-production-boundary'];
-  return comparison.files.flatMap((file) =>
-    file.previous_filename ? [file.previous_filename, file.filename] : [file.filename],
   );
 }
 async function assertCurrentMain(github, sourceSha) {
@@ -358,8 +268,6 @@ export async function plan({
   productionAdoptionHost = null,
   rollbackId,
   configuration,
-  attestation,
-  actor,
   automatic = false,
   work,
   qualify = qualifyArtifact,
@@ -401,13 +309,12 @@ export async function plan({
   );
   if (!rollbackId && baseline)
     need(
-      ['complete', 'operational-validated'].includes(baseline.payload.phase),
-      'Current release still requires public/operational validation; validate it or explicitly recover',
+      baseline.payload.phase === 'complete',
+      'Current release is incomplete; explicitly recover before another normal release',
     );
   let candidate;
   let reference;
   let qualification;
-  let files = [];
   if (rollbackId) {
     need(!bootstrap && baseline, 'Rollback cannot bootstrap');
     const target = await github.api(`deployments/${id(rollbackId)}`);
@@ -417,8 +324,8 @@ export async function plan({
     );
     validateReceipt(target.payload);
     need(
-      ['complete', 'operational-validated'].includes(target.payload.phase),
-      'Rollback target lacks completed operational qualification',
+      target.payload.phase === 'complete',
+      'Rollback target lacks completed qualification',
     );
     reference = target.payload;
     candidate = await github.artifact(reference, join(work, 'candidate'));
@@ -488,9 +395,8 @@ export async function plan({
         qualification.bootstrap === bootstrap,
       'Release qualification mismatch',
     );
-    files = await changedFiles(github, baseline?.payload, sourceSha);
+    await assertForwardSource(github, baseline?.payload, sourceSha);
   }
-  const review = automatic ? null : manualAttestation(attestation, reference.sourceSha, actor);
   const payload = {
     format: 4,
     kind: target.kind,
@@ -511,12 +417,7 @@ export async function plan({
     rollback: Boolean(rollbackId),
     rollbackVersionId: rollbackId ? reference.versionId : null,
     qualification,
-    operatorRequired:
-      !automatic &&
-      (Boolean(rollbackId) ||
-        requiresOperator(files, bootstrap, baseline?.payload, candidate.manifest, config.digest)),
     bindingsRevision: config.bindingsRevision,
-    manualReview: review,
     targetQualification: rollbackId ? reference.qualification : null,
     schemaId: schemaState ? String(schemaState.id) : null,
     executionRunId: process.env.GITHUB_RUN_ID,
@@ -526,7 +427,7 @@ export async function plan({
   if (process.env.GITHUB_STEP_SUMMARY)
     await writeFile(
       process.env.GITHUB_STEP_SUMMARY,
-      `## Qualified production plan ${record.id}\n\nReview immutable deployment metadata before approval.\n\n${JSON.stringify(payload, null, 2)}\n`,
+      `## Qualified production plan ${record.id}\n\nImmutable deployment metadata.\n\n${JSON.stringify(payload, null, 2)}\n`,
       { flag: 'a' },
     );
   return record;
@@ -707,12 +608,12 @@ export async function promote({
       p?.phase === 'planned' &&
       p.kind === target.kind &&
       p.workerName === target.workerName,
-    'Not an approved release plan',
+    'Not a qualified release plan',
   );
   need(
     p.executionRunId === process.env.GITHUB_RUN_ID &&
       p.executionRunAttempt === process.env.GITHUB_RUN_ATTEMPT,
-    'Plan belongs to a different approval execution',
+    'Plan belongs to a different execution',
   );
   need(p.automatic === automatic, 'Plan release mode differs from this execution');
   const assertCurrentCandidate = async () => {
@@ -721,8 +622,7 @@ export async function promote({
   await assertCurrentCandidate();
   if (automatic)
     need(
-      !p.bootstrap && !p.rollback && !p.operatorRequired && p.manualReview === null &&
-        p.productionAdoptionHost == null,
+      !p.bootstrap && !p.rollback && p.productionAdoptionHost == null,
       'Automatic production cannot execute an operator release plan',
     );
   const config = validateConfiguration(configuration);
@@ -743,12 +643,11 @@ export async function promote({
           typeof p.provisionedVersionId === 'string' &&
           uuid.test(p.provisionedVersionId))) &&
       (p.productionAdoptionHost == null ||
-        (!automatic && p.bootstrap && !p.rollback && p.operatorRequired && !baseline &&
+        (!automatic && p.bootstrap && !p.rollback && !baseline &&
           p.provisionedVersionId != null && typeof p.productionAdoptionHost === 'string' &&
           databaseHost.test(p.productionAdoptionHost))) &&
-      typeof p.rollback === 'boolean' &&
-      typeof p.operatorRequired === 'boolean',
-    'Invalid persisted approval plan',
+      typeof p.rollback === 'boolean',
+    'Invalid persisted release plan',
   );
   id(p.runId);
   id(p.artifactId);
@@ -763,15 +662,10 @@ export async function promote({
         : p.qualification.candidateDigest === p.candidateDigest &&
           p.qualification.previousDigest === (baseline?.payload.candidateDigest ?? null) &&
           p.qualification.bootstrap === p.bootstrap),
-    'Persisted approval qualification does not bind candidate and current baseline',
+    'Persisted release qualification does not bind candidate and current baseline',
   );
-  if (!automatic)
-    manualAttestation(JSON.stringify(p.manualReview), p.sourceSha, process.env.GITHUB_ACTOR);
   const schemaState = await github.schema();
   assertBaseline(p.schemaId, schemaState?.id);
-  const approval = automatic
-    ? { kind: 'successful-main-ci', runId: p.runId, sourceSha: p.sourceSha }
-    : await github.approval('production-operations');
   let bootstrapSecrets;
   if (p.bootstrap) {
     bootstrapSecrets = JSON.parse(
@@ -948,7 +842,7 @@ export async function promote({
     }
     await assertCurrentCandidate();
     // Journal before migration: even a lost response cannot hide a possible schema advance.
-    await github.record({ ...p, phase: 'schema-attempted', planId: String(prepared.id), approval });
+    await github.record({ ...p, phase: 'schema-attempted', planId: String(prepared.id) });
     execute(
       process.execPath,
       [join(candidate.directory, candidate.manifest.migrationEntry), '--apply',
@@ -994,7 +888,6 @@ export async function promote({
     phase: 'deployed',
     versionId,
     planId: String(prepared.id),
-    approval,
     rollbackCompatibility: p.rollback ? p.qualification : null,
     qualification: p.rollback ? p.targetQualification : p.qualification,
   };
@@ -1010,59 +903,61 @@ export async function promote({
   await checkPublic(p.origin, versionId);
   receipt = { ...receipt, phase: 'public-passed' };
   const publicRecord = await github.record(receipt);
-  if (!p.operatorRequired)
-    return github.record(
-      { ...receipt, phase: 'complete', publicDeploymentId: String(publicRecord.id) },
-      'success',
-    );
-  return publicRecord;
+  return github.record(
+    { ...receipt, phase: 'complete', publicDeploymentId: String(publicRecord.id) },
+    'success',
+  );
 }
-export async function validateOperational({
+export async function complete({
   github,
   deploymentId,
-  evidence,
+  configuration,
+  work,
+  cf = cloudflare,
   checkPublic = publicChecks,
 }) {
   const current = await github.baseline();
   need(
-    current &&
-      String(current.id) === id(deploymentId) &&
+    current && String(current.id) === id(deploymentId) &&
       ['deployed', 'public-passed'].includes(current.payload.phase),
-    'Operational validation must reference the exact current deployed/public-passed deployment',
+    'Completion requires the exact current incomplete deployment',
   );
-  const assertion = JSON.parse(evidence);
-  const actor = need(process.env.GITHUB_ACTOR, 'Operator identity required');
+  const p = validateReceipt(current.payload);
+  const config = validateConfiguration(configuration);
   need(
-    assertion.sourceSha === current.payload.sourceSha &&
-      assertion.versionId === current.payload.versionId &&
-      assertion.reviewer === actor &&
-      ['accountAccess', 'saveReload', 'recovery', 'authOriginRoutingSecretsPersistence'].every(
-        (key) => assertion[key] === 'passed',
-      ),
-    'Operational human attestation must bind exact source/version/operator and account/save/recovery/boundary checks',
+    p.origin === config.origin && p.runtimeConfigurationDigest === config.digest,
+    'Completion configuration differs from the deployed release',
   );
-  const approval = await github.approval('production-validation');
-  await checkPublic(current.payload.origin, current.payload.versionId);
-  if (current.payload.phase === 'deployed')
-    await github.record({ ...current.payload, phase: 'public-passed' });
+  const schema = await github.schema();
+  if (p.rollback) assertBaseline(p.schemaId, schema?.id);
+  else need(
+    schema && schema.payload.planId === p.planId &&
+      schema.payload.candidateDigest === p.candidateDigest,
+    'Completion schema journal differs from the deployed release',
+  );
+  const candidate = await github.artifact(p, join(work, 'candidate'));
+  need(
+    candidate.digest === p.candidateDigest &&
+      candidate.manifest.configurationSha256 === p.configurationSha256,
+    'Deployed artifact changed',
+  );
+  const assertLive = async () => {
+    const live = await cf(`workers/scripts/${releaseTarget().workerName}/deployments`);
+    need(
+      live.deployments?.[0]?.versions?.length === 1 &&
+        live.deployments[0].versions[0].version_id === p.versionId &&
+        live.deployments[0].versions[0].percentage === 100,
+      'Cloudflare traffic does not match the incomplete release',
+    );
+  };
+  await assertLive();
+  await checkPublic(p.origin, p.versionId);
+  assertBaseline(current.id, (await github.baseline())?.id);
+  assertBaseline(schema?.id, (await github.schema())?.id);
+  await assertLive();
+  const publicRecord = await github.record({ ...p, phase: 'public-passed' });
   return github.record(
-    {
-      ...current.payload,
-      phase: 'operational-validated',
-      validatedDeploymentId: String(current.id),
-      operator: actor,
-      operationalApproval: approval,
-      evidence: {
-        sourceSha: assertion.sourceSha,
-        versionId: assertion.versionId,
-        reviewer: actor,
-        accountAccess: 'passed',
-        saveReload: 'passed',
-        recovery: 'passed',
-        authOriginRoutingSecretsPersistence: 'passed',
-        kind: 'human-attestation-not-automated-proof',
-      },
-    },
+    { ...p, phase: 'complete', publicDeploymentId: String(publicRecord.id) },
     'success',
   );
 }
@@ -1112,8 +1007,6 @@ async function main() {
         productionAdoptionHost: process.env.RELEASE_PRODUCTION_ADOPTION_HOST || undefined,
         rollbackId: process.env.RELEASE_ROLLBACK_ID || undefined,
         configuration: process.env[`${target.prefix}_CONFIG_JSON`],
-        attestation: process.env.RELEASE_MANUAL_REVIEW,
-        actor: process.env.GITHUB_ACTOR,
         work,
       });
     else if (action === 'promote')
@@ -1123,13 +1016,14 @@ async function main() {
         configuration: process.env[`${target.prefix}_CONFIG_JSON`],
         work,
       });
-    else if (action === 'validate')
-      record = await validateOperational({
+    else if (action === 'complete')
+      record = await complete({
         github,
         deploymentId: process.env.RELEASE_DEPLOYMENT_ID,
-        evidence: process.env.RELEASE_OPERATIONAL_REVIEW,
+        configuration: process.env[`${target.prefix}_CONFIG_JSON`],
+        work,
       });
-    else throw new Error('Usage: node scripts/release.mjs deploy|plan|promote|validate');
+    else throw new Error('Usage: node scripts/release.mjs deploy|plan|promote|complete');
     if (process.env.GITHUB_OUTPUT)
       await writeFile(process.env.GITHUB_OUTPUT, `deployment_id=${record.id}\n`, { flag: 'a' });
     console.log(

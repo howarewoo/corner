@@ -8,8 +8,6 @@ const branches = ['main', 'staging'];
 const environmentBranches = {
   staging: 'staging',
   production: 'main',
-  'production-operations': 'main',
-  'production-validation': 'main',
 };
 
 export function protectionBody(current, required, appId, organization) {
@@ -77,7 +75,7 @@ function verifyProtection(observed, body, appId, branch, organization) {
   }
 }
 
-async function verifyEnvironment(api, environment, branch, reviewerId) {
+async function verifyEnvironment(api, environment, branch) {
   const observed = await api(`/environments/${environment}`);
   const rules = observed.protection_rules ?? [];
   const reviewerRules = rules.filter((rule) => rule.type === 'required_reviewers');
@@ -86,20 +84,12 @@ async function verifyEnvironment(api, environment, branch, reviewerId) {
     `/environments/${environment}/deployment-branch-policies`,
     'branch_policies',
   );
-  const humanApproval =
-    environment === 'production-operations' || environment === 'production-validation';
   if (
     observed.can_admins_bypass !== false ||
     observed.deployment_branch_policy?.protected_branches !== false ||
     observed.deployment_branch_policy?.custom_branch_policies !== true ||
     rules.some((rule) => rule.type === 'wait_timer' && rule.wait_timer !== 0) ||
-    (humanApproval
-      ? reviewerRules.length !== 1 ||
-        reviewerRules[0].prevent_self_review !== false ||
-        !reviewerRules[0].reviewers?.some(
-          (value) => value.type === 'User' && value.reviewer?.id === reviewerId,
-        )
-      : reviewerRules.length !== 0) ||
+    reviewerRules.length !== 0 ||
     policies.length !== 1 ||
     policies[0].name !== branch ||
     policies[0].type !== 'branch'
@@ -108,21 +98,13 @@ async function verifyEnvironment(api, environment, branch, reviewerId) {
   }
 }
 
-export async function configure({ api, reviewer, apply = false }) {
-  if (!/^[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?$/.test(reviewer ?? ''))
-    throw new Error('Supply an eligible --reviewer login; owner approval is explicitly allowed.');
+export async function configure({ api, apply = false }) {
   const repo = await api('');
   if (!repo.permissions?.admin)
     throw new Error('Repository administration permission is required.');
   if (!['User', 'Organization'].includes(repo.owner?.type))
     throw new Error('Cannot establish the repository owner type.');
   const organization = repo.owner.type === 'Organization';
-  const collaborator = await api(`/collaborators/${encodeURIComponent(reviewer)}/permission`);
-  if (
-    !['admin', 'maintain', 'write', 'read'].includes(collaborator.permission) ||
-    !Number.isSafeInteger(collaborator.user?.id)
-  )
-    throw new Error('Reviewer is not an eligible repository collaborator.');
   const branchPlans = [];
   for (const branch of branches) {
     const ref = await api(`/git/ref/heads/${branch}`, { missing: true });
@@ -135,7 +117,6 @@ export async function configure({ api, reviewer, apply = false }) {
       'staging.yml',
       'production.yml',
       'release.yml',
-      'release-validate.yml',
     ]) {
       const content = await api(`/contents/.github/workflows/${path}?ref=${ref.object.sha}`, {
         missing: true,
@@ -196,10 +177,7 @@ export async function configure({ api, reviewer, apply = false }) {
         wait_timer: 0,
         prevent_self_review: false,
         can_admins_bypass: false,
-        reviewers:
-          environment === 'production-operations' || environment === 'production-validation'
-            ? [{ type: 'User', id: collaborator.user.id }]
-            : [],
+        reviewers: [],
         deployment_branch_policy: { protected_branches: false, custom_branch_policies: true },
       },
     });
@@ -230,7 +208,6 @@ export async function configure({ api, reviewer, apply = false }) {
   const plan = {
     branches: branchPlans,
     requiredContext: fullContext,
-    reviewer,
     environments: environmentBranches,
     mutations,
     repositorySettings,
@@ -251,7 +228,7 @@ export async function configure({ api, reviewer, apply = false }) {
       organization,
     );
   for (const [environment, branch] of Object.entries(environmentBranches))
-    await verifyEnvironment(api, environment, branch, collaborator.user.id);
+    await verifyEnvironment(api, environment, branch);
   await api('', { method: 'PATCH', body: repositorySettings });
   const observed = await api('');
   if (observed.default_branch !== 'staging' || observed.delete_branch_on_merge !== false)
@@ -263,9 +240,9 @@ async function main() {
   const args = process.argv.slice(2);
   const { values } = parseArgs({
     args: args[0] === '--' ? args.slice(1) : args,
-    options: { reviewer: { type: 'string' }, apply: { type: 'boolean' } },
+    options: { apply: { type: 'boolean' } },
   });
-  await configure({ api: githubClient(), reviewer: values.reviewer, apply: values.apply });
+  await configure({ api: githubClient(), apply: values.apply });
 }
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url))
   main().catch((error) => {

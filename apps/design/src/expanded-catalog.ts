@@ -1,5 +1,5 @@
 // Complete live shadcn documentation/registry union, retrieved 2026-10-23.
-// Existing entries are retained in specimens.tsx; this adds every missing component.
+// Core entries are retained in catalog.ts; this adds every remaining component.
 const entries = [
   [
     'alert-dialog',
@@ -92,7 +92,7 @@ const entries = [
     'sidebar',
     'Sidebar',
     'Navigation',
-    'The real shared Sidebar powers this app’s desktop and phone navigation.',
+    'A self-contained shared AppSidebar with desktop collapse and phone Sheet navigation.',
   ],
   ['skeleton', 'Skeleton', 'Feedback', 'Represent the shape of content while it is loading.'],
   ['slider', 'Slider', 'Forms', 'Choose a numeric value within a visible range.'],

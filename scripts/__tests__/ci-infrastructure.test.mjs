@@ -44,6 +44,7 @@ function configurationFixture({
   runSha = sourceSha,
   missingRun = false,
   missingBranch = false,
+  missingWorkflow,
   movedBranch = false,
   corruptReadback,
   current = null,
@@ -140,8 +141,11 @@ function configurationFixture({
         },
       };
     }
-    if (path.startsWith('/contents/')) return { type: 'file' };
-    if (path.startsWith('/collaborators/')) return { permission: 'admin', user: { id: 42 } };
+    if (path.startsWith('/contents/')) {
+      const workflow = path.split('/').at(-1).split('?')[0];
+      assert.ok(['ci.yml', 'staging.yml', 'production.yml', 'release.yml'].includes(workflow));
+      return workflow === missingWorkflow ? null : { type: 'file' };
+    }
     if (path.startsWith('/actions/workflows/ci.yml/runs?')) {
       const branch = new URL(path, 'https://api.github.com').searchParams.get('branch');
       return {
@@ -197,7 +201,7 @@ test('both exact current branch revisions require successful full CI before any 
     ]) {
       const fixture = configurationFixture({ failureBranch, ...options });
       await assert.rejects(
-        configure({ api: fixture.api, reviewer: 'owner', apply: true }),
+        configure({ api: fixture.api, apply: true }),
         /actually succeeded, not skipped|exact current .* revision/,
       );
       assert.deepEqual(fixture.writes, []);
@@ -209,8 +213,19 @@ test('missing staging is actionable and a branch moving during planning prevents
   for (const options of [{ missingBranch: true }, { movedBranch: true }]) {
     const fixture = configurationFixture(options);
     await assert.rejects(
-      configure({ api: fixture.api, reviewer: 'owner', apply: true }),
+      configure({ api: fixture.api, apply: true }),
       /Create the persistent staging branch explicitly|moved after CI qualification/,
+    );
+    assert.deepEqual(fixture.writes, []);
+  }
+});
+
+test('each required workflow must be present before configuration has effects', async () => {
+  for (const missingWorkflow of ['ci.yml', 'staging.yml', 'production.yml', 'release.yml']) {
+    const fixture = configurationFixture({ missingWorkflow });
+    await assert.rejects(
+      configure({ api: fixture.api, apply: true }),
+      /complete reviewed workflows/,
     );
     assert.deepEqual(fixture.writes, []);
   }
@@ -218,7 +233,7 @@ test('missing staging is actionable and a branch moving during planning prevents
 
 test('complete two-branch dry run proposes every mutation without writing', async () => {
   const fixture = configurationFixture({ defaultBranch: 'staging' });
-  const plan = await configure({ api: fixture.api, reviewer: 'owner' });
+  const plan = await configure({ api: fixture.api });
   assert.deepEqual(
     plan.branches.map((value) => value.branch),
     ['main', 'staging'],
@@ -227,8 +242,6 @@ test('complete two-branch dry run proposes every mutation without writing', asyn
   assert.deepEqual(plan.environments, {
     staging: 'staging',
     production: 'main',
-    'production-operations': 'main',
-    'production-validation': 'main',
   });
   assert.deepEqual(plan.repositorySettings, {
     default_branch: 'staging',
@@ -237,30 +250,39 @@ test('complete two-branch dry run proposes every mutation without writing', asyn
   assert.deepEqual(fixture.writes, []);
 });
 
-test('production follows main without human approval while operator actions remain protected', async () => {
+test('application clears reviewer gates and pins only staging and production without touching legacy environments', async () => {
   const fixture = configurationFixture({ defaultBranch: 'staging' });
-  fixture.environments.set('production', {});
-  fixture.policies.set('production', [{ id: 77, name: 'staging', type: 'branch' }]);
-  await configure({ api: fixture.api, reviewer: 'owner', apply: true });
-  for (const environment of ['production', 'production-operations', 'production-validation']) {
+  const legacy = { protection_rules: [{ type: 'required_reviewers', reviewers: [{ id: 42 }] }] };
+  for (const environment of ['production-operations', 'production-validation'])
+    fixture.environments.set(environment, structuredClone(legacy));
+  for (const [environment, branch] of [['staging', 'staging'], ['production', 'main']]) {
+    fixture.environments.set(environment, {
+      protection_rules: [{ type: 'required_reviewers', reviewers: [{ id: 42 }] }],
+    });
+    fixture.policies.set(environment, [
+      { id: environment === 'staging' ? 76 : 77, name: 'release/*', type: 'branch' },
+      { id: environment === 'staging' ? 78 : 79, name: branch, type: 'tag' },
+    ]);
+  }
+  await configure({ api: fixture.api, apply: true });
+  for (const [environment, branch] of [['staging', 'staging'], ['production', 'main']]) {
     assert.deepEqual(
       fixture.policies.get(environment).map(({ name, type }) => ({ name, type })),
-      [{ name: 'main', type: 'branch' }],
+      [{ name: branch, type: 'branch' }],
     );
-    if (environment !== 'production') {
-      assert.equal(
-        fixture.environments.get(environment).protection_rules[0].reviewers[0].reviewer.id,
-        42,
-      );
-      assert.equal(
-        fixture.environments.get(environment).protection_rules[0].prevent_self_review,
-        false,
-      );
-    }
+    const observed = fixture.environments.get(environment);
+    assert.deepEqual(observed.reviewers, []);
+    assert.deepEqual(observed.protection_rules, []);
+    assert.equal(observed.wait_timer, 0);
+    assert.equal(observed.can_admins_bypass, false);
   }
-  assert.deepEqual(fixture.environments.get('production').protection_rules, []);
-  assert.deepEqual(fixture.environments.get('staging').protection_rules, []);
-  assert.equal(fixture.policies.get('staging')[0].name, 'staging');
+  for (const environment of ['production-operations', 'production-validation']) {
+    assert.deepEqual(fixture.environments.get(environment), legacy);
+    assert.equal(
+      fixture.writes.some(({ path }) => path.startsWith(`/environments/${environment}`)),
+      false,
+    );
+  }
   assert.deepEqual(fixture.writes.at(-1), {
     path: '',
     method: 'PATCH',
@@ -274,9 +296,9 @@ test('production follows main without human approval while operator actions rema
     );
 });
 
-test('personal repositories acquire enforced protections and environment gates without organization-only restrictions', async () => {
+test('personal repositories acquire enforced protections and deployment policies without organization-only restrictions', async () => {
   const fixture = configurationFixture({ ownerType: 'User' });
-  await configure({ api: fixture.api, reviewer: 'owner', apply: true });
+  await configure({ api: fixture.api, apply: true });
   assert.equal(fixture.repo.default_branch, 'staging');
   for (const protection of fixture.protections.values()) {
     assert.equal(protection.enforce_admins.enabled, true);
@@ -288,10 +310,7 @@ test('personal repositories acquire enforced protections and environment gates w
     fixture.policies.get('production').map(({ name }) => name),
     ['main'],
   );
-  assert.equal(
-    fixture.environments.get('production-operations').protection_rules[0].reviewers[0].reviewer.id,
-    42,
-  );
+  assert.deepEqual(fixture.environments.get('production').protection_rules, []);
 });
 
 test('full-check protection preserves unrelated checks and stronger reviews while removing unsafe bypasses', () => {
@@ -356,7 +375,7 @@ test('every dangerous protection read-back blocks the default-branch change', as
   ]) {
     const fixture = configurationFixture({ corruptReadback });
     await assert.rejects(
-      configure({ api: fixture.api, reviewer: 'owner', apply: true }),
+      configure({ api: fixture.api, apply: true }),
       /protection read-back failed/,
     );
     assert.equal(
@@ -377,7 +396,7 @@ test('strong unrelated checks and review requirements survive application on bot
     },
   };
   const fixture = configurationFixture({ current });
-  await configure({ api: fixture.api, reviewer: 'owner', apply: true });
+  await configure({ api: fixture.api, apply: true });
   for (const observed of fixture.protections.values()) {
     assert.deepEqual(observed.required_status_checks.checks, [
       { context: 'External security', app_id: 42 },
@@ -392,36 +411,41 @@ test('strong unrelated checks and review requirements survive application on bot
 test('linear-history policies require an explicit operator decision before any configuration writes', async () => {
   const fixture = configurationFixture({ current: { required_linear_history: { enabled: true } } });
   await assert.rejects(
-    configure({ api: fixture.api, reviewer: 'owner', apply: true }),
+    configure({ api: fixture.api, apply: true }),
     /conflicting with long-lived merge-commit promotion/,
   );
   assert.deepEqual(fixture.writes, []);
 });
 
-test('environment read-back rejects blocked automatic deployments, approval bypasses, and wrong branches', async () => {
-  for (const failure of ['bypass', 'approval', 'production-approval', 'branch', 'reviewer']) {
+test('environment read-back independently rejects reviewer gates, wait timers, bypasses, and wrong branch policies', async () => {
+  for (const { failure, environment } of ['staging', 'production'].flatMap((environment) =>
+    ['bypass', 'approval', 'branch', 'tag', 'extra-branch', 'wait-timer'].map((failure) => ({
+      failure,
+      environment,
+    })),
+  )) {
     const fixture = configurationFixture();
     const api = async (path, options = {}) => {
       const value = structuredClone(await fixture.api(path, options));
       if (!options.method && fixture.writes.length) {
-        if (failure === 'bypass' && path === '/environments/production')
-          value.can_admins_bypass = true;
-        if (failure === 'approval' && path === '/environments/staging')
-          value.protection_rules.push({ type: 'required_reviewers', reviewers: [] });
-        if (failure === 'production-approval' && path === '/environments/production')
-          value.protection_rules.push({ type: 'required_reviewers', reviewers: [] });
-        if (
-          failure === 'branch' &&
-          path.startsWith('/environments/production/deployment-branch-policies?')
-        )
-          value.branch_policies[0].name = 'staging';
-        if (failure === 'reviewer' && path === '/environments/production-operations')
-          value.protection_rules = [];
+        if (path === `/environments/${environment}`) {
+          if (failure === 'bypass') value.can_admins_bypass = true;
+          if (failure === 'approval')
+            value.protection_rules.push({ type: 'required_reviewers', reviewers: [] });
+          if (failure === 'wait-timer')
+            value.protection_rules.push({ type: 'wait_timer', wait_timer: 30 });
+        }
+        if (path.startsWith(`/environments/${environment}/deployment-branch-policies?`)) {
+          if (failure === 'branch') value.branch_policies[0].name = 'release/*';
+          if (failure === 'tag') value.branch_policies[0].type = 'tag';
+          if (failure === 'extra-branch')
+            value.branch_policies.push({ id: 99, name: 'release/*', type: 'branch' });
+        }
       }
       return value;
     };
     await assert.rejects(
-      configure({ api, reviewer: 'owner', apply: true }),
+      configure({ api, apply: true }),
       /Environment .* protection read-back failed/,
     );
     assert.equal(

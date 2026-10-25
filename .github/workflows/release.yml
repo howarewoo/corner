@@ -26,10 +26,9 @@ on:
       rollback_deployment_id:
         description: Explicit completed qualified production deployment ID to recover
         type: string
-      manual_review:
-        description: 'Nonsecret JSON: sourceSha, reviewer, affectedFlow, desktopWidth, phoneWidth, keyboardFocus:"passed", and stagingReview:{sourceSha,deploymentId} or hotfixReason'
+      completion_deployment_id:
+        description: Exact current deployed/public-passed receipt to retry checks without redeploying; leave other operation inputs empty
         type: string
-        required: false
 
 permissions:
   contents: read
@@ -41,7 +40,7 @@ env:
 
 jobs:
   deploy:
-    if: github.ref == 'refs/heads/main' && inputs.automatic
+    if: github.ref == 'refs/heads/main' && inputs.automatic && !inputs.completion_deployment_id
     runs-on: ubuntu-latest
     timeout-minutes: 25
     environment: production
@@ -91,7 +90,7 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
 
   plan:
-    if: github.ref == 'refs/heads/main' && !inputs.automatic
+    if: github.ref == 'refs/heads/main' && !inputs.automatic && !inputs.completion_deployment_id
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -121,7 +120,7 @@ jobs:
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
-      - name: Verify provenance and qualify exact artifacts before approval
+      - name: Verify provenance and qualify exact artifacts
         id: plan
         run: node scripts/release.mjs plan
         env:
@@ -132,14 +131,13 @@ jobs:
           RELEASE_PROVISIONED_VERSION_ID: ${{ inputs.provisioned_version_id }}
           RELEASE_PRODUCTION_ADOPTION_HOST: ${{ inputs.production_adoption_host }}
           RELEASE_ROLLBACK_ID: ${{ inputs.rollback_deployment_id }}
-          RELEASE_MANUAL_REVIEW: ${{ inputs.manual_review }}
 
   promote:
     needs: plan
-    if: github.ref == 'refs/heads/main' && !inputs.automatic
+    if: github.ref == 'refs/heads/main' && !inputs.automatic && !inputs.completion_deployment_id
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    environment: production-operations
+    environment: production
     concurrency:
       group: corner-production-effects
       cancel-in-progress: false
@@ -168,7 +166,7 @@ jobs:
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
-      - name: Recheck approved baseline, migrate, and promote exact corner Worker
+      - name: Recheck planned baseline, migrate, and promote exact corner Worker
         run: node scripts/release.mjs promote
         env:
           GH_TOKEN: ${{ github.token }}
@@ -176,5 +174,36 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
           CORNER_WORKER_SECRETS_JSON: ${{ secrets.CORNER_WORKER_SECRETS_JSON }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+
+  complete:
+    if: github.ref == 'refs/heads/main' && !inputs.automatic && inputs.completion_deployment_id && !inputs.run_id && !inputs.source_sha && !inputs.bootstrap && !inputs.provisioned_version_id && !inputs.production_adoption_host && !inputs.rollback_deployment_id
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    concurrency:
+      group: corner-production-effects
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      actions: read
+      deployments: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '>=24.15.0 <25'
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - name: Recheck exact deployed artifact, schema journal, live version, and public health
+        run: node scripts/release.mjs complete
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_DEPLOYMENT_ID: ${{ inputs.completion_deployment_id }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
