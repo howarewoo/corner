@@ -13,7 +13,6 @@ import { loadCiArtifact } from './ci-artifact.mjs';
 const sha = /^[a-f0-9]{40}$/;
 const digest = /^[a-f0-9]{64}$/;
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
-const databaseHost = /^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/;
 const phases = new Set(['deployed', 'public-passed', 'complete']);
 const hash = (value) => createHash('sha256').update(value).digest('hex');
 class ReleaseError extends Error {}
@@ -223,17 +222,21 @@ export class GitHub {
         description: `Corner ${payload.phase}`,
       }),
     });
-    id(record.id);
-    await this.api(`deployments/${record.id}/statuses`, {
+    await this.status(record, state);
+    return record;
+  }
+  async status(record, state) {
+    const payload = record.payload;
+    await this.api(`deployments/${id(record.id)}/statuses`, {
       method: 'POST',
       body: JSON.stringify({
         state,
-        auto_inactive: false,
+        auto_inactive:
+          state === 'success' && ['planned', 'schema-attempted'].includes(payload.phase),
         environment_url: payload.origin,
         description: `Corner ${payload.phase}`,
       }),
     });
-    return record;
   }
   async artifact(reference, destination) {
     releaseTarget();
@@ -245,6 +248,42 @@ export class GitHub {
       destination,
     });
   }
+}
+
+async function runDeployment(github, record, operation, successState = 'success') {
+  let result;
+  try {
+    result = await operation();
+  } catch (error) {
+    try {
+      await github.status(record, 'failure');
+    } catch (statusError) {
+      throw new AggregateError(
+        [error, statusError],
+        'Release stage and status finalization failed',
+      );
+    }
+    throw error;
+  }
+  await github.status(record, successState);
+  return result;
+}
+
+async function recordCompletion(github, receipt) {
+  const publicRecord = await github.record({ ...receipt, phase: 'public-passed' }, 'success');
+  const completed = await github.record(
+    { ...receipt, phase: 'complete', publicDeploymentId: String(publicRecord.id) },
+    'success',
+  );
+  await github.status(publicRecord, 'inactive');
+  await github.status(
+    {
+      id: receipt.planId,
+      payload: { phase: 'planned', origin: receipt.origin },
+    },
+    'inactive',
+  );
+  return completed;
 }
 async function assertForwardSource(github, previous, source) {
   if (!previous) return;
@@ -265,7 +304,6 @@ export async function plan({
   sourceSha,
   bootstrap = false,
   provisionedVersionId = null,
-  productionAdoptionHost = null,
   rollbackId,
   configuration,
   automatic = false,
@@ -276,7 +314,7 @@ export async function plan({
   const target = releaseTarget();
   if (automatic) {
     need(
-      !bootstrap && !rollbackId && provisionedVersionId === null && productionAdoptionHost === null,
+      !bootstrap && !rollbackId && provisionedVersionId === null,
       'Automatic production cannot bootstrap, adopt, or roll back a Worker',
     );
     await assertCurrentMain(github, sourceSha);
@@ -286,20 +324,8 @@ export async function plan({
       (bootstrap && typeof provisionedVersionId === 'string' && uuid.test(provisionedVersionId)),
     'A provisioned Worker version pin is valid only for explicit bootstrap',
   );
-  need(
-    productionAdoptionHost === null ||
-      (!automatic && bootstrap && !rollbackId && provisionedVersionId !== null &&
-        typeof productionAdoptionHost === 'string' && databaseHost.test(productionAdoptionHost)),
-    'Production database adoption requires explicit bootstrap, a Worker version pin and an exact host',
-  );
-  if (productionAdoptionHost) await assertCurrentMain(github, sourceSha);
   const baseline = await github.baseline();
   const schemaState = await github.schema();
-  if (bootstrap && schemaState?.payload.productionAdoptionHost)
-    need(
-      schemaState.payload.productionAdoptionHost === productionAdoptionHost,
-      'Production adoption retry must preserve its attempted database host pin',
-    );
   const schemaReference = schemaState?.payload ?? baseline?.payload;
   need(
     bootstrap ? !baseline : baseline,
@@ -323,10 +349,7 @@ export async function plan({
       'Rollback must reference this environment release ledger',
     );
     validateReceipt(target.payload);
-    need(
-      target.payload.phase === 'complete',
-      'Rollback target lacks completed qualification',
-    );
+    need(target.payload.phase === 'complete', 'Rollback target lacks completed qualification');
     reference = target.payload;
     candidate = await github.artifact(reference, join(work, 'candidate'));
     const current = await github.artifact(schemaReference, join(work, 'current'));
@@ -376,8 +399,8 @@ export async function plan({
     if (schemaState) {
       const currentSchema = await github.artifact(schemaReference, join(work, 'schema'));
       need(
-        currentSchema.manifest.migrations.every(
-          (migration, index) => isDeepStrictEqual(candidate.manifest.migrations[index], migration),
+        currentSchema.manifest.migrations.every((migration, index) =>
+          isDeepStrictEqual(candidate.manifest.migrations[index], migration),
         ),
         'Candidate does not preserve CURRENT attempted migration history',
       );
@@ -413,7 +436,6 @@ export async function plan({
     bootstrap,
     automatic,
     provisionedVersionId,
-    productionAdoptionHost,
     rollback: Boolean(rollbackId),
     rollbackVersionId: rollbackId ? reference.versionId : null,
     qualification,
@@ -423,7 +445,7 @@ export async function plan({
     executionRunId: process.env.GITHUB_RUN_ID,
     executionRunAttempt: process.env.GITHUB_RUN_ATTEMPT,
   };
-  const record = await github.record(payload);
+  const record = await github.record(payload, 'success');
   if (process.env.GITHUB_STEP_SUMMARY)
     await writeFile(
       process.env.GITHUB_STEP_SUMMARY,
@@ -557,7 +579,10 @@ export async function validateLiveRollback(
       'CURRENT artifact lacks native migration history validation',
     );
     await migrationHistory(
-      connection, await currentSchema(connection), current.manifest.migrations, true,
+      connection,
+      await currentSchema(connection),
+      current.manifest.migrations,
+      true,
     );
     let after = null;
     for (;;) {
@@ -617,12 +642,12 @@ export async function promote({
   );
   need(p.automatic === automatic, 'Plan release mode differs from this execution');
   const assertCurrentCandidate = async () => {
-    if (automatic || p.productionAdoptionHost) await assertCurrentMain(github, p.sourceSha);
+    if (automatic) await assertCurrentMain(github, p.sourceSha);
   };
   await assertCurrentCandidate();
   if (automatic)
     need(
-      !p.bootstrap && !p.rollback && p.productionAdoptionHost == null,
+      !p.bootstrap && !p.rollback,
       'Automatic production cannot execute an operator release plan',
     );
   const config = validateConfiguration(configuration);
@@ -642,10 +667,6 @@ export async function promote({
         (p.bootstrap &&
           typeof p.provisionedVersionId === 'string' &&
           uuid.test(p.provisionedVersionId))) &&
-      (p.productionAdoptionHost == null ||
-        (!automatic && p.bootstrap && !p.rollback && !baseline &&
-          p.provisionedVersionId != null && typeof p.productionAdoptionHost === 'string' &&
-          databaseHost.test(p.productionAdoptionHost))) &&
       typeof p.rollback === 'boolean',
     'Invalid persisted release plan',
   );
@@ -704,21 +725,6 @@ export async function promote({
     );
   }
   need(process.env.DATABASE_URL_UNPOOLED, 'Protected unpooled migration connection is required');
-  if (p.productionAdoptionHost) {
-    const direct = new URL(process.env.DATABASE_URL_UNPOOLED);
-    const pooled = new URL(bootstrapSecrets.DATABASE_URL);
-    need(
-      ['postgres:', 'postgresql:'].includes(direct.protocol) &&
-        direct.hostname === p.productionAdoptionHost && !direct.hostname.includes('-pooler.') &&
-        [direct, pooled].every(url =>
-          ['postgres:', 'postgresql:'].includes(url.protocol) &&
-          [...url.searchParams.keys()].every(key => key === 'sslmode' || key === 'channel_binding')) &&
-        pooled.hostname.replace(/-pooler(?=\.)/, '') === direct.hostname &&
-        (pooled.port || '5432') === (direct.port || '5432') &&
-        pooled.pathname === direct.pathname && pooled.username === direct.username,
-      'Production adoption database destinations differ from the approved host',
-    );
-  }
   const candidate = await github.artifact(p, join(work, 'candidate'));
   need(
     candidate.digest === p.candidateDigest &&
@@ -842,16 +848,17 @@ export async function promote({
     }
     await assertCurrentCandidate();
     // Journal before migration: even a lost response cannot hide a possible schema advance.
-    await github.record({ ...p, phase: 'schema-attempted', planId: String(prepared.id) });
-    execute(
-      process.execPath,
-      [join(candidate.directory, candidate.manifest.migrationEntry), '--apply',
-        ...(p.productionAdoptionHost ? ['--adopt-production'] : [])],
-      { cwd: candidate.directory, env: {
-        ...process.env,
-        PRODUCTION_ADOPTION_MODE: p.productionAdoptionHost ? 'pinned-bootstrap' : '',
-        PRODUCTION_ADOPTION_HOST: p.productionAdoptionHost ?? '',
-      } },
+    const schemaAttempt = await github.record({
+      ...p,
+      phase: 'schema-attempted',
+      planId: String(prepared.id),
+    });
+    await runDeployment(github, schemaAttempt, () =>
+      execute(
+        process.execPath,
+        [join(candidate.directory, candidate.manifest.migrationEntry), '--apply'],
+        { cwd: candidate.directory, env: process.env },
+      ),
     );
     await reverify();
     if (p.bootstrap) {
@@ -883,7 +890,7 @@ export async function promote({
   assertBaseline(p.baselineId, latest?.id);
   await assertCurrentCandidate();
   if (!p.bootstrap) wrangler(['versions', 'deploy', `${versionId}@100%`, ...common, '--yes']);
-  let receipt = {
+  const receipt = {
     ...p,
     phase: 'deployed',
     versionId,
@@ -891,21 +898,23 @@ export async function promote({
     rollbackCompatibility: p.rollback ? p.qualification : null,
     qualification: p.rollback ? p.targetQualification : p.qualification,
   };
-  await github.record(receipt);
-  await reverify();
-  const deployments = await cf(`workers/scripts/${target.workerName}/deployments`);
-  need(
-    deployments.deployments?.[0]?.versions?.length === 1 &&
-      deployments.deployments[0].versions[0].version_id === versionId &&
-      deployments.deployments[0].versions[0].percentage === 100,
-    'Cloudflare traffic does not match approved Worker',
-  );
-  await checkPublic(p.origin, versionId);
-  receipt = { ...receipt, phase: 'public-passed' };
-  const publicRecord = await github.record(receipt);
-  return github.record(
-    { ...receipt, phase: 'complete', publicDeploymentId: String(publicRecord.id) },
-    'success',
+  const deployed = await github.record(receipt);
+  return runDeployment(
+    github,
+    deployed,
+    async () => {
+      await reverify();
+      const deployments = await cf(`workers/scripts/${target.workerName}/deployments`);
+      need(
+        deployments.deployments?.[0]?.versions?.length === 1 &&
+          deployments.deployments[0].versions[0].version_id === versionId &&
+          deployments.deployments[0].versions[0].percentage === 100,
+        'Cloudflare traffic does not match approved Worker',
+      );
+      await checkPublic(p.origin, versionId);
+      return recordCompletion(github, receipt);
+    },
+    'inactive',
   );
 }
 export async function complete({
@@ -918,7 +927,8 @@ export async function complete({
 }) {
   const current = await github.baseline();
   need(
-    current && String(current.id) === id(deploymentId) &&
+    current &&
+      String(current.id) === id(deploymentId) &&
       ['deployed', 'public-passed'].includes(current.payload.phase),
     'Completion requires the exact current incomplete deployment',
   );
@@ -930,11 +940,13 @@ export async function complete({
   );
   const schema = await github.schema();
   if (p.rollback) assertBaseline(p.schemaId, schema?.id);
-  else need(
-    schema && schema.payload.planId === p.planId &&
-      schema.payload.candidateDigest === p.candidateDigest,
-    'Completion schema journal differs from the deployed release',
-  );
+  else
+    need(
+      schema &&
+        schema.payload.planId === p.planId &&
+        schema.payload.candidateDigest === p.candidateDigest,
+      'Completion schema journal differs from the deployed release',
+    );
   const candidate = await github.artifact(p, join(work, 'candidate'));
   need(
     candidate.digest === p.candidateDigest &&
@@ -950,15 +962,18 @@ export async function complete({
       'Cloudflare traffic does not match the incomplete release',
     );
   };
-  await assertLive();
-  await checkPublic(p.origin, p.versionId);
-  assertBaseline(current.id, (await github.baseline())?.id);
-  assertBaseline(schema?.id, (await github.schema())?.id);
-  await assertLive();
-  const publicRecord = await github.record({ ...p, phase: 'public-passed' });
-  return github.record(
-    { ...p, phase: 'complete', publicDeploymentId: String(publicRecord.id) },
-    'success',
+  return runDeployment(
+    github,
+    current,
+    async () => {
+      await assertLive();
+      await checkPublic(p.origin, p.versionId);
+      assertBaseline(current.id, (await github.baseline())?.id);
+      assertBaseline(schema?.id, (await github.schema())?.id);
+      await assertLive();
+      return recordCompletion(github, p);
+    },
+    'inactive',
   );
 }
 export async function deploy(options) {
@@ -1004,7 +1019,6 @@ async function main() {
         sourceSha: process.env.RELEASE_SOURCE_SHA,
         bootstrap: process.env.RELEASE_BOOTSTRAP === 'true',
         provisionedVersionId: process.env.RELEASE_PROVISIONED_VERSION_ID || undefined,
-        productionAdoptionHost: process.env.RELEASE_PRODUCTION_ADOPTION_HOST || undefined,
         rollbackId: process.env.RELEASE_ROLLBACK_ID || undefined,
         configuration: process.env[`${target.prefix}_CONFIG_JSON`],
         work,

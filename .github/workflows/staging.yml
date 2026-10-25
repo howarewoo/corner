@@ -15,14 +15,6 @@ on:
         description: Exact current staging source SHA
         type: string
         required: true
-      adoption_receipt:
-        description: One-time staging cutover only; exact currently serving legacy deployment receipt ID
-        type: string
-        required: false
-      adoption_host:
-        description: One-time staging cutover only; exact direct database hostname
-        type: string
-        required: false
 
 permissions:
   contents: read
@@ -80,8 +72,6 @@ jobs:
         env:
           PREVIEW_RUN_ID: ${{ github.event.workflow_run.id || inputs.run_id }}
           PREVIEW_SOURCE_SHA: ${{ github.event.workflow_run.head_sha || inputs.source_sha }}
-          PREVIEW_ADOPTION_RECEIPT: ${{ inputs.adoption_receipt }}
-          PREVIEW_ADOPTION_HOST: ${{ inputs.adoption_host }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
           CORNER_WORKER_SECRETS_JSON: ${{ secrets.CORNER_WORKER_SECRETS_JSON }}

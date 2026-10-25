@@ -14,9 +14,15 @@ const instance = 'e'.repeat(32);
 const origin = 'http://127.0.0.1:45900';
 const authUrl = 'https://127.0.0.1:45901/neondb/auth';
 const config: Config = {
-  ...neonTestConfig, origin, host: '127.0.0.1', port: 45900, deployment: 'local',
-  dataDir: '/unused', neonAuthBaseUrl: authUrl,
-  authSecret: 'synthetic-local-fixture-test-secret-over-32-characters', tokenEncryptionKey: Buffer.alloc(32, 11),
+  ...neonTestConfig,
+  origin,
+  host: '127.0.0.1',
+  port: 45900,
+  deployment: 'local',
+  dataDir: '/unused',
+  neonAuthBaseUrl: authUrl,
+  authSecret: 'synthetic-local-fixture-test-secret-over-32-characters',
+  tokenEncryptionKey: Buffer.alloc(32, 11),
 };
 
 test('local seeding recovers lost signup/import acknowledgements and never overwrites later edits', async () => {
@@ -27,40 +33,66 @@ test('local seeding recovers lost signup/import acknowledgements and never overw
     await database.query('CREATE TABLE corner_local_identity (instance TEXT PRIMARY KEY)');
     await database.query('INSERT INTO corner_local_identity VALUES ($1)', [instance]);
     await local.initializeLocalDatabase(database, instance);
-    await assert.rejects(local.initializeLocalDatabase(database, 'wrong-owner'), /identity does not match/);
+    await assert.rejects(
+      local.initializeLocalDatabase(database, 'wrong-owner'),
+      /identity does not match/,
+    );
     const options = local.localAuthOptions(database, authUrl, origin, config.authSecret);
     await (await getMigrations(options)).runMigrations();
     const managed = betterAuth(options);
     await managed.$context;
     const store = new WorkspaceStore(database);
     const app = createApp({
-      config, store,
+      config,
+      store,
       auth: createAuth(config, (input, init) => managed.handler(new Request(String(input), init))),
     });
-    const input = { database, managed, app, origin, authUrl, instance, initialState: createInitialState, now: new Date('2026-10-21T12:00:00Z') };
+    const input = {
+      database,
+      managed,
+      app,
+      origin,
+      authUrl,
+      instance,
+      initialState: createInitialState,
+      now: new Date('2026-10-21T12:00:00Z'),
+    };
     let loseSignup = true;
-    await assert.rejects(local.seedLocalUsers({
-      ...input, managed: { handler: async (request: Request) => {
-        const response = await managed.handler(request);
-        if (loseSignup && request.url.endsWith('/sign-up/email') && response.ok) {
-          loseSignup = false;
-          throw new Error('Lost signup acknowledgement');
-        }
-        return response;
-      } },
-    }), /Lost signup acknowledgement/);
+    await assert.rejects(
+      local.seedLocalUsers({
+        ...input,
+        managed: {
+          handler: async (request: Request) => {
+            const response = await managed.handler(request);
+            if (loseSignup && request.url.endsWith('/sign-up/email') && response.ok) {
+              loseSignup = false;
+              throw new Error('Lost signup acknowledgement');
+            }
+            return response;
+          },
+        },
+      }),
+      /Lost signup acknowledgement/,
+    );
     let loseImport = true;
-    await assert.rejects(local.seedLocalUsers({
-      ...input, app: { fetch: async (request: Request) => {
-        const response = await app.fetch(request);
-        if (loseImport && request.url.endsWith('/workspace/import') && response.ok) {
-          loseImport = false;
-          throw new Error('Lost import acknowledgement');
-        }
-        return response;
-      } },
-    }), /Lost import acknowledgement/);
-    const records = (await database.query('SELECT * FROM corner_local_seeds ORDER BY fixture')).rows;
+    await assert.rejects(
+      local.seedLocalUsers({
+        ...input,
+        app: {
+          fetch: async (request: Request) => {
+            const response = await app.fetch(request);
+            if (loseImport && request.url.endsWith('/workspace/import') && response.ok) {
+              loseImport = false;
+              throw new Error('Lost import acknowledgement');
+            }
+            return response;
+          },
+        },
+      }),
+      /Lost import acknowledgement/,
+    );
+    const records = (await database.query('SELECT * FROM corner_local_seeds ORDER BY fixture'))
+      .rows;
     const demo = records.find((row) => row.fixture === 'demo');
     const empty = records.find((row) => row.fixture === 'empty');
     assert.notEqual(demo.user_id, empty.user_id);
@@ -72,7 +104,8 @@ test('local seeding recovers lost signup/import acknowledgements and never overw
     assert.equal(populated.state.training.sessions[0].exercises[0].sets[0].completed, true);
     assert.equal(populated.state.training.checkIns[0].date, '2026-10-07');
     await store.mutate(demo.user_id, 'local-development-user-edit', {
-      type: 'recipe.favorite', data: { id: 'local-oats', favorite: false },
+      type: 'recipe.favorite',
+      data: { id: 'local-oats', favorite: false },
     });
     await local.seedLocalUsers({ ...input, now: new Date('2026-10-25T12:00:00Z') });
     assert.equal((await store.read(demo.user_id)).state.recipes[0].favorite, false);
@@ -82,7 +115,16 @@ test('local seeding recovers lost signup/import acknowledgements and never overw
     await local.seedLocalUsers({ ...input, now: new Date('2026-11-01T12:00:00Z') });
     assert.equal((await store.read(demo.user_id)).state.recipes[0].favorite, false);
     assert.equal((await store.read(demo.user_id)).revision, 2);
-    assert.equal((await database.query('SELECT count(*)::int AS count FROM "user"')).rows[0].count, 2);
-    assert.equal((await database.query('SELECT complete FROM corner_local_seeds WHERE fixture = $1', ['demo'])).rows[0].complete, true);
-  } finally { await closeTestDatabase(database); }
+    assert.equal(
+      (await database.query('SELECT count(*)::int AS count FROM "user"')).rows[0].count,
+      2,
+    );
+    assert.equal(
+      (await database.query('SELECT complete FROM corner_local_seeds WHERE fixture = $1', ['demo']))
+        .rows[0].complete,
+      true,
+    );
+  } finally {
+    await closeTestDatabase(database);
+  }
 });

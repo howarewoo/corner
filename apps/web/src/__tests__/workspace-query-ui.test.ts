@@ -17,7 +17,9 @@ const snapshot = (revision: number) =>
   ({ revision, state: {}, aiAvailable: false }) as StateResponse;
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((settle) => { resolve = settle; });
+  const promise = new Promise<T>((settle) => {
+    resolve = settle;
+  });
   return { promise, resolve };
 }
 

@@ -33,7 +33,10 @@ const formatAmount = (value: number, digits = 1) =>
 export default function FoodEstimator({ disabled, aiAvailable, onApply }: FoodEstimatorProps) {
   const generation = useRef(sessionLifetime()).current;
   const estimateMutation = useMutation({
-    mutationFn: ({ input, signal }: {
+    mutationFn: ({
+      input,
+      signal,
+    }: {
       input: Parameters<typeof rpc.ai.estimateFood>[0];
       signal: AbortSignal;
     }) => scoped(() => rpc.ai.estimateFood(input, { signal }), generation),
@@ -108,8 +111,16 @@ export default function FoodEstimator({ disabled, aiAvailable, onApply }: FoodEs
     }, 60_000);
 
     try {
-      const payload = await estimateMutation.mutateAsync({ input: intent, signal: controller.signal });
-      if (generation !== sessionLifetime() || sequence !== requestSequence.current || controller.signal.aborted) return;
+      const payload = await estimateMutation.mutateAsync({
+        input: intent,
+        signal: controller.signal,
+      });
+      if (
+        generation !== sessionLifetime() ||
+        sequence !== requestSequence.current ||
+        controller.signal.aborted
+      )
+        return;
       requestIntent.current = null;
       setResult(payload.estimate);
     } catch (failure) {

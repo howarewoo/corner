@@ -29,6 +29,9 @@ export type CornerAppProps = {
   onSignOut?: () => void;
 };
 
-export type Mutate = (mutation: WorkspaceMutationInput['mutation'], success?: string) => Promise<boolean>;
+export type Mutate = (
+  mutation: WorkspaceMutationInput['mutation'],
+  success?: string,
+) => Promise<boolean>;
 export type Notify = (message: string, error?: boolean) => void;
 export type Confirmation = { title: string; description: string; confirm: () => Promise<boolean> };

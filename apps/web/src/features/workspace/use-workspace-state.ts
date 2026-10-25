@@ -21,13 +21,13 @@ export function useWorkspaceState({
       writeWorkspace(() => rpc.workspace.mutate(input), generation),
     retry: false,
   });
-  const state = preview ? previewState : workspace.data?.state ?? initialState;
-  const revision = preview ? initialRevision : workspace.data?.revision ?? initialRevision;
+  const state = preview ? previewState : (workspace.data?.state ?? initialState);
+  const revision = preview ? initialRevision : (workspace.data?.revision ?? initialRevision);
   const [notifications] = useState(() => createToastManager());
   const [busy, setBusy] = useState(false);
   const loading = !preview && workspace.isFetching;
   const hydrated = preview || Boolean(workspace.data);
-  const loadError = preview ? null : workspace.error?.message ?? null;
+  const loadError = preview ? null : (workspace.error?.message ?? null);
   const aiAvailable = !preview && Boolean(workspace.data?.aiAvailable);
   const mutationLock = useRef(false);
   const notify = useCallback(

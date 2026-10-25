@@ -101,7 +101,9 @@ function capture(chunk) {
   // response data into CI output. Only bounded readiness markers are retained.
   captured = (captured + String(chunk)).slice(-64 * 1024);
   for (const task of tasks) if (captured.includes(`${task}:dev:`)) seenTasks.add(task);
-  for (const match of captured.matchAll(/(@packages\/[\w-]+):dev:[^\r\n]*Found 0 errors\. Watching for file changes\./g))
+  for (const match of captured.matchAll(
+    /(@packages\/[\w-]+):dev:[^\r\n]*Found 0 errors\. Watching for file changes\./g,
+  ))
     if (compilerTasks.includes(match[1])) compiledTasks.add(match[1]);
   apiStarted ||= captured.includes(`Development API listens at http://127.0.0.1:${apiPort};`);
 }
@@ -171,7 +173,11 @@ async function ready() {
   while (Date.now() < deadline) {
     interrupted.signal.throwIfAborted();
     if (childFinished) throw new Error('The development stack exited before it was ready.');
-    if (apiStarted && seenTasks.size === tasks.length && compiledTasks.size === compilerTasks.length) {
+    if (
+      apiStarted &&
+      seenTasks.size === tasks.length &&
+      compiledTasks.size === compilerTasks.length
+    ) {
       try {
         const response = await call('/api/health', {
           timeout: Math.max(1, Math.min(1000, deadline - Date.now())),

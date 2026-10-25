@@ -2,5 +2,5 @@
   "$schema": "./node_modules/oxfmt/configuration_schema.json",
   "singleQuote": true,
   "sortPackageJson": false,
-  "ignorePatterns": ["**/.generated/**"]
+  "ignorePatterns": ["**/.generated/**", "apps/server/migrations/**"]
 }

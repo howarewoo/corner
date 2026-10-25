@@ -97,10 +97,15 @@ export default function AccountAccess({
   const [password, setPassword] = useState('');
   const [confirmation, setConfirmation] = useState('');
   const [verificationCode, setVerificationCode] = useState('');
-  const policyQuery = useQuery({ queryKey: ['policy'], queryFn: ({ signal }) => rpc.account.policy(undefined, { signal }) });
+  const policyQuery = useQuery({
+    queryKey: ['policy'],
+    queryFn: ({ signal }) => rpc.account.policy(undefined, { signal }),
+  });
   const policy = policyQuery.data ?? null;
   const policyLoading = policyQuery.isFetching;
-  const policyError = policyQuery.error ? 'Account options could not be loaded. Please try again.' : '';
+  const policyError = policyQuery.error
+    ? 'Account options could not be loaded. Please try again.'
+    : '';
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -115,7 +120,9 @@ export default function AccountAccess({
   const onSignedInRef = useRef(onSignedIn);
   onSignedInRef.current = onSignedIn;
 
-  const loadPolicy = useCallback(async () => { await policyQuery.refetch(); }, [policyQuery.refetch]);
+  const loadPolicy = useCallback(async () => {
+    await policyQuery.refetch();
+  }, [policyQuery.refetch]);
 
   useEffect(() => {
     active.current = true;

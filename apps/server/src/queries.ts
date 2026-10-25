@@ -8,5 +8,8 @@ export function createQueries(client: Pool | PoolClient): Database {
 }
 
 export type Database = NodePgDatabase<typeof schema>;
-export type Transaction = NodePgTransaction<typeof schema, ExtractTablesWithRelations<typeof schema>>;
+export type Transaction = NodePgTransaction<
+  typeof schema,
+  ExtractTablesWithRelations<typeof schema>
+>;
 export type QueryConnection = Database | Transaction;

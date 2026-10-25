@@ -182,8 +182,10 @@ export class WorkspaceStore {
   ): Promise<WorkspaceSnapshot> {
     userSchema.parse(userId);
     const row = (
-      await connection.select({ data: workspaceState.data, version: workspaceState.version })
-        .from(workspaceState).where(eq(workspaceState.user_id, userId))
+      await connection
+        .select({ data: workspaceState.data, version: workspaceState.version })
+        .from(workspaceState)
+        .where(eq(workspaceState.user_id, userId))
     )[0];
     if (!row) return { state: createInitialState(name), revision: 0 };
     try {
@@ -304,9 +306,12 @@ export class WorkspaceStore {
       // Also serializes the first mutation, when no workspace row exists yet.
       await connection.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${userId}, 0))`);
       const receipt = (
-        await connection.select({ payload_hash: mutationReceipts.payload_hash })
+        await connection
+          .select({ payload_hash: mutationReceipts.payload_hash })
           .from(mutationReceipts)
-          .where(and(eq(mutationReceipts.user_id, userId), eq(mutationReceipts.request_id, requestId)))
+          .where(
+            and(eq(mutationReceipts.user_id, userId), eq(mutationReceipts.request_id, requestId)),
+          )
       )[0];
       if (receipt) {
         if (receipt.payload_hash !== hash)
@@ -336,21 +341,41 @@ export class WorkspaceStore {
       const revision = current.revision + 1;
       const now = new Date().toISOString();
       const data = JSON.stringify(next);
-      await connection.insert(workspaceState).values({
-        user_id: userId, data, version: revision, updated_at: now,
-      }).onConflictDoUpdate({
-        target: workspaceState.user_id,
-        set: { data, version: revision, updated_at: now },
-      });
+      await connection
+        .insert(workspaceState)
+        .values({
+          user_id: userId,
+          data,
+          version: revision,
+          updated_at: now,
+        })
+        .onConflictDoUpdate({
+          target: workspaceState.user_id,
+          set: { data, version: revision, updated_at: now },
+        });
       await connection.insert(mutationReceipts).values({
-        user_id: userId, request_id: requestId, payload_hash: hash, revision, created_at: now,
+        user_id: userId,
+        request_id: requestId,
+        payload_hash: hash,
+        revision,
+        created_at: now,
       });
-      await connection.delete(mutationReceipts).where(and(
-        eq(mutationReceipts.user_id, userId),
-        inArray(mutationReceipts.request_id, connection.select({ request_id: mutationReceipts.request_id })
-          .from(mutationReceipts).where(eq(mutationReceipts.user_id, userId))
-          .orderBy(desc(mutationReceipts.revision)).offset(1000)),
-      ));
+      await connection
+        .delete(mutationReceipts)
+        .where(
+          and(
+            eq(mutationReceipts.user_id, userId),
+            inArray(
+              mutationReceipts.request_id,
+              connection
+                .select({ request_id: mutationReceipts.request_id })
+                .from(mutationReceipts)
+                .where(eq(mutationReceipts.user_id, userId))
+                .orderBy(desc(mutationReceipts.revision))
+                .offset(1000),
+            ),
+          ),
+        );
       await onApplied?.(connection);
       return { state: next, revision };
     });

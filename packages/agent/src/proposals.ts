@@ -1,7 +1,16 @@
 import { z } from 'zod';
-import { DateSchema, MacrosSchema, PlanEntrySchema, RecipeSchema } from '@packages/nutrition/schemas';
+import {
+  DateSchema,
+  MacrosSchema,
+  PlanEntrySchema,
+  RecipeSchema,
+} from '@packages/nutrition/schemas';
 import type { Recipe } from '@packages/nutrition/types';
-import { WorkoutSessionSchema, WorkoutTemplateSchema, hasRecordedData } from '@packages/training/workouts';
+import {
+  WorkoutSessionSchema,
+  WorkoutTemplateSchema,
+  hasRecordedData,
+} from '@packages/training/workouts';
 import { getCatalogExercise } from '@packages/training/exercise-catalog';
 import { applyMutation } from '@packages/workspace/mutations';
 import type { AppState, Mutation } from '@packages/workspace/types';

@@ -65,14 +65,12 @@ function rpcError(error: unknown): ORPCError<string, unknown> {
       defined: true,
       data: {
         code: 'INVALID_INPUT',
-        details: issues
-          .slice(0, 4)
-          .map((issue) => ({
-            field: (issue.path ?? [])
-              .map((part) => (typeof part === 'object' ? part.key : part))
-              .join('.'),
-            message: issue.message,
-          })),
+        details: issues.slice(0, 4).map((issue) => ({
+          field: (issue.path ?? [])
+            .map((part) => (typeof part === 'object' ? part.key : part))
+            .join('.'),
+          message: issue.message,
+        })),
       },
     });
   }

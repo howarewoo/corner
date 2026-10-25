@@ -112,12 +112,7 @@ export async function configure({ api, apply = false }) {
       throw new Error(
         `Required branch ${branch} is missing. Create the persistent ${branch} branch explicitly before configuration; this helper never creates branches.`,
       );
-    for (const path of [
-      'ci.yml',
-      'staging.yml',
-      'production.yml',
-      'release.yml',
-    ]) {
+    for (const path of ['ci.yml', 'staging.yml', 'production.yml', 'release.yml']) {
       const content = await api(`/contents/.github/workflows/${path}?ref=${ref.object.sha}`, {
         missing: true,
       });

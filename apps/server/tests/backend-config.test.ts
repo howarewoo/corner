@@ -95,7 +95,11 @@ test('development refuses cloud database/Auth endpoints and routing overrides be
     { NEON_AUTH_BASE_URL: undefined },
   ]) {
     assert.throws(
-      () => loadConfig({ ...developmentEnvironment, CORNER_DATA_DIR: dataDir, ...override }, { development: true }),
+      () =>
+        loadConfig(
+          { ...developmentEnvironment, CORNER_DATA_DIR: dataDir, ...override },
+          { development: true },
+        ),
       /Development requires loopback PostgreSQL and Auth/,
     );
   }

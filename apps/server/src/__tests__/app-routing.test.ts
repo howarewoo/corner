@@ -54,11 +54,15 @@ test('implicit HEAD dispatch cannot expose public or protected GET endpoints', a
   const publicHead = await request('/api/health', { method: 'HEAD' });
   assert.equal(publicHead.status, 401);
   assert.equal(await publicHead.text(), '');
-  const signedHead = await request('/api/rpc/workspace/get', { method: 'HEAD', headers: { Cookie: cookie } });
+  const signedHead = await request('/api/rpc/workspace/get', {
+    method: 'HEAD',
+    headers: { Cookie: cookie },
+  });
   assert.equal(signedHead.status, 404);
   assert.equal(await signedHead.text(), '');
   assert.equal(
-    (await request('/api/rpc/account/policy', { method: 'HEAD', headers: { Cookie: cookie } })).status,
+    (await request('/api/rpc/account/policy', { method: 'HEAD', headers: { Cookie: cookie } }))
+      .status,
     404,
   );
 });
@@ -91,5 +95,8 @@ test('account proxy and exact paths do not broaden during route composition', as
   assert.equal((await readResponse(accountRoot)).code, 'NOT_FOUND');
   assert.equal((await request('/api/authentic')).status, 401);
   assert.equal((await request('/api/health/', { headers: { Cookie: cookie } })).status, 404);
-  assert.equal((await request('/api/rpc/workspace/%67et', { headers: { Cookie: cookie } })).status, 404);
+  assert.equal(
+    (await request('/api/rpc/workspace/%67et', { headers: { Cookie: cookie } })).status,
+    404,
+  );
 });

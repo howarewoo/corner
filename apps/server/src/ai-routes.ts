@@ -1,5 +1,9 @@
 import type { Principal } from './auth.js';
-import { SubscriptionProvider, SubscriptionError, type SubscriptionStatus } from './subscription.js';
+import {
+  SubscriptionProvider,
+  SubscriptionError,
+  type SubscriptionStatus,
+} from './subscription.js';
 
 export function connectionDTO(status: SubscriptionStatus) {
   return {
@@ -19,13 +23,20 @@ export function connectionDTO(status: SubscriptionStatus) {
 }
 
 /** OAuth keeps its browser redirect protocol rather than becoming an RPC procedure. */
-export async function subscriptionCallback(provider: SubscriptionProvider, principal: Principal, url: URL) {
+export async function subscriptionCallback(
+  provider: SubscriptionProvider,
+  principal: Principal,
+  url: URL,
+) {
   try {
     await provider.callback(principal.userId, url, principal.sessionId);
     await provider.models(principal.userId);
     return Response.redirect(new URL('/?ai=connected', url.origin), 303);
   } catch (error) {
-    const message = error instanceof SubscriptionError ? error.message : 'The connection could not be completed. Please connect again.';
+    const message =
+      error instanceof SubscriptionError
+        ? error.message
+        : 'The connection could not be completed. Please connect again.';
     const destination = new URL('/', url.origin);
     destination.searchParams.set('ai', 'error');
     destination.searchParams.set('message', message.slice(0, 500));

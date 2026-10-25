@@ -13,11 +13,7 @@ import {
 import type { AgentChange, AgentRun } from '@packages/agent/proposals';
 import type { AppState } from '@packages/workspace/types';
 import type { Macros, Recipe } from '@packages/nutrition/types';
-import type {
-  ExerciseTarget,
-  WorkoutSession,
-  WorkoutTemplate,
-} from '@packages/training/types';
+import type { ExerciseTarget, WorkoutSession, WorkoutTemplate } from '@packages/training/types';
 import {
   Alert,
   AlertDescription,
@@ -42,7 +38,15 @@ import {
 } from '@packages/ui';
 import { errorMessage } from './api';
 import { useMutation, useQuery, useQueries } from '@tanstack/react-query';
-import { rpc, scoped, useConnection, queryClient, privateKey, writeWorkspace, sessionLifetime } from './rpc';
+import {
+  rpc,
+  scoped,
+  useConnection,
+  queryClient,
+  privateKey,
+  writeWorkspace,
+  sessionLifetime,
+} from './rpc';
 import './agent.css';
 const number = (value: number) => value.toLocaleString(undefined, { maximumFractionDigits: 1 });
 const when = (value: string) =>
@@ -101,7 +105,12 @@ export function AgentConnection({
     setError(result.error ? errorMessage(result.error) : '');
     if (!result.error) onChangedRef.current?.();
   }, [connectionQuery.refetch]);
-  useEffect(() => () => { sequence.current += 1; }, []);
+  useEffect(
+    () => () => {
+      sequence.current += 1;
+    },
+    [],
+  );
   async function connect() {
     if (mutationGeneration !== sessionLifetime() || busy) return;
     const current = sequence.current;
@@ -555,16 +564,25 @@ export default function AgentPanel({
       writeWorkspace(() => rpc.agent.apply(input), mutationGeneration),
     retry: false,
   });
-  const historyQuery = useQuery({ queryKey: runsKey, queryFn: async ({ signal }) => {
-    const result = await scoped(() => rpc.agent.list(undefined, { signal }));
-    const previous = queryClient.getQueryData<AgentRun[]>(runsKey) ?? [];
-    return [
-      ...result.runs.map(run => latestRun(previous.find(item => item.id === run.id), run)),
-      ...previous.filter(run => !result.runs.some(incoming => incoming.id === run.id)),
-    ];
-  } });
+  const historyQuery = useQuery({
+    queryKey: runsKey,
+    queryFn: async ({ signal }) => {
+      const result = await scoped(() => rpc.agent.list(undefined, { signal }));
+      const previous = queryClient.getQueryData<AgentRun[]>(runsKey) ?? [];
+      return [
+        ...result.runs.map((run) =>
+          latestRun(
+            previous.find((item) => item.id === run.id),
+            run,
+          ),
+        ),
+        ...previous.filter((run) => !result.runs.some((incoming) => incoming.id === run.id)),
+      ];
+    },
+  });
   const runs = historyQuery.data ?? [];
-  const setRuns = (update: (current: AgentRun[]) => AgentRun[]) => queryClient.setQueryData<AgentRun[]>(runsKey, current => update(current ?? []));
+  const setRuns = (update: (current: AgentRun[]) => AgentRun[]) =>
+    queryClient.setQueryData<AgentRun[]>(runsKey, (current) => update(current ?? []));
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [prompt, setPrompt] = useState(initialPrompt);
   const [date, setDate] = useState(referenceDate);
@@ -585,7 +603,9 @@ export default function AgentPanel({
   }, [historyQuery.refetch, connectionQuery.refetch]);
   useEffect(() => {
     active.current = true;
-    return () => { active.current = false; };
+    return () => {
+      active.current = false;
+    };
   }, []);
   useEffect(() => {
     if (initialPrompt) {
@@ -594,18 +614,28 @@ export default function AgentPanel({
       textarea.current?.focus();
     }
   }, [initialPrompt]);
-  const runQueries = useQueries({ queries: runs.filter(isActive).map(run => ({
-    queryKey: [...privateKey('run'), run.id],
-    queryFn: async ({ signal }: { signal: AbortSignal }) => {
-      const result = await scoped(() => rpc.agent.get({ id: run.id }, { signal }));
-      setRuns(current => current.map(item => item.id === run.id ? latestRun(item, result.run) : item));
-      return result.run;
-    },
-    refetchInterval: (query: { state: { data?: AgentRun } }) => query.state.data && !isActive(query.state.data) ? false as const : 2000,
-    refetchIntervalInBackground: true,
-  })) });
-  const pollError = runQueries.find(query => query.error)?.error;
-  const error = actionError || historyQuery.error?.message || connectionQuery.error?.message || pollError?.message || '';
+  const runQueries = useQueries({
+    queries: runs.filter(isActive).map((run) => ({
+      queryKey: [...privateKey('run'), run.id],
+      queryFn: async ({ signal }: { signal: AbortSignal }) => {
+        const result = await scoped(() => rpc.agent.get({ id: run.id }, { signal }));
+        setRuns((current) =>
+          current.map((item) => (item.id === run.id ? latestRun(item, result.run) : item)),
+        );
+        return result.run;
+      },
+      refetchInterval: (query: { state: { data?: AgentRun } }) =>
+        query.state.data && !isActive(query.state.data) ? (false as const) : 2000,
+      refetchIntervalInBackground: true,
+    })),
+  });
+  const pollError = runQueries.find((query) => query.error)?.error;
+  const error =
+    actionError ||
+    historyQuery.error?.message ||
+    connectionQuery.error?.message ||
+    pollError?.message ||
+    '';
   async function start(event: FormEvent) {
     event.preventDefault();
     if (mutationGeneration !== sessionLifetime()) return;

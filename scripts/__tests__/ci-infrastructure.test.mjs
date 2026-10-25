@@ -255,7 +255,10 @@ test('application clears reviewer gates and pins only staging and production wit
   const legacy = { protection_rules: [{ type: 'required_reviewers', reviewers: [{ id: 42 }] }] };
   for (const environment of ['production-operations', 'production-validation'])
     fixture.environments.set(environment, structuredClone(legacy));
-  for (const [environment, branch] of [['staging', 'staging'], ['production', 'main']]) {
+  for (const [environment, branch] of [
+    ['staging', 'staging'],
+    ['production', 'main'],
+  ]) {
     fixture.environments.set(environment, {
       protection_rules: [{ type: 'required_reviewers', reviewers: [{ id: 42 }] }],
     });
@@ -265,7 +268,10 @@ test('application clears reviewer gates and pins only staging and production wit
     ]);
   }
   await configure({ api: fixture.api, apply: true });
-  for (const [environment, branch] of [['staging', 'staging'], ['production', 'main']]) {
+  for (const [environment, branch] of [
+    ['staging', 'staging'],
+    ['production', 'main'],
+  ]) {
     assert.deepEqual(
       fixture.policies.get(environment).map(({ name, type }) => ({ name, type })),
       [{ name: branch, type: 'branch' }],

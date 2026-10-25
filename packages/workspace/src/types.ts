@@ -1,4 +1,10 @@
-import type { FoodEntry, Macros, PlanEntry, Recipe, RecipeRequest } from '@packages/nutrition/types';
+import type {
+  FoodEntry,
+  Macros,
+  PlanEntry,
+  Recipe,
+  RecipeRequest,
+} from '@packages/nutrition/types';
 import type { TrainingMutation, TrainingState } from '@packages/training/types';
 
 export type Settings = {
