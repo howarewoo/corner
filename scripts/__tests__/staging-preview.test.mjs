@@ -337,197 +337,26 @@ test('live drift from serving ledger is rejected initially and after qualificati
   }
 });
 
-test('Preview rejects pre-Drizzle schema history before any effects', async (t) => {
-  const f = await scenario(t);
-  f.options.github.all = async (path) =>
-    path.includes('environment=staging-schema&')
-      ? [{ payload: { format: 1, kind: 'corner-staging-preview', phase: 'schema-attempted' } }]
-      : [];
-  await assert.rejects(deployPreview(f.options));
-  assert.deepEqual(f.effects, []);
-});
-
-async function cutoverScenario(t) {
-  const f = await uploadingScenario(t);
-  Object.assign(f.options.environment, {
-    GITHUB_EVENT_NAME: 'workflow_dispatch',
-    PREVIEW_ADOPTION_RECEIPT: '7307415225',
-    PREVIEW_ADOPTION_HOST: 'ep-staging.example',
-  });
-  const legacy = {
-    id: 7307415225,
-    payload: {
-      format: 1,
-      kind: 'corner-staging-preview',
-      phase: 'complete',
-      origin,
-      sourceSha: 'c79f7de10c185a6f5862685967e1b9c8d5913dcc',
-      workerName: 'corner',
-      previewName: 'staging',
-      runId: '7',
-      artifactId: '8',
-      candidateDigest: 'c'.repeat(64),
-      runtimeConfigurationDigest: 'd'.repeat(64),
-      bindingsRevision: 'legacy-1',
-      qualification: { format: 1, passed: true },
-      deploymentId: '5dad7d52-53cd-44ab-b2f5-2783196a35e9',
-    },
-  };
-  let schema = { id: 7307413943, payload: { ...legacy.payload, phase: 'schema-attempted' } };
-  f.options.github.all = async (path) =>
-    path.includes('environment=staging-schema&') ? [schema] : [legacy];
-  const api = f.options.github.api;
-  f.options.github.api = async (path, options) => {
-    const result = await api(path, options);
-    if (path === 'deployments' && result.payload.phase === 'schema-attempted') schema = result;
-    return result;
-  };
-  const cf = f.options.cf;
-  f.options.cf = async (path) => {
-    const result = await cf(path);
-    return path.endsWith('/deployments/latest') && !result
-      ? { id: legacy.payload.deploymentId }
-      : result;
-  };
-  const load = f.options.loadArtifact;
-  f.candidate = await load();
-  f.artifactReferences = [];
-  f.options.loadArtifact = async ({ reference }) => {
-    assert.notEqual(
-      reference.sourceSha,
-      legacy.payload.sourceSha,
-      'never execute or verify a legacy artifact',
-    );
-    f.artifactReferences.push(reference);
-    return f.candidate;
-  };
-  f.options.qualify = async ({ previous, bootstrap }) => {
-    assert.equal(previous, undefined);
-    assert.equal(bootstrap, true);
-    return { passed: true, candidateDigest: digest, previousDigest: null };
-  };
-  return f;
-}
-
-test('manual pinned cutover distinguishes legacy evidence and retries an upload interruption', async (t) => {
-  const f = await cutoverScenario(t);
-  const execute = f.options.execute;
-  let interrupted = true;
-  f.options.execute = (binary, args, options) => {
-    if (binary === process.execPath) {
-      assert.ok(args.includes('--adopt-staging'));
-      assert.equal(options.env.STAGING_ADOPTION_HOST, 'ep-staging.example');
-    } else if (interrupted) throw new Error('upload interrupted before effects');
-    return execute(binary, args, options);
-  };
-  await assert.rejects(deployPreview(f.options), /upload interrupted/);
-  assert.deepEqual(f.effects, ['schema-attempted', 'migration']);
-  assert.deepEqual(
-    f.artifactReferences.map(({ runId, sourceSha: sha, artifactId, phase }) => ({
-      runId,
-      sourceSha: sha,
-      artifactId,
-      phase,
-    })),
-    [{ runId: '1', sourceSha, artifactId: '2', phase: undefined }],
-  );
-  interrupted = false;
-  const retryWork = await mkdtemp(join(tmpdir(), 'corner-preview-cutover-retry-'));
-  t.after(() => rm(retryWork, { recursive: true, force: true }));
-  f.options.work = retryWork;
-  const result = await deployPreview(f.options);
-  assert.equal(result.payload.stagingCutover.priorDrizzleQualification, false);
-  assert.equal(result.payload.stagingCutover.legacyReceiptId, '7307415225');
-  assert.equal(result.payload.qualification.previousDigest, null);
-  assert.equal(result.payload.phase, 'complete');
-  assert.deepEqual(
-    f.artifactReferences.map(({ runId, sourceSha: sha, artifactId, phase }) => ({
-      runId,
-      sourceSha: sha,
-      artifactId,
-      phase,
-    })),
-    [
-      { runId: '1', sourceSha, artifactId: '2', phase: undefined },
-      { runId: '1', sourceSha, artifactId: '2', phase: undefined },
-      { runId: '1', sourceSha, artifactId: '2', phase: 'schema-attempted' },
-    ],
-  );
-});
-
-test('cutover rejects automatic invocation, incomplete pins, wrong host and wrong receipt before effects', async (t) => {
-  for (const override of [
-    { GITHUB_EVENT_NAME: 'workflow_run' },
-    { PREVIEW_ADOPTION_RECEIPT: '' },
-    { PREVIEW_ADOPTION_HOST: '' },
-    { PREVIEW_ADOPTION_HOST: 'ep-production.example' },
-    { PREVIEW_ADOPTION_RECEIPT: '7307415226' },
-  ]) {
-    const f = await cutoverScenario(t);
-    Object.assign(f.options.environment, override);
-    await assert.rejects(deployPreview(f.options));
-    assert.deepEqual(f.effects, []);
-  }
-});
-
-test('manual cutover still rejects a different serving receipt and live deployment drift', async (t) => {
-  for (const live of [false, true]) {
-    const f = await cutoverScenario(t);
-    if (live) f.options.cf = async () => ({ id: 'unrecorded' });
-    else
-      f.options.github.all = async (path) =>
-        path.includes('environment=staging-schema&')
-          ? []
-          : [
-              {
-                id: 7307415226,
-                payload: { format: 1 },
-              },
-            ];
-    await assert.rejects(deployPreview(f.options));
-    assert.deepEqual(f.effects, []);
-  }
-});
-
-test('cutover rejects disagreement in legacy schema evidence without loading historical code', async (t) => {
-  const f = await cutoverScenario(t);
-  const all = f.options.github.all;
-  f.options.github.all = async (path) => {
-    const rows = await all(path);
-    return path.includes('environment=staging-schema&')
-      ? [{ ...rows[0], payload: { ...rows[0].payload, artifactId: 'different' } }]
-      : rows;
-  };
-  await assert.rejects(deployPreview(f.options), /schema attempt differs/);
-  assert.deepEqual(f.effects, []);
-});
-
-test('cutover retry preserves the already attempted native migration prefix', async (t) => {
-  const f = await cutoverScenario(t);
-  const candidate = f.candidate;
-  const all = f.options.github.all;
-  f.options.github.all = async (path) =>
-    path.includes('environment=staging-schema&')
-      ? [
-          {
-            payload: {
-              format: 4,
-              kind: 'corner-staging-preview',
-              phase: 'schema-attempted',
-              stagingCutover: {
-                legacyReceiptId: '7307415225',
-                legacyDeploymentId: '5dad7d52-53cd-44ab-b2f5-2783196a35e9',
-                databaseHost: 'ep-staging.example',
-                priorDrizzleQualification: false,
+test('Preview rejects pre-Drizzle schema and serving history before any effects', async (t) => {
+  for (const environment of ['staging-schema', 'staging']) {
+    const f = await scenario(t);
+    f.options.github.all = async (path) =>
+      path.includes(`environment=${environment}&`)
+        ? [
+            {
+              payload: {
+                format: 1,
+                kind: 'corner-staging-preview',
+                phase: environment === 'staging-schema' ? 'schema-attempted' : 'complete',
+                workerName: 'corner',
+                previewName: 'staging',
+                origin,
+                deploymentId: 'legacy-deployment',
               },
             },
-          },
-        ]
-      : all(path);
-  f.options.loadArtifact = async ({ reference }) =>
-    reference.sourceSha === sourceSha
-      ? candidate
-      : { ...candidate, manifest: { ...candidate.manifest, migrations: [{ name: 'attempted' }] } };
-  await assert.rejects(deployPreview(f.options), /CURRENT attempted migration history/);
-  assert.deepEqual(f.effects, []);
+          ]
+        : [];
+    await assert.rejects(deployPreview(f.options));
+    assert.deepEqual(f.effects, []);
+  }
 });

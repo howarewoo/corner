@@ -20,9 +20,6 @@ on:
       provisioned_version_id:
         description: Exact current corner version when bootstrapping an already-provisioned Worker
         type: string
-      production_adoption_host:
-        description: One-time legacy database cutover only; exact direct production hostname, with bootstrap and a provisioned Worker version pin
-        type: string
       rollback_deployment_id:
         description: Explicit completed qualified production deployment ID to recover
         type: string
@@ -81,7 +78,6 @@ jobs:
           RELEASE_SOURCE_SHA: ${{ inputs.source_sha }}
           RELEASE_BOOTSTRAP: ${{ inputs.bootstrap }}
           RELEASE_PROVISIONED_VERSION_ID: ${{ inputs.provisioned_version_id }}
-          RELEASE_PRODUCTION_ADOPTION_HOST: ${{ inputs.production_adoption_host }}
           RELEASE_ROLLBACK_ID: ${{ inputs.rollback_deployment_id }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
@@ -129,7 +125,6 @@ jobs:
           RELEASE_SOURCE_SHA: ${{ inputs.source_sha }}
           RELEASE_BOOTSTRAP: ${{ inputs.bootstrap }}
           RELEASE_PROVISIONED_VERSION_ID: ${{ inputs.provisioned_version_id }}
-          RELEASE_PRODUCTION_ADOPTION_HOST: ${{ inputs.production_adoption_host }}
           RELEASE_ROLLBACK_ID: ${{ inputs.rollback_deployment_id }}
 
   promote:
@@ -178,7 +173,7 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
 
   complete:
-    if: github.ref == 'refs/heads/main' && !inputs.automatic && inputs.completion_deployment_id && !inputs.run_id && !inputs.source_sha && !inputs.bootstrap && !inputs.provisioned_version_id && !inputs.production_adoption_host && !inputs.rollback_deployment_id
+    if: github.ref == 'refs/heads/main' && !inputs.automatic && inputs.completion_deployment_id && !inputs.run_id && !inputs.source_sha && !inputs.bootstrap && !inputs.provisioned_version_id && !inputs.rollback_deployment_id
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: production

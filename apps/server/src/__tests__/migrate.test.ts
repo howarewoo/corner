@@ -118,3 +118,61 @@ test('modified applied SQL and unknown ledger entries refuse before changing sav
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test('native follow-up migration preserves application records and legacy audit metadata', async () => {
+  const f = await fixture();
+  const directory = await mkdtemp(join(tmpdir(), 'corner-native-next-'));
+  const folder = join(directory, 'migrations');
+  try {
+    await migrate(f.database);
+    const before = await savedRecord(f.database);
+    const history = (await f.database.query('SELECT * FROM __drizzle_migrations ORDER BY id')).rows;
+    await f.database.query(
+      'CREATE TABLE corner_schema_migrations (name TEXT PRIMARY KEY, checksum TEXT NOT NULL)',
+    );
+    await f.database.query('INSERT INTO corner_schema_migrations VALUES ($1,$2)', [
+      '001_corner.sql',
+      'retained historical checksum',
+    ]);
+    const audit = (await f.database.query('SELECT * FROM corner_schema_migrations')).rows;
+    await cp(migrationsFolder, folder, { recursive: true });
+    const journalPath = join(folder, 'meta/_journal.json');
+    const journal = JSON.parse(await readFile(journalPath, 'utf8'));
+    const snapshot = JSON.parse(await readFile(join(folder, 'meta/0000_snapshot.json'), 'utf8'));
+    snapshot.prevId = snapshot.id;
+    snapshot.id = randomUUID();
+    journal.entries.push({
+      idx: 1,
+      version: '7',
+      when: journal.entries[0].when + 1,
+      tag: '0001_next',
+      breakpoints: true,
+    });
+    await writeFile(journalPath, JSON.stringify(journal));
+    await writeFile(join(folder, 'meta/0001_snapshot.json'), JSON.stringify(snapshot));
+    await writeFile(
+      join(folder, '0001_next.sql'),
+      'CREATE TABLE migration_next (id TEXT PRIMARY KEY);',
+    );
+    await migrate(f.database, folder);
+    assert.equal(
+      (await f.database.query("SELECT to_regclass('migration_next') AS name")).rows[0].name,
+      'migration_next',
+    );
+    assert.deepEqual((await f.database.query('SELECT * FROM workspace_state')).rows, before);
+    assert.deepEqual(
+      (await f.database.query('SELECT * FROM corner_schema_migrations')).rows,
+      audit,
+    );
+    assert.deepEqual(
+      (await f.database.query('SELECT * FROM __drizzle_migrations ORDER BY id')).rows.slice(
+        0,
+        history.length,
+      ),
+      history,
+    );
+  } finally {
+    await f.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});

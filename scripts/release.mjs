@@ -13,7 +13,6 @@ import { loadCiArtifact } from './ci-artifact.mjs';
 const sha = /^[a-f0-9]{40}$/;
 const digest = /^[a-f0-9]{64}$/;
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
-const databaseHost = /^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/;
 const phases = new Set(['deployed', 'public-passed', 'complete']);
 const hash = (value) => createHash('sha256').update(value).digest('hex');
 class ReleaseError extends Error {}
@@ -305,7 +304,6 @@ export async function plan({
   sourceSha,
   bootstrap = false,
   provisionedVersionId = null,
-  productionAdoptionHost = null,
   rollbackId,
   configuration,
   automatic = false,
@@ -316,7 +314,7 @@ export async function plan({
   const target = releaseTarget();
   if (automatic) {
     need(
-      !bootstrap && !rollbackId && provisionedVersionId === null && productionAdoptionHost === null,
+      !bootstrap && !rollbackId && provisionedVersionId === null,
       'Automatic production cannot bootstrap, adopt, or roll back a Worker',
     );
     await assertCurrentMain(github, sourceSha);
@@ -326,24 +324,8 @@ export async function plan({
       (bootstrap && typeof provisionedVersionId === 'string' && uuid.test(provisionedVersionId)),
     'A provisioned Worker version pin is valid only for explicit bootstrap',
   );
-  need(
-    productionAdoptionHost === null ||
-      (!automatic &&
-        bootstrap &&
-        !rollbackId &&
-        provisionedVersionId !== null &&
-        typeof productionAdoptionHost === 'string' &&
-        databaseHost.test(productionAdoptionHost)),
-    'Production database adoption requires explicit bootstrap, a Worker version pin and an exact host',
-  );
-  if (productionAdoptionHost) await assertCurrentMain(github, sourceSha);
   const baseline = await github.baseline();
   const schemaState = await github.schema();
-  if (bootstrap && schemaState?.payload.productionAdoptionHost)
-    need(
-      schemaState.payload.productionAdoptionHost === productionAdoptionHost,
-      'Production adoption retry must preserve its attempted database host pin',
-    );
   const schemaReference = schemaState?.payload ?? baseline?.payload;
   need(
     bootstrap ? !baseline : baseline,
@@ -454,7 +436,6 @@ export async function plan({
     bootstrap,
     automatic,
     provisionedVersionId,
-    productionAdoptionHost,
     rollback: Boolean(rollbackId),
     rollbackVersionId: rollbackId ? reference.versionId : null,
     qualification,
@@ -661,12 +642,12 @@ export async function promote({
   );
   need(p.automatic === automatic, 'Plan release mode differs from this execution');
   const assertCurrentCandidate = async () => {
-    if (automatic || p.productionAdoptionHost) await assertCurrentMain(github, p.sourceSha);
+    if (automatic) await assertCurrentMain(github, p.sourceSha);
   };
   await assertCurrentCandidate();
   if (automatic)
     need(
-      !p.bootstrap && !p.rollback && p.productionAdoptionHost == null,
+      !p.bootstrap && !p.rollback,
       'Automatic production cannot execute an operator release plan',
     );
   const config = validateConfiguration(configuration);
@@ -686,14 +667,6 @@ export async function promote({
         (p.bootstrap &&
           typeof p.provisionedVersionId === 'string' &&
           uuid.test(p.provisionedVersionId))) &&
-      (p.productionAdoptionHost == null ||
-        (!automatic &&
-          p.bootstrap &&
-          !p.rollback &&
-          !baseline &&
-          p.provisionedVersionId != null &&
-          typeof p.productionAdoptionHost === 'string' &&
-          databaseHost.test(p.productionAdoptionHost))) &&
       typeof p.rollback === 'boolean',
     'Invalid persisted release plan',
   );
@@ -752,27 +725,6 @@ export async function promote({
     );
   }
   need(process.env.DATABASE_URL_UNPOOLED, 'Protected unpooled migration connection is required');
-  if (p.productionAdoptionHost) {
-    const direct = new URL(process.env.DATABASE_URL_UNPOOLED);
-    const pooled = new URL(bootstrapSecrets.DATABASE_URL);
-    need(
-      ['postgres:', 'postgresql:'].includes(direct.protocol) &&
-        direct.hostname === p.productionAdoptionHost &&
-        !direct.hostname.includes('-pooler.') &&
-        [direct, pooled].every(
-          (url) =>
-            ['postgres:', 'postgresql:'].includes(url.protocol) &&
-            [...url.searchParams.keys()].every(
-              (key) => key === 'sslmode' || key === 'channel_binding',
-            ),
-        ) &&
-        pooled.hostname.replace(/-pooler(?=\.)/, '') === direct.hostname &&
-        (pooled.port || '5432') === (direct.port || '5432') &&
-        pooled.pathname === direct.pathname &&
-        pooled.username === direct.username,
-      'Production adoption database destinations differ from the approved host',
-    );
-  }
   const candidate = await github.artifact(p, join(work, 'candidate'));
   need(
     candidate.digest === p.candidateDigest &&
@@ -904,19 +856,8 @@ export async function promote({
     await runDeployment(github, schemaAttempt, () =>
       execute(
         process.execPath,
-        [
-          join(candidate.directory, candidate.manifest.migrationEntry),
-          '--apply',
-          ...(p.productionAdoptionHost ? ['--adopt-production'] : []),
-        ],
-        {
-          cwd: candidate.directory,
-          env: {
-            ...process.env,
-            PRODUCTION_ADOPTION_MODE: p.productionAdoptionHost ? 'pinned-bootstrap' : '',
-            PRODUCTION_ADOPTION_HOST: p.productionAdoptionHost ?? '',
-          },
-        },
+        [join(candidate.directory, candidate.manifest.migrationEntry), '--apply'],
+        { cwd: candidate.directory, env: process.env },
       ),
     );
     await reverify();
@@ -1078,7 +1019,6 @@ async function main() {
         sourceSha: process.env.RELEASE_SOURCE_SHA,
         bootstrap: process.env.RELEASE_BOOTSTRAP === 'true',
         provisionedVersionId: process.env.RELEASE_PROVISIONED_VERSION_ID || undefined,
-        productionAdoptionHost: process.env.RELEASE_PRODUCTION_ADOPTION_HOST || undefined,
         rollbackId: process.env.RELEASE_ROLLBACK_ID || undefined,
         configuration: process.env[`${target.prefix}_CONFIG_JSON`],
         work,

@@ -23,19 +23,14 @@ test('schema URLs allow TLS parameters but reject connection overrides', () => {
   }
 });
 
-test('production adoption CLI rejects a query host override before connecting', async () => {
+test('migration CLI rejects a query host override before connecting', async () => {
   const before = { ...process.env };
   const argv = process.argv;
   try {
-    process.argv = [process.execPath, 'migrate.js', '--apply', '--adopt-production'];
+    process.argv = [process.execPath, 'migrate.js', '--apply'];
     Object.assign(process.env, {
       DATABASE_URL_UNPOOLED:
         'postgresql://owner:secret@approved.example/production?host=different.invalid',
-      GITHUB_ACTIONS: 'true',
-      GITHUB_REF: 'refs/heads/main',
-      GITHUB_EVENT_NAME: 'workflow_dispatch',
-      PRODUCTION_ADOPTION_MODE: 'pinned-bootstrap',
-      PRODUCTION_ADOPTION_HOST: 'approved.example',
     });
     await assert.rejects(migrationCli(), /without connection overrides/);
   } finally {
