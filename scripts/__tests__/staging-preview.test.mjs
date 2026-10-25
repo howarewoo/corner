@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createRequire } from 'node:module';
@@ -114,6 +115,87 @@ async function scenario(t, overrides = {}) {
   };
   return { options, effects };
 }
+
+async function uploadingScenario(t, workerName = 'corner') {
+  const f = await scenario(t);
+  const candidate = await f.options.loadArtifact();
+  candidate.manifest.configurationEntry = 'wrangler.json';
+  candidate.manifest.workerEntry = 'worker.js';
+  await writeFile(
+    join(candidate.directory, 'wrangler.json'),
+    JSON.stringify({
+      compatibility_date: '2026-10-19',
+      compatibility_flags: ['nodejs_compat'],
+      assets: { binding: 'ASSETS' },
+    }),
+  );
+  let uploaded = false;
+  f.options.execute = (binary, args, options) => {
+    if (binary === process.execPath) {
+      f.effects.push('migration');
+      return '';
+    }
+    uploaded = true;
+    f.effects.push('upload');
+    if (options.env.WRANGLER_OUTPUT_FILE_PATH)
+      writeFileSync(
+        options.env.WRANGLER_OUTPUT_FILE_PATH,
+        JSON.stringify({
+          type: 'preview',
+          version: 1,
+          worker_name: workerName,
+          preview_name: 'staging',
+          preview_id: 'native-preview',
+          preview_urls: [origin],
+          deployment_id: 'native-deployment',
+          deployment_urls: ['https://deployment.example.workers.dev'],
+        }) + '\n',
+      );
+    return 'Building list of assets...\nStarting asset upload...\n{"preview":{},"deployment":{}}\n';
+  };
+  f.options.cf = async (path) => {
+    if (path.endsWith('/deployments/latest'))
+      return uploaded
+        ? {
+            id: 'native-deployment',
+            env: {
+              CORNER_ORIGIN: { type: 'plain_text', text: origin },
+              ...Object.fromEntries(
+                [
+                  'DATABASE_URL',
+                  'NEON_AUTH_BASE_URL',
+                  'BETTER_AUTH_SECRET',
+                  'CORNER_TOKEN_ENCRYPTION_KEY',
+                ].map((name) => [name, { type: 'secret_text' }]),
+              ),
+            },
+          }
+        : null;
+    return path.endsWith('/subdomain') ? { previews_enabled: true } : { deployments: [] };
+  };
+  return f;
+}
+
+test('successful upload with noisy stdout records and verifies the serving deployment', async (t) => {
+  const f = await uploadingScenario(t);
+  const result = await deployPreview(f.options);
+  assert.equal(result.payload.deploymentId, 'native-deployment');
+  assert.equal(result.payload.phase, 'complete');
+  assert.deepEqual(f.effects, [
+    'schema-attempted',
+    'migration',
+    'upload',
+    'deployed',
+    'public',
+    'complete',
+  ]);
+});
+
+test('machine output for another Worker cannot become the staging serving baseline', async (t) => {
+  const f = await uploadingScenario(t, 'another-worker');
+  await assert.rejects(deployPreview(f.options), /Native Preview identity or stable URL differs/);
+  assert.deepEqual(f.effects, ['schema-attempted', 'migration', 'upload']);
+});
 
 test('superseded staging head cannot qualify, journal, or migrate', async (t) => {
   const f = await scenario(t);
