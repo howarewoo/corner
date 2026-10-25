@@ -1,8 +1,8 @@
 @import './tokens.css';
 
-/* Opt in globally or scope semantic names around shared controls in a legacy app. */
+/* Scoped opt-ins inherit a themed root, including portal-mounted shared controls. */
 :root[data-corner-theme],
-.corner-ui {
+.corner-ui:not(:where(:root[data-corner-theme] *)) {
   color-scheme: light;
   --background: #ffffff;
   --foreground: var(--ink);
@@ -16,6 +16,7 @@
   --secondary-foreground: var(--ink);
   --muted: var(--surface-secondary);
   --muted-foreground: #242924;
+  --neutral-text: var(--muted-foreground);
   --accent: var(--surface-accent);
   --accent-foreground: var(--ink);
   --destructive: var(--danger-text);
@@ -48,6 +49,7 @@
   color-scheme: dark;
   --backdrop: #171c19;
   --background: #222823;
+  --paper: var(--background);
   --surface-secondary: #2b332e;
   --surface-inset: #343e37;
   --surface-hover: #3c4840;
@@ -58,6 +60,7 @@
   --forest-hover: #b4c3b8;
   --on-accent: #19231c;
   --primary-foreground: #19231c;
+  --destructive-foreground: #19231c;
   --muted-foreground: #b7c3ba;
   --control-bg: #637469;
   --control-hover: #5b6c61;
@@ -72,6 +75,7 @@
   --danger-surface: #4a3430;
   --danger-text: #efb8ad;
   --scrim: rgb(10 15 12 / 65%);
+  --shadow-floating: 0 12px 32px rgb(0 0 0 / 50%);
   --chart-2: #7d9384;
   --chart-3: #5e7465;
   --chart-4: var(--warning-text);

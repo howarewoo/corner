@@ -1720,7 +1720,16 @@ h1 {
     --shell-gutter: 0;
   }
   .workspace {
-    padding: 20px 18px 0;
+    --workspace-inline-padding: 18px;
+    padding: 0;
+  }
+  .workspace-content {
+    padding: 20px var(--workspace-inline-padding) var(--workspace-inline-padding);
+    scrollbar-width: none;
+    scrollbar-gutter: auto;
+  }
+  .workspace-content::-webkit-scrollbar {
+    display: none;
   }
   .nutrition-mobile-tabs {
     display: flex;
@@ -1907,8 +1916,7 @@ h1 {
     --shell-gutter: 0;
   }
   .workspace {
-    padding-left: 14px;
-    padding-right: 14px;
+    --workspace-inline-padding: 14px;
   }
   .nutrition-panel .panel-heading {
     padding: 24px 22px 18px;
@@ -2225,8 +2233,7 @@ h1 {
 }
 @media (max-width: 390px) {
   .workspace {
-    padding-left: 12px;
-    padding-right: 12px;
+    --workspace-inline-padding: 12px;
   }
   .nutrition-main {
     flex-direction: column;
