@@ -14,6 +14,7 @@ import {
   GitHub,
   plan,
   promote,
+  deploy,
   publicChecks,
   validateLiveRollback,
   validateOperational,
@@ -126,6 +127,7 @@ function fixture(overrides = {}) {
     schemaId: null,
     executionRunId: '90',
     bootstrap: false,
+    automatic: false,
     rollback: false,
     rollbackVersionId: null,
     qualification: report,
@@ -135,6 +137,7 @@ function fixture(overrides = {}) {
   payload.manualReview = JSON.parse(review);
   payload.executionRunAttempt = '1';
   const github = {
+    repository: 'owner/corner',
     baseline: async () => ({ id: 10, payload: receipt }),
     schema: async () => null,
     approval: async (environment) => ({
@@ -144,6 +147,14 @@ function fixture(overrides = {}) {
       reviewer: 'protected-owner',
     }),
     api: async (path) => {
+      if (path === 'git/ref/heads/main') return { object: { sha: source } };
+      const recorded = records[Number(path.match(/^deployments\/(\d+)$/)?.[1]) - 21];
+      if (recorded)
+        return {
+          id: Number(path.split('/')[1]),
+          environment: 'production-plan',
+          payload: recorded,
+        };
       if (path.startsWith('deployments/'))
         return { id: 11, environment: 'production-plan', payload };
       if (path.includes('/artifacts?'))
@@ -422,6 +433,212 @@ test('plan persists exact real artifact and baseline qualification before approv
   assert.equal(result.payload.baselineId, '10');
   assert.equal(result.payload.qualification.previousDigest, previousDigest);
   assert.equal(result.payload.phase, 'planned');
+});
+
+test('successful current main CI deploys backend changes without a second human gate and reruns do not redeploy', async () => {
+  const f = fixture();
+  const api = f.github.api;
+  f.github.api = async (path) =>
+    path.startsWith('compare/')
+      ? { status: 'ahead', files: [{ filename: 'apps/server/src/worker.ts' }] }
+      : api(path);
+  f.github.approval = async () => {
+    throw new Error('Automatic releases must not request human approval');
+  };
+  const options = {
+    ...f.options,
+    runId: '1',
+    sourceSha: source,
+    qualify: async () => report,
+  };
+  const result = await deploy(options);
+  assert.equal(result.payload.phase, 'complete');
+  assert.equal(result.payload.sourceSha, source);
+  assert.equal(result.payload.versionId, versionId);
+  assert.equal(result.payload.manualReview, null);
+  assert.equal(result.payload.approval.kind, 'successful-main-ci');
+  assert(f.effects.indexOf('migrate') < f.effects.indexOf('deploy'));
+  assert(f.effects.indexOf('public') < f.effects.indexOf('complete'));
+  f.github.baseline = async () => result;
+  f.effects.length = 0;
+  await deploy(options);
+  assert.deepEqual(f.effects, ['public']);
+});
+
+test('automatic production independently downloads and verifies real archives for planning and promotion', async (t) => {
+  const { createHash } = await import('node:crypto');
+  const { spawnSync } = await import('node:child_process');
+  const { verifyArtifact } = await import('../release-artifact.mjs');
+  const directory = await mkdtemp(join(tmpdir(), 'corner-auto-archive-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const archiveRoot = join(directory, 'archive');
+  const candidateRoot = join(archiveRoot, 'candidate');
+  const hash = (bytes) => createHash('sha256').update(bytes).digest('hex');
+  const migration = 'CREATE TABLE example (id int);';
+  const files = {
+    'worker/worker.js': 'export default { fetch() { return new Response("archive fixture"); } };',
+    'assets/index.html': '<html>archive fixture</html>',
+    'migration/dist/migrate.mjs': 'throw new Error("Archive fixture must not execute SQL");',
+    'migration/migrations/001_corner.sql': migration,
+    'wrangler.json': JSON.stringify({
+      ...packagedConfig,
+      compatibility_date: '2026-10-19',
+      compatibility_flags: ['nodejs_compat'],
+      assets: {
+        ...packagedConfig.assets,
+        run_worker_first: true,
+        html_handling: 'none',
+        not_found_handling: 'none',
+      },
+      observability: { enabled: true, logs: { invocation_logs: false } },
+      version_metadata: { binding: 'CF_VERSION_METADATA' },
+    }),
+  };
+  for (const [name, bytes] of Object.entries(files)) {
+    await mkdir(dirname(join(candidateRoot, name)), { recursive: true });
+    await writeFile(join(candidateRoot, name), bytes);
+  }
+  await writeFile(
+    join(candidateRoot, 'manifest.json'),
+    JSON.stringify({
+      ...manifest,
+      format: 3,
+      lockfileSha256: 'b'.repeat(64),
+      nodeVersion: process.version,
+      configurationSha256: hash(files['wrangler.json']),
+      files: Object.fromEntries(Object.entries(files).map(([name, bytes]) => [name, hash(bytes)])),
+      migrations: [{ name: '001_corner.sql', sha256: hash(migration) }],
+    }),
+  );
+  const verified = await verifyArtifact(candidateRoot);
+  await writeFile(
+    join(archiveRoot, 'qualification.json'),
+    JSON.stringify({
+      ...report,
+      candidateDigest: verified.digest,
+      bootstrap: true,
+      previousDigest: null,
+    }),
+  );
+  const zip = join(directory, 'release.zip');
+  const zipped = spawnSync('zip', ['-q', '-r', zip, 'candidate', 'qualification.json'], {
+    cwd: archiveRoot,
+    encoding: 'utf8',
+  });
+  assert.equal(zipped.status, 0, zipped.stderr);
+  const archive = await readFile(zip);
+  const f = fixture();
+  const api = f.github.api;
+  f.github.api = async (path) => {
+    if (path === 'actions/artifacts/2/zip') return archive;
+    if (path === 'actions/artifacts/2')
+      return {
+        id: 2,
+        expired: false,
+        name: `corner-release-${source}`,
+        workflow_run: { id: 1, head_sha: source },
+        digest: `sha256:${hash(archive)}`,
+      };
+    return api(path);
+  };
+  const artifact = f.github.artifact;
+  f.github.artifact = async (reference, destination) =>
+    reference.sourceSha === source
+      ? loadCiArtifact({
+          api: f.github.api,
+          repository: f.github.repository,
+          branch: 'main',
+          reference,
+          destination,
+        })
+      : artifact(reference, destination);
+  const result = await deploy({
+    ...f.options,
+    work: directory,
+    runId: '1',
+    sourceSha: source,
+    verify: verifyArtifact,
+    qualify: async () => ({ ...report, candidateDigest: verified.digest }),
+  });
+  assert.equal(result.payload.phase, 'complete');
+  assert.equal(result.payload.candidateDigest, verified.digest);
+  assert.equal(result.payload.versionId, versionId);
+});
+
+test('automatic production rejects failed or foreign CI before release effects', async () => {
+  for (const mutation of [
+    { conclusion: 'failure' },
+    { head_repository: { full_name: 'foreign/corner' } },
+  ]) {
+    const f = fixture();
+    const api = f.github.api;
+    f.github.api = async (path) =>
+      path === 'actions/runs/1' ? { ...run, ...mutation } : api(path);
+    await assert.rejects(
+      deploy({ ...f.options, runId: '1', sourceSha: source }),
+      /successful exact|this repository/,
+    );
+    assert.deepEqual(f.effects, []);
+  }
+});
+
+test('automatic production refuses superseded main before planning, SQL, and traffic changes', async () => {
+  for (const boundary of ['plan', 'upload', 'migrate']) {
+    const f = fixture();
+    const api = f.github.api;
+    f.github.api = async (path) =>
+      path === 'git/ref/heads/main'
+        ? {
+            object: {
+              sha: boundary === 'plan' || f.effects.includes(boundary) ? previousSource : source,
+            },
+          }
+        : api(path);
+    await assert.rejects(
+      deploy({ ...f.options, runId: '1', sourceSha: source, qualify: async () => report }),
+      /superseded/,
+    );
+    assert(!f.effects.includes('deploy'));
+    assert.equal(f.effects.includes('migrate'), boundary === 'migrate');
+    if (boundary === 'migrate') assert.equal(f.records.at(-1).phase, 'schema-attempted');
+    else assert(!f.records.some((record) => record.phase === 'schema-attempted'));
+  }
+});
+
+test('automatic production cannot bootstrap or recover an unvalidated release', async () => {
+  for (const inputs of [{ bootstrap: true }, { rollbackId: '10' }]) {
+    const f = fixture();
+    await assert.rejects(
+      deploy({ ...f.options, runId: '1', sourceSha: source, ...inputs }),
+      /cannot bootstrap, adopt, or roll back/,
+    );
+    assert.deepEqual(f.effects, []);
+  }
+  const f = fixture();
+  f.github.baseline = async () => ({ id: 10, payload: { ...receipt, phase: 'public-passed' } });
+  await assert.rejects(
+    deploy({ ...f.options, runId: '1', sourceSha: source }),
+    /still requires public\/operational validation/,
+  );
+  assert.deepEqual(f.effects, []);
+});
+
+test('automatic public failure leaves the deployed release incomplete', async () => {
+  const f = fixture();
+  await assert.rejects(
+    deploy({
+      ...f.options,
+      runId: '1',
+      sourceSha: source,
+      qualify: async () => report,
+      checkPublic: async () => {
+        throw new Error('wrong deployed version');
+      },
+    }),
+    /wrong deployed version/,
+  );
+  assert.equal(f.records.at(-1).phase, 'deployed');
+  assert(!f.records.some((record) => record.phase === 'complete'));
 });
 test('migration failure journals schema attempt and prevents traffic/public checks', async () => {
   const f = fixture();
@@ -882,7 +1099,7 @@ test('effectful jobs require actual protected-environment approval records, not 
     assert.equal(path, 'actions/runs/90/approvals');
     return [];
   };
-  await assert.rejects(github.approval('production'), /actual protected/);
+  await assert.rejects(github.approval('production-operations'), /actual protected/);
   github.api = async () => [
     {
       state: 'approved',
@@ -890,7 +1107,7 @@ test('effectful jobs require actual protected-environment approval records, not 
       user: { login: 'owner', type: 'User', id: 123 },
     },
   ];
-  await assert.rejects(github.approval('production'), /actual protected/);
+  await assert.rejects(github.approval('production-operations'), /actual protected/);
   assert.equal((await github.approval('production-validation')).reviewer, 'owner');
   const f = fixture();
   f.github.approval = async () => {

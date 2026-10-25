@@ -227,6 +227,7 @@ test('complete two-branch dry run proposes every mutation without writing', asyn
   assert.deepEqual(plan.environments, {
     staging: 'staging',
     production: 'main',
+    'production-operations': 'main',
     'production-validation': 'main',
   });
   assert.deepEqual(plan.repositorySettings, {
@@ -236,25 +237,28 @@ test('complete two-branch dry run proposes every mutation without writing', asyn
   assert.deepEqual(fixture.writes, []);
 });
 
-test('default staging does not change main-only production human approval and repository switch is last', async () => {
+test('production follows main without human approval while operator actions remain protected', async () => {
   const fixture = configurationFixture({ defaultBranch: 'staging' });
   fixture.environments.set('production', {});
   fixture.policies.set('production', [{ id: 77, name: 'staging', type: 'branch' }]);
   await configure({ api: fixture.api, reviewer: 'owner', apply: true });
-  for (const environment of ['production', 'production-validation']) {
+  for (const environment of ['production', 'production-operations', 'production-validation']) {
     assert.deepEqual(
       fixture.policies.get(environment).map(({ name, type }) => ({ name, type })),
       [{ name: 'main', type: 'branch' }],
     );
-    assert.equal(
-      fixture.environments.get(environment).protection_rules[0].reviewers[0].reviewer.id,
-      42,
-    );
-    assert.equal(
-      fixture.environments.get(environment).protection_rules[0].prevent_self_review,
-      false,
-    );
+    if (environment !== 'production') {
+      assert.equal(
+        fixture.environments.get(environment).protection_rules[0].reviewers[0].reviewer.id,
+        42,
+      );
+      assert.equal(
+        fixture.environments.get(environment).protection_rules[0].prevent_self_review,
+        false,
+      );
+    }
   }
+  assert.deepEqual(fixture.environments.get('production').protection_rules, []);
   assert.deepEqual(fixture.environments.get('staging').protection_rules, []);
   assert.equal(fixture.policies.get('staging')[0].name, 'staging');
   assert.deepEqual(fixture.writes.at(-1), {
@@ -285,7 +289,7 @@ test('personal repositories acquire enforced protections and environment gates w
     ['main'],
   );
   assert.equal(
-    fixture.environments.get('production').protection_rules[0].reviewers[0].reviewer.id,
+    fixture.environments.get('production-operations').protection_rules[0].reviewers[0].reviewer.id,
     42,
   );
 });
@@ -394,8 +398,8 @@ test('linear-history policies require an explicit operator decision before any c
   assert.deepEqual(fixture.writes, []);
 });
 
-test('environment read-back rejects approval bypasses, staging approvals, and wrong production branch policies', async () => {
-  for (const failure of ['bypass', 'approval', 'branch', 'reviewer']) {
+test('environment read-back rejects blocked automatic deployments, approval bypasses, and wrong branches', async () => {
+  for (const failure of ['bypass', 'approval', 'production-approval', 'branch', 'reviewer']) {
     const fixture = configurationFixture();
     const api = async (path, options = {}) => {
       const value = structuredClone(await fixture.api(path, options));
@@ -404,12 +408,14 @@ test('environment read-back rejects approval bypasses, staging approvals, and wr
           value.can_admins_bypass = true;
         if (failure === 'approval' && path === '/environments/staging')
           value.protection_rules.push({ type: 'required_reviewers', reviewers: [] });
+        if (failure === 'production-approval' && path === '/environments/production')
+          value.protection_rules.push({ type: 'required_reviewers', reviewers: [] });
         if (
           failure === 'branch' &&
           path.startsWith('/environments/production/deployment-branch-policies?')
         )
           value.branch_policies[0].name = 'staging';
-        if (failure === 'reviewer' && path === '/environments/production')
+        if (failure === 'reviewer' && path === '/environments/production-operations')
           value.protection_rules = [];
       }
       return value;
