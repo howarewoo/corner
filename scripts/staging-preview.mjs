@@ -175,6 +175,16 @@ export async function deployPreview({
   id(runId);
   const config = previewConfiguration(environment.CORNER_STAGING_CONFIG_JSON, environment);
   const secrets = previewCredentials(environment);
+  const adoptionReceipt = environment.PREVIEW_ADOPTION_RECEIPT;
+  const adoptionHost = environment.PREVIEW_ADOPTION_HOST;
+  const adoption = Boolean(adoptionReceipt || adoptionHost);
+  if (adoption) need(
+    environment.GITHUB_EVENT_NAME === 'workflow_dispatch' &&
+      /^[1-9][0-9]*$/.test(adoptionReceipt ?? '') &&
+      typeof adoptionHost === 'string' && adoptionHost.length > 0 &&
+      new URL(environment.DATABASE_URL_UNPOOLED).hostname === adoptionHost,
+    'Staging adoption requires manual invocation and exact receipt/host pins',
+  );
   const current = async () => {
     const head = await github.api('git/ref/heads/staging');
     need(
@@ -207,7 +217,9 @@ export async function deployPreview({
   );
   const histories = await github.all('deployments?environment=staging-schema&task=corner-preview');
   const schema = histories[0];
-  if (schema)
+  const legacySchema = adoption && schema?.payload?.format === 1 &&
+    schema.payload.kind === kind && schema.payload.phase === 'schema-attempted';
+  if (schema && !legacySchema)
     need(
       schema.payload?.format === 4 && schema.payload.kind === kind &&
         schema.payload.phase === 'schema-attempted',
@@ -215,7 +227,37 @@ export async function deployPreview({
     );
   const deployments = await github.all('deployments?environment=staging&task=corner-preview');
   const previous = deployments[0];
-  if (previous)
+  const legacyPrevious = adoption && String(previous?.id) === adoptionReceipt &&
+    previous.payload?.format === 1 && previous.payload.kind === kind &&
+    previous.payload.phase === 'complete' &&
+    previous.payload.workerName === workerName && previous.payload.previewName === previewName &&
+    /^[a-f0-9]{40}$/.test(previous.payload.sourceSha ?? '') &&
+    typeof previous.payload.deploymentId === 'string' && previous.payload.deploymentId.length > 0 &&
+    previous.payload.origin === config.origin;
+  if (adoption) {
+    need(legacyPrevious, 'Pinned legacy Preview receipt differs');
+    need(/^[1-9][0-9]*$/.test(previous.payload.runId ?? '') &&
+      /^[1-9][0-9]*$/.test(previous.payload.artifactId ?? '') &&
+      /^[a-f0-9]{64}$/.test(previous.payload.candidateDigest ?? '') &&
+      /^[a-f0-9]{64}$/.test(previous.payload.runtimeConfigurationDigest ?? '') &&
+      typeof previous.payload.bindingsRevision === 'string' && previous.payload.bindingsRevision.length > 0 &&
+      previous.payload.qualification?.format === 1 && previous.payload.qualification.passed === true,
+    'Invalid legacy Preview receipt evidence');
+    if (legacySchema) need(
+      ['sourceSha', 'runId', 'artifactId', 'candidateDigest', 'runtimeConfigurationDigest',
+        'bindingsRevision', 'origin', 'workerName', 'previewName', 'qualification'].every(
+        key => schema.payload[key] !== undefined && isDeepStrictEqual(schema.payload[key], previous.payload[key]),
+      ),
+      'Legacy Preview schema attempt differs from pinned deployment',
+    );
+    else need(schema?.payload?.format === 4 &&
+      schema.payload.stagingCutover?.legacyReceiptId === adoptionReceipt &&
+      schema.payload.stagingCutover?.legacyDeploymentId === previous.payload.deploymentId &&
+      schema.payload.stagingCutover?.databaseHost === adoptionHost &&
+      schema.payload.stagingCutover?.priorDrizzleQualification === false,
+    'Pinned cutover requires its matching schema attempt');
+  }
+  if (previous && !legacyPrevious)
     need(
       previous.payload?.format === 4 && previous.payload.kind === kind &&
         ['deployed', 'complete'].includes(previous.payload.phase) &&
@@ -236,7 +278,7 @@ export async function deployPreview({
     );
   };
   await serving();
-  if (schema) {
+  if (schema?.payload?.format === 4) {
     const attempted = await load(schema.payload, join(work, 'schema'));
     need(
       attempted.manifest.migrations.every(
@@ -245,7 +287,7 @@ export async function deployPreview({
       'Candidate does not preserve CURRENT attempted migration history',
     );
   }
-  const prior = previous ? await load(previous.payload, join(work, 'previous')) : null;
+  const prior = previous && !legacyPrevious ? await load(previous.payload, join(work, 'previous')) : null;
   const qualification = await qualify({
     candidate: candidate.directory,
     previous: prior?.directory,
@@ -283,13 +325,22 @@ export async function deployPreview({
     workerName,
     previewName,
     qualification,
+    ...(adoption ? { stagingCutover: {
+      legacyReceiptId: adoptionReceipt,
+      legacyDeploymentId: previous.payload.deploymentId,
+      databaseHost: adoptionHost,
+      priorDrizzleQualification: false,
+    } } : {}),
     phase: 'schema-attempted',
   };
   await record(github, payload);
   execute(
     process.execPath,
-    [join(candidate.directory, candidate.manifest.migrationEntry), '--apply'],
-    { cwd: candidate.directory, env: { ...environment } },
+    [join(candidate.directory, candidate.manifest.migrationEntry), '--apply', ...(adoption ? ['--adopt-staging'] : [])],
+    { cwd: candidate.directory, env: { ...environment,
+      STAGING_ADOPTION_MODE: adoption ? 'pinned-manual' : '',
+      STAGING_ADOPTION_HOST: adoption ? adoptionHost : '',
+    } },
   );
   await reverify();
   await current();

@@ -1,13 +1,12 @@
-import { fileURLToPath } from 'node:url';
-import { resolve } from 'node:path';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { migrate as drizzleMigrate } from 'drizzle-orm/node-postgres/migrator';
 import type { Pool } from 'pg';
 import { createDatabase } from './database.js';
 import { currentSchema, migrationHistory, migrationLock } from './migration-history.js';
 import { migrationInventory, migrationsFolder } from './migration-inventory.js';
+import { adoptLegacySchema } from './legacy-adoption.js';
 
-export async function migrate(database: Pool, folder = migrationsFolder): Promise<void> {
+export async function migrate(database: Pool, folder = migrationsFolder, legacyAdoption = false): Promise<void> {
   const inventory = await migrationInventory(folder);
   const connection = await database.connect();
   let locked = false;
@@ -18,6 +17,7 @@ export async function migrate(database: Pool, folder = migrationsFolder): Promis
     // This connection is direct for deployment; it never passes through transaction pooling.
     await connection.query('SELECT pg_advisory_lock(hashtextextended($1, 0))', [migrationLock]);
     locked = true;
+    if (legacyAdoption) await adoptLegacySchema(connection, folder);
     const schema = await currentSchema(connection);
     await migrationHistory(connection, schema, inventory);
     await drizzleMigrate(drizzle({ client: connection }), { migrationsFolder: folder, migrationsSchema: schema });
@@ -44,17 +44,40 @@ export async function migrate(database: Pool, folder = migrationsFolder): Promis
 export function directDatabaseUrl(value: string | undefined): string {
   if (!value) throw new Error('DATABASE_URL_UNPOOLED is required for schema operations.');
   const url = new URL(value);
-  if (!['postgres:', 'postgresql:'].includes(url.protocol) || url.hostname.includes('-pooler.') || url.searchParams.has('options'))
+  if (!['postgres:', 'postgresql:'].includes(url.protocol) || url.hostname.includes('-pooler.') ||
+      [...url.searchParams.keys()].some(key => key !== 'sslmode' && key !== 'channel_binding'))
     throw new Error('Schema operations require a direct PostgreSQL URL without connection overrides.');
   return value;
 }
 
-if (process.argv.includes('--apply') && resolve(process.argv[1] ?? '') === fileURLToPath(import.meta.url)) {
-  const database = createDatabase(directDatabaseUrl(process.env.DATABASE_URL_UNPOOLED));
+export async function migrationCli(): Promise<void> {
+  const args = process.argv.slice(2);
+  const stagingAdoption = args.includes('--adopt-staging');
+  const productionAdoption = args.includes('--adopt-production');
+  if (!args.includes('--apply') || new Set(args).size !== args.length ||
+      args.some(arg => arg !== '--apply' && arg !== '--adopt-staging' && arg !== '--adopt-production') ||
+      (stagingAdoption && productionAdoption))
+    throw new Error('Expected --apply with at most one explicit adoption mode.');
+  const url = directDatabaseUrl(process.env.DATABASE_URL_UNPOOLED);
+  if (stagingAdoption && (new URL(url).hostname !== process.env.STAGING_ADOPTION_HOST ||
+      process.env.STAGING_ADOPTION_MODE !== 'pinned-manual'))
+    throw new Error('Explicit pinned staging adoption required.');
+  if (productionAdoption && (
+      process.env.GITHUB_ACTIONS !== 'true' ||
+      process.env.GITHUB_REF !== 'refs/heads/main' ||
+      process.env.GITHUB_EVENT_NAME !== 'workflow_dispatch' ||
+      process.env.PRODUCTION_ADOPTION_MODE !== 'pinned-bootstrap' ||
+      new URL(url).hostname !== process.env.PRODUCTION_ADOPTION_HOST))
+    throw new Error('Protected pinned production bootstrap adoption required.');
+  const database = createDatabase(url);
   try {
-    await migrate(database);
+    await migrate(database, migrationsFolder, stagingAdoption || productionAdoption);
     process.stdout.write('Corner Drizzle PostgreSQL schema is current.\n');
   } finally {
     await database.end();
   }
+}
+
+if (import.meta.main) {
+  await migrationCli();
 }

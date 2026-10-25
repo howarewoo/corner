@@ -198,7 +198,7 @@ Application queries use Drizzle ORM over the existing `pg` pools. Edit [schema.t
 
 Upgrades run `pnpm install --frozen-lockfile`, `pnpm run build`, and the explicit `pnpm run db:migrate` before restarting one Corner process. The official Drizzle migrator applies pending SQL transactionally under a migration lock; Corner verifies the applied hash/timestamp prefix first. The native `__drizzle_migrations` ledger lives in the application schema, including each owned disposable test schema. Startup never applies migrations. Never edit applied SQL or its Kit journal/snapshots.
 
-Drizzle is the initial deployment baseline for this unreleased application. Pre-Drizzle migration histories and artifacts are not upgrade or recovery targets. Existing databases are never reset automatically.
+Drizzle is the initial deployment baseline for this unreleased application. Pre-Drizzle artifacts remain unsupported recovery targets. The only database-history exceptions are the [explicit pinned manual staging cutover](HOSTING.md#one-time-populated-staging-drizzle-cutover) and [protected first-production cutover](HOSTING.md#one-time-populated-production-drizzle-cutover). Both verify the known exact legacy baseline and preserve records/Auth/keys while recording native migration metadata. Production additionally requires protected bootstrap, a current Worker-version pin, and an exact database-host pin; automatic releases cannot adopt. Existing databases are never reset automatically.
 
 ## Hosted deployment preparation
 
