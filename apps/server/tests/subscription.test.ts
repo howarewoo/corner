@@ -359,7 +359,7 @@ function stagedPool(database: Pool, config: SubscriptionConfig, user: string): S
 
   const wrapClient = (client: PoolClient): PoolClient => {
     let pending: SavedCommit | null = null;
-    const note = (sql: string, envelope: string) => {
+    const note = (envelope: string) => {
       try {
         const registration = openSealed(config, user, 'account', envelope);
         pending = {
@@ -373,8 +373,8 @@ function stagedPool(database: Pool, config: SubscriptionConfig, user: string): S
     };
     return {
       ...client,
-      query: (text: string, values?: unknown[]) => {
-        const sql = text.trim();
+      query: (query: string | { text: string }, values?: unknown[]) => {
+        const sql = (typeof query === 'string' ? query : query.text).trim().toUpperCase();
         let heldResponse: Promise<void> | null = null;
         if (sql === 'BEGIN' && beginBudget > 0) {
           beginBudget--;
@@ -398,13 +398,13 @@ function stagedPool(database: Pool, config: SubscriptionConfig, user: string): S
           else announcedPins.push(slot);
           heldResponse = released;
         }
-        if (sql.includes('corner_subscription_accounts')) {
+        if (sql.includes('CORNER_SUBSCRIPTION_ACCOUNTS')) {
           const envelope = values?.find(
             (value) => typeof value === 'string' && String(value).startsWith('v1.'),
           ) as string | undefined;
-          if (envelope) note(sql, envelope);
+          if (envelope) note(envelope);
         }
-        const underlying = client.query(text as string, values as unknown[]);
+        const underlying = client.query(query as string, values as unknown[]);
         // Announce a save exactly when its COMMIT resolves: only then is the
         // writer's durable state visible to the next resuming transaction.
         if (sql === 'COMMIT' && pending) {
@@ -421,10 +421,14 @@ function stagedPool(database: Pool, config: SubscriptionConfig, user: string): S
   };
 
   return {
-    pool: {
-      query: (text: unknown, values?: unknown[]) => database.query(text as never, values as never),
-      connect: async () => wrapClient(await database.connect()),
-    } as unknown as Pool,
+    // Preserve the native Pool identity so Drizzle checks out one transaction client.
+    pool: new Proxy(database, {
+      get(target, property, receiver) {
+        if (property === 'connect') return async () => wrapClient(await target.connect());
+        const value = Reflect.get(target, property, receiver);
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    }),
     holdNextBegin: () => {
       beginBudget++;
     },

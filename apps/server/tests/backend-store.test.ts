@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { afterEach, beforeEach, test } from 'node:test';
-import type { Pool, PoolClient } from 'pg';
+import type { Pool } from 'pg';
+import { sql } from 'drizzle-orm';
+import type { Transaction } from '../src/queries.js';
 import { testDatabase, closeTestDatabase } from './helpers.ts';
 import { createInitialState } from '@packages/shared/seed';
 import type { AppState, Recipe } from '@packages/shared/types';
@@ -148,10 +150,7 @@ test('batch completion bookkeeping commits or rolls back with the state and is s
   const changes = [{ type: 'recipe.save' as const, data: recipe() }];
   await assert.rejects(
     store.applyBatch('user-a', 'atomic-batch-123', changes, 0, async (connection) => {
-      await connection.query('INSERT INTO applied_runs (id, status) VALUES ($1, $2)', [
-        'run-a',
-        'applied',
-      ]);
+      await connection.execute(sql`INSERT INTO applied_runs (id, status) VALUES (${'run-a'}, ${'applied'})`);
       throw new Error('simulate bookkeeping failure');
     }),
     /bookkeeping failure/,
@@ -163,12 +162,10 @@ test('batch completion bookkeeping commits or rolls back with the state and is s
   );
   assert.equal((await database.query('SELECT COUNT(*) AS n FROM applied_runs', [])).rows[0]?.n, 0);
   let completions = 0;
-  const complete = async (connection: PoolClient) => {
+  const complete = async (connection: Transaction) => {
     completions++;
-    await connection.query(
-      'INSERT INTO applied_runs (id, status) VALUES ($1, $2) ON CONFLICT(id) DO UPDATE SET status = excluded.status',
-      ['run-a', 'applied'],
-    );
+    await connection.execute(sql`INSERT INTO applied_runs (id, status) VALUES (${'run-a'}, ${'applied'})
+      ON CONFLICT(id) DO UPDATE SET status = excluded.status`);
   };
   const first = await store.applyBatch('user-a', 'atomic-batch-123', changes, 0, complete);
   assert.deepEqual(

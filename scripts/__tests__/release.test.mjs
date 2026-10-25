@@ -49,7 +49,7 @@ const report = {
   passed: true,
 };
 const receipt = {
-  format: 3,
+  format: 4,
   kind: 'corner-production',
   workerName: 'corner',
   phase: 'complete',
@@ -69,7 +69,7 @@ const manifest = {
   workerEntry: 'worker/worker.js',
   migrationEntry: 'migration/dist/migrate.mjs',
   workerName: 'corner',
-  migrations: [{ name: '001_corner.sql', sha256: 'f'.repeat(64) }],
+  migrations: [{ name: '0000_corner.sql', sha256: 'f'.repeat(64), when: 1 }],
 };
 manifest.wranglerVersion = JSON.parse(
   await readFile(
@@ -559,8 +559,6 @@ test('live rollback validates actual stored documents read-only without logging 
   const connection = {
     query: async (sql) => {
       statements.push(sql);
-      if (sql.startsWith('SELECT name'))
-        return { rows: [{ name: '001_corner.sql', checksum: 'f'.repeat(64) }] };
       if (sql.startsWith('SELECT user_id'))
         return { rows: [{ user_id: 'owner', data: JSON.stringify({ saved: 'private' }) }] };
       return { rows: [] };
@@ -570,6 +568,8 @@ test('live rollback validates actual stored documents read-only without logging 
     },
   };
   const load = async () => ({
+    currentSchema: async () => 'public',
+    migrationHistory: async () => manifest.migrations,
     createDatabase: () => ({
       connect: async () => connection,
       end: async () => {
@@ -579,7 +579,7 @@ test('live rollback validates actual stored documents read-only without logging 
     inspectImport: (raw) => ({ state: { ...raw, defaulted: true } }),
   });
   await assert.rejects(
-    validateLiveRollback({ directory: work, manifest }, { manifest }, load),
+    validateLiveRollback({ directory: work, manifest }, { directory: work, manifest }, load),
     /private details withheld/,
   );
   assert(statements[0].includes('READ ONLY'));
@@ -1012,8 +1012,13 @@ test('shared CI loader binds branch, repository, run and retained artifact befor
   }
 });
 
-test('format-2 production history requires explicit reconciliation', () => {
-  assert.throws(() => validateReceipt({ ...receipt, format: 2 }), /reconcile/);
+test('pre-Drizzle production receipts are never recovery targets', () => {
+  for (const format of [1, 2, 3]) {
+    assert.throws(() => validateReceipt({ ...receipt, format }));
+    assert.throws(() => rollbackEligible(
+      { ...receipt, format }, receipt, report, config.digest,
+    ));
+  }
 });
 
 test('production permits only the exact stable corner Worker hostname and binds configured origin', () => {

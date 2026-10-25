@@ -1,3 +1,19 @@
+# Drizzle ORM and native migration baseline
+
+Application persistence now uses Drizzle ORM 0.45.4 over the existing native `pg` pools. The server-owned schema retains document-shaped JSON `TEXT`, bigint number mappings, owner locks, atomic state/receipt/proposal writes, provider encryption, refresh leases, and generation checks. Managed Auth and local fixture tables remain outside application schema ownership.
+
+Drizzle Kit 0.31.11 generates reviewed SQL and snapshots. The official PostgreSQL migrator replaces the custom SQL executor; complete metadata validation, applied-history checks, and migration serialization remain enforced. Schema-only staging baselining records verified native history without copying source records.
+
+The unreleased app starts a fresh Drizzle-only migration/recovery baseline. The old SQL migration is removed without an archive or adoption bridge. Format-4 artifacts hash SQL, Kit journals, and snapshots; production/Preview prefixes bind SQL identity, timestamps, complete journal-entry digests, and snapshot digests. Artifact verification does not execute packaged code. Native history requires a permanent table and owned sequence, including staging baselining. Existing databases, installation keys, and cloud resources are not reset by this source change.
+
+Observed with disposable PostgreSQL 17: concurrent native migration calls serialize, repeated migration preserves saved records, and migration metadata stays in the owned application schema.
+
+Observed on Node 24.21.0 with disposable PostgreSQL 17 and 18: root type checks, lint (46 warnings, no errors), 90 native tooling regressions, 13/13 server files, 5/5 web files, workspace builds, Worker dry run, and production/Worker smokes passed. Drizzle Kit consistency checks and generation reported no schema drift. The direct migration CLI passed initial application and replay on PostgreSQL 18. Historical-metadata rewrites, non-durable ledgers, and PostgreSQL 18 catalog compatibility were reproduced before repair and passed afterward; bounded independent review reported no remaining findings.
+
+Local packaged bootstrap and prior/candidate/recovery smokes passed using the same working-tree payload in both release slots. This verifies migration/recovery mechanics, not compatibility with a distinct historical release or committed-source provenance. Worker smokes emitted private-safe `CORNER_DATABASE_CONNECTION_FAILED` diagnostics despite passing persistence assertions; clean live-provider logs are not established.
+
+Full verification is **not green**: development smoke failed in macOS process-group cleanup with `kill EPERM` from `groupExists`. No listeners remained on its two owned ports; the unrelated runner was left unchanged and the check was not blindly repeated. No live Neon, Cloudflare, email-delivery, or model request was made, and no persistent database was reset.
+
 # Flat Base UI toasts
 
 Shared Base UI toasts now use solid borderless surfaces and the existing `--shadow-floating` elevation token. Toast actions use tonal fills; action and dismiss controls remain borderless with visible keyboard focus. The catalog's flat-control reset no longer suppresses toast shadows.

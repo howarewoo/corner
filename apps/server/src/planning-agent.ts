@@ -1,5 +1,7 @@
 import { randomUUID, createHash } from 'node:crypto';
-import type { Pool } from 'pg';
+import { and, count, desc, eq, gte, sql } from 'drizzle-orm';
+import type { Database } from './queries.js';
+import { aiRuns } from './schema.js';
 import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import {
@@ -112,7 +114,7 @@ Use exercise search for catalog IDs; never invent catalog IDs. Prefer familiar e
 Keep a first plan to one week unless the user asks otherwise; favor a useful, coherent result over unnecessary volume. If there is not enough context to complete both training and nutrition, clarify the missing details. Timestamp fields may use the supplied currentTimestamp; the server replaces administrative timestamps. Proposed recipe color can be #d9e8de, source ai, favorite false. Do not embed PDF links. You have at most six tool rounds. The required output schema is supplied on submit_result.`;
 
 export class PlanningAgent {
-  private db: Pool;
+  private db: Database;
   private tasks = new Map<string, { controller: AbortController; promise: Promise<void> }>();
   private closing = false;
   constructor(
@@ -123,24 +125,18 @@ export class PlanningAgent {
   }
 
   async initialize(): Promise<void> {
-    await this.db.query(
-      "UPDATE corner_ai_runs SET status='failed', error=$1, updated_at=$2 WHERE status='running'",
-      [
-        'The server restarted before this request finished. No changes were applied. Start a new request to continue.',
-        new Date().toISOString(),
-      ],
-    );
+    await this.db.update(aiRuns).set({
+      status: 'failed',
+      error: 'The server restarted before this request finished. No changes were applied. Start a new request to continue.',
+      updated_at: new Date().toISOString(),
+    }).where(eq(aiRuns.status, 'running'));
   }
 
   async list(userId: string): Promise<AgentRun[]> {
-    return (
-      (
-        await this.db.query(
-          "SELECT * FROM corner_ai_runs WHERE user_id=$1 AND kind='plan' ORDER BY created_at DESC LIMIT 30",
-          [userId],
-        )
-      ).rows as Row[]
-    ).map(toRun);
+    const rows = await this.db.select().from(aiRuns)
+      .where(and(eq(aiRuns.user_id, userId), eq(aiRuns.kind, 'plan')))
+      .orderBy(desc(aiRuns.created_at)).limit(30);
+    return (rows as Row[]).map(toRun);
   }
   async get(userId: string, id: string): Promise<AgentRun> {
     const row = await this.row(userId, id);
@@ -150,8 +146,9 @@ export class PlanningAgent {
   }
   private async row(userId: string, id: string): Promise<Row> {
     const row = (
-      await this.db.query('SELECT * FROM corner_ai_runs WHERE user_id=$1 AND id=$2', [userId, id])
-    ).rows[0] as Row | undefined;
+      await this.db.select().from(aiRuns)
+        .where(and(eq(aiRuns.user_id, userId), eq(aiRuns.id, id)))
+    )[0] as Row | undefined;
     if (!row) throw new AgentError(404, 'RUN_NOT_FOUND', 'That AI request was not found.');
     return row;
   }
@@ -173,11 +170,9 @@ export class PlanningAgent {
       payload = preferences;
     }
     const row = (
-      await this.db.query(
-        'SELECT payload_hash FROM corner_ai_runs WHERE user_id=$1 AND kind=$2 AND request_id=$3',
-        [userId, kind, id],
-      )
-    ).rows[0] as { payload_hash: string } | undefined;
+      await this.db.select({ payload_hash: aiRuns.payload_hash }).from(aiRuns)
+        .where(and(eq(aiRuns.user_id, userId), eq(aiRuns.kind, kind), eq(aiRuns.request_id, id)))
+    )[0];
     if (!row) return false;
     if (row.payload_hash !== jsonHash(payload))
       throw new AgentError(
@@ -202,20 +197,14 @@ export class PlanningAgent {
         'AGENT_SHUTTING_DOWN',
         'Corner is restarting. Please try again shortly.',
       );
-    const connection = await this.db.connect();
-    try {
-      await connection.query('BEGIN');
+    return this.db.transaction(async (connection) => {
       // Admission counts and idempotent claims must remain atomic across awaited SQL.
-      await connection.query(
-        "SELECT pg_advisory_xact_lock(hashtextextended('corner:agent-admission', 0))",
-      );
+      await connection.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended('corner:agent-admission', 0))`);
       const hash = jsonHash(payload);
       const existing = (
-        await connection.query(
-          'SELECT * FROM corner_ai_runs WHERE user_id=$1 AND kind=$2 AND request_id=$3',
-          [userId, kind, id],
-        )
-      ).rows[0] as Row | undefined;
+        await connection.select().from(aiRuns)
+          .where(and(eq(aiRuns.user_id, userId), eq(aiRuns.kind, kind), eq(aiRuns.request_id, id)))
+      )[0] as Row | undefined;
       if (existing) {
         if (existing.payload_hash !== hash)
           throw new AgentError(
@@ -223,27 +212,15 @@ export class PlanningAgent {
             'REQUEST_ID_REUSED',
             'This request ID was already used for a different request.',
           );
-        await connection.query('COMMIT');
         return { row: existing, fresh: false };
       }
       const now = new Date().toISOString();
-      const active = (
-        await connection.query(
-          "SELECT COUNT(*) AS count FROM corner_ai_runs WHERE status='running'",
-        )
-      ).rows[0];
-      const ownActive = (
-        await connection.query(
-          "SELECT id FROM corner_ai_runs WHERE user_id=$1 AND status='running' LIMIT 1",
-          [userId],
-        )
-      ).rows[0];
-      const daily = (
-        await connection.query(
-          'SELECT COUNT(*) AS count FROM corner_ai_runs WHERE user_id=$1 AND created_at >= $2',
-          [userId, now.slice(0, 10)],
-        )
-      ).rows[0];
+      const [active] = await connection.select({ count: count() }).from(aiRuns)
+        .where(eq(aiRuns.status, 'running'));
+      const [ownActive] = await connection.select({ id: aiRuns.id }).from(aiRuns)
+        .where(and(eq(aiRuns.user_id, userId), eq(aiRuns.status, 'running'))).limit(1);
+      const [daily] = await connection.select({ count: count() }).from(aiRuns)
+        .where(and(eq(aiRuns.user_id, userId), gte(aiRuns.created_at, now.slice(0, 10))));
       if (ownActive || active.count >= 4)
         throw new AgentError(
           429,
@@ -277,18 +254,9 @@ export class PlanningAgent {
         created_at: now,
         updated_at: now,
       };
-      await connection.query(
-        'INSERT INTO corner_ai_runs (id,user_id,request_id,payload_hash,kind,status,prompt,reference_date,base_revision,result,error,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)',
-        Object.values(row),
-      );
-      await connection.query('COMMIT');
+      await connection.insert(aiRuns).values(row);
       return { row, fresh: true };
-    } catch (error) {
-      await connection.query('ROLLBACK');
-      throw error;
-    } finally {
-      connection.release();
-    }
+    });
   }
   async start(userId: string, raw: unknown): Promise<AgentRun> {
     const request = AgentRequestSchema.parse(raw);
@@ -317,10 +285,9 @@ export class PlanningAgent {
       })
       .then(async (result) => {
         signal.throwIfAborted();
-        await this.db.query(
-          "UPDATE corner_ai_runs SET status='completed', result=$1, updated_at=$2 WHERE id=$3 AND user_id=$4 AND status='running'",
-          [JSON.stringify(result), new Date().toISOString(), row.id, row.user_id],
-        );
+        await this.db.update(aiRuns).set({
+          status: 'completed', result: JSON.stringify(result), updated_at: new Date().toISOString(),
+        }).where(and(eq(aiRuns.id, row.id), eq(aiRuns.user_id, row.user_id), eq(aiRuns.status, 'running')));
       })
       .catch(async (error) => {
         const safe =
@@ -330,10 +297,10 @@ export class PlanningAgent {
         const code =
           safe?.code && /^[a-zA-Z0-9_.-]{1,120}$/.test(safe.code) ? safe.code : 'GENERATION_FAILED';
         const status = safe?.status && safe.status >= 400 && safe.status <= 599 ? safe.status : 502;
-        await this.db.query(
-          "UPDATE corner_ai_runs SET status='failed',error=$1,error_code=$2,error_status=$3,updated_at=$4 WHERE id=$5 AND user_id=$6 AND status='running'",
-          [safeError(error), code, status, new Date().toISOString(), row.id, row.user_id],
-        );
+        await this.db.update(aiRuns).set({
+          status: 'failed', error: safeError(error), error_code: code, error_status: status,
+          updated_at: new Date().toISOString(),
+        }).where(and(eq(aiRuns.id, row.id), eq(aiRuns.user_id, row.user_id), eq(aiRuns.status, 'running')));
       })
       .finally(() => {
         this.tasks.delete(row.id);
@@ -348,10 +315,9 @@ export class PlanningAgent {
     if (row.kind !== 'plan')
       throw new AgentError(404, 'RUN_NOT_FOUND', 'That coaching request was not found.');
     if (row.status === 'running') {
-      await this.db.query(
-        "UPDATE corner_ai_runs SET status='cancelled',updated_at=$1 WHERE user_id=$2 AND id=$3 AND status='running'",
-        [new Date().toISOString(), userId, id],
-      );
+      await this.db.update(aiRuns).set({
+        status: 'cancelled', updated_at: new Date().toISOString(),
+      }).where(and(eq(aiRuns.user_id, userId), eq(aiRuns.id, id), eq(aiRuns.status, 'running')));
       this.tasks.get(id)?.controller.abort();
     }
     return this.get(userId, id);
@@ -399,10 +365,9 @@ export class PlanningAgent {
       mutations,
       row.base_revision,
       async (connection) => {
-        await connection.query(
-          "UPDATE corner_ai_runs SET status='applied',updated_at=$1 WHERE user_id=$2 AND id=$3 AND status='completed'",
-          [new Date().toISOString(), userId, id],
-        );
+        await connection.update(aiRuns).set({
+          status: 'applied', updated_at: new Date().toISOString(),
+        }).where(and(eq(aiRuns.user_id, userId), eq(aiRuns.id, id), eq(aiRuns.status, 'completed')));
       },
     );
     return { ...saved, run: await this.get(userId, id) };

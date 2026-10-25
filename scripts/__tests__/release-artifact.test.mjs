@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { copyFile, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -16,8 +17,17 @@ async function fixture(t, migration = 'CREATE TABLE example (id int);') {
     'worker/worker.js': 'export default { fetch() { return new Response("ok"); } };',
     'assets/index.html': '<html>artifact</html>',
     'migration/dist/migrate.mjs':
-      'export async function migrate() { throw new Error("fixture is not executable qualification"); }',
-    'migration/migrations/001_example.sql': migration,
+      'throw new Error("Artifact verification must not execute payload code");',
+    'migration/migrations/0000_example.sql': migration,
+    'migration/migrations/meta/_journal.json': JSON.stringify({
+      version: '7', dialect: 'postgresql',
+      entries: [{ idx: 0, version: '7', when: 1, tag: '0000_example', breakpoints: true }],
+    }),
+    'migration/migrations/meta/0000_snapshot.json': JSON.stringify({
+      id: '11111111-1111-4111-8111-111111111111',
+      prevId: '00000000-0000-0000-0000-000000000000',
+      version: '7', dialect: 'postgresql', tables: {},
+    }),
     'wrangler.json': JSON.stringify({
       name: 'corner',
       main: 'worker/worker.js',
@@ -42,7 +52,7 @@ async function fixture(t, migration = 'CREATE TABLE example (id int);') {
     await writeFile(join(candidate, name), bytes);
   }
   const manifest = {
-    format: 3,
+    format: 4,
     sourceSha: 'a'.repeat(40),
     lockfileSha256: 'b'.repeat(64),
     nodeVersion: 'v24.15.0',
@@ -53,7 +63,11 @@ async function fixture(t, migration = 'CREATE TABLE example (id int);') {
     workerName: 'corner',
     migrationEntry: 'migration/dist/migrate.mjs',
     files: Object.fromEntries(Object.entries(payload).map(([name, bytes]) => [name, hash(bytes)])),
-    migrations: [{ name: '001_example.sql', sha256: hash(migration) }],
+    migrations: [{
+      name: '0000_example.sql', sha256: hash(migration), when: 1,
+      journalSha256: hash(JSON.stringify(JSON.parse(payload['migration/migrations/meta/_journal.json']).entries[0])),
+      snapshotSha256: hash(payload['migration/migrations/meta/0000_snapshot.json']),
+    }],
   };
   await writeFile(join(candidate, 'manifest.json'), JSON.stringify(manifest));
   return { directory, candidate, manifest };
@@ -72,6 +86,10 @@ test('packaging canonicalizes JSONC comments and trailing commas but rejects mal
       'export function createDatabase() { throw new Error("packaging fixture"); }',
     'apps/server/dist/store.js':
       'export function inspectImport() { throw new Error("packaging fixture"); }',
+    'apps/server/dist/migration-history.js':
+      'export function currentSchema() { throw new Error("packaging fixture"); } export function migrationHistory() { throw new Error("packaging fixture"); }',
+    'apps/server/dist/migration-inventory.js':
+      `export { migrationInventory } from ${JSON.stringify(fileURLToPath(new URL('../../apps/server/src/migration-inventory.ts', import.meta.url)))};`,
     'apps/server/wrangler.jsonc': await readFile(join(candidate, 'wrangler.json')),
   };
   for (const [name, bytes] of Object.entries(inputs)) {
@@ -89,7 +107,9 @@ test('packaging canonicalizes JSONC comments and trailing commas but rejects mal
   for (const [from, to] of [
     ['worker/worker.js', 'apps/server/dist/worker/worker.js'],
     ['assets/index.html', 'apps/web/dist/index.html'],
-    ['migration/migrations/001_example.sql', 'apps/server/migrations/001_example.sql'],
+    ['migration/migrations/0000_example.sql', 'apps/server/migrations/0000_example.sql'],
+    ['migration/migrations/meta/_journal.json', 'apps/server/migrations/meta/_journal.json'],
+    ['migration/migrations/meta/0000_snapshot.json', 'apps/server/migrations/meta/0000_snapshot.json'],
   ]) {
     await mkdir(join(sourceRoot, to, '..'), { recursive: true });
     await copyFile(join(candidate, from), join(sourceRoot, to));
@@ -135,8 +155,8 @@ test('migration inventory and no-bundle configuration are verified independently
   const { candidate, manifest } = await fixture(t);
   manifest.migrations[0].sha256 = 'd'.repeat(64);
   await writeFile(join(candidate, 'manifest.json'), JSON.stringify(manifest));
-  await assert.rejects(verifyArtifact(candidate), /migration digest/);
-  manifest.migrations[0].sha256 = manifest.files['migration/migrations/001_example.sql'];
+  await assert.rejects(verifyArtifact(candidate));
+  manifest.migrations[0].sha256 = manifest.files['migration/migrations/0000_example.sql'];
   const bytes = JSON.stringify({
     name: 'corner',
     main: 'worker/worker.js',
@@ -261,12 +281,12 @@ test('unsafe runtime configuration is rejected even with matching payload digest
   }
 });
 
-test('old artifact formats require explicit reconciliation', async (t) => {
-  for (const format of [1, 2]) {
+test('pre-Drizzle artifacts are ineligible', async (t) => {
+  for (const format of [1, 2, 3]) {
     const { candidate, manifest } = await fixture(t);
     manifest.format = format;
     await writeFile(join(candidate, 'manifest.json'), JSON.stringify(manifest));
-    await assert.rejects(verifyArtifact(candidate), /explicit operator reconciliation/);
+    await assert.rejects(verifyArtifact(candidate));
   }
 });
 
@@ -274,7 +294,7 @@ test('single-worker manifests reject obsolete fields and payload directories', a
   const { candidate, manifest } = await fixture(t);
   manifest.frontendName = 'obsolete';
   await writeFile(join(candidate, 'manifest.json'), JSON.stringify(manifest));
-  await assert.rejects(verifyArtifact(candidate), /format-3/);
+  await assert.rejects(verifyArtifact(candidate));
   delete manifest.frontendName;
   await mkdir(join(candidate, 'frontend'));
   await writeFile(join(candidate, 'frontend/worker.js'), 'obsolete');
@@ -298,11 +318,14 @@ test('qualified migration inventory must remain the candidate prefix', async (t)
       passed: true,
     }),
   );
-  const name = '000_inserted.sql';
-  const bytes = 'SELECT 1;';
-  await writeFile(join(candidate, 'migration/migrations', name), bytes);
-  manifest.files[`migration/migrations/${name}`] = hash(bytes);
-  manifest.migrations.unshift({ name, sha256: hash(bytes) });
+  const name = 'migration/migrations/meta/_journal.json';
+  const journal = JSON.parse(await readFile(join(candidate, name), 'utf8'));
+  journal.entries[0].when = 2;
+  const bytes = JSON.stringify(journal);
+  await writeFile(join(candidate, name), bytes);
+  manifest.files[name] = hash(bytes);
+  manifest.migrations[0].when = 2;
+  manifest.migrations[0].journalSha256 = hash(JSON.stringify(journal.entries[0]));
   await writeFile(join(candidate, 'manifest.json'), JSON.stringify(manifest));
   await assert.rejects(
     qualifyArtifact({
@@ -312,4 +335,56 @@ test('qualified migration inventory must remain the candidate prefix', async (t)
     }),
     /must remain a prefix/,
   );
+});
+
+test('Kit SQL and metadata must be exact listed immutable inputs', async (t) => {
+  for (const name of [
+    'migration/migrations/0000_example.sql',
+    'migration/migrations/meta/_journal.json',
+    'migration/migrations/meta/0000_snapshot.json',
+  ]) {
+    const { candidate } = await fixture(t);
+    await writeFile(join(candidate, name), 'tampered');
+    await assert.rejects(verifyArtifact(candidate));
+    await rm(join(candidate, name));
+    await assert.rejects(verifyArtifact(candidate));
+  }
+  const { candidate, manifest } = await fixture(t);
+  const name = 'migration/migrations/meta/extra.json';
+  await writeFile(join(candidate, name), '{}');
+  manifest.files[name] = hash('{}');
+  await writeFile(join(candidate, 'manifest.json'), JSON.stringify(manifest));
+  await assert.rejects(verifyArtifact(candidate));
+});
+
+test('published Kit metadata cannot change before executing candidate code', async (t) => {
+  for (const kind of ['snapshot', 'journal']) {
+    const f = await fixture(t);
+    const prior = await fixture(t);
+    const { digest } = await verifyArtifact(prior.candidate);
+    await writeFile(join(prior.directory, 'qualification.json'), JSON.stringify({
+      format: 1, sourceSha: prior.manifest.sourceSha, candidateDigest: digest,
+      previousDigest: null, bootstrap: true, passed: true,
+    }));
+    const marker = join(f.directory, 'candidate-executed');
+    const entry = `import { writeFileSync } from 'node:fs'; writeFileSync(${JSON.stringify(marker)}, 'executed'); throw new Error('unexpected execution');`;
+    await writeFile(join(f.candidate, f.manifest.migrationEntry), entry);
+    f.manifest.files[f.manifest.migrationEntry] = hash(entry);
+    const name = `migration/migrations/meta/${kind === 'snapshot' ? '0000_snapshot.json' : '_journal.json'}`;
+    const metadata = JSON.parse(await readFile(join(f.candidate, name), 'utf8'));
+    if (kind === 'snapshot') metadata.tables['public.changed'] = {};
+    else metadata.entries[0].breakpoints = false;
+    const bytes = JSON.stringify(metadata);
+    await writeFile(join(f.candidate, name), bytes);
+    f.manifest.files[name] = hash(bytes);
+    f.manifest.migrations[0][kind === 'snapshot' ? 'snapshotSha256' : 'journalSha256'] =
+      hash(kind === 'snapshot' ? bytes : JSON.stringify(metadata.entries[0]));
+    await writeFile(join(f.candidate, 'manifest.json'), JSON.stringify(f.manifest));
+    await verifyArtifact(f.candidate);
+    await assert.rejects(qualifyArtifact({
+      candidate: f.candidate, previous: prior.candidate,
+      report: join(f.directory, 'qualification.json'),
+    }));
+    assert.equal(existsSync(marker), false, 'changed published metadata must be rejected before code execution');
+  }
 });
