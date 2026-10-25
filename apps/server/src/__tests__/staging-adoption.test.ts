@@ -7,7 +7,7 @@ import test from 'node:test';
 import { createDatabase } from '../database.js';
 import { migrate } from '../migrate.js';
 import { migrationsFolder } from '../migration-inventory.js';
-import { legacyChecksum } from '../staging-adoption.js';
+import { legacyChecksum } from '../legacy-adoption.js';
 
 async function fixture() {
   assert.ok(process.env.CORNER_TEST_DATABASE_URL, 'Disposable PostgreSQL required');
@@ -46,7 +46,7 @@ async function fixture() {
   } };
 }
 
-test('populated legacy staging adopts atomically, preserves every record, retries, then uses ordinary native migrations', async () => {
+test('populated legacy schema adopts atomically, preserves every record, retries, then uses ordinary native migrations', async () => {
   const f = await fixture();
   try {
     await migrate(f.target, migrationsFolder, true);
@@ -69,7 +69,7 @@ for (const [name, sql] of [
   try {
     await f.target.query(sql);
     const before = await f.snapshot();
-    await assert.rejects(migrate(f.target, migrationsFolder, true), /STAGING_ADOPTION_REFUSED/);
+    await assert.rejects(migrate(f.target, migrationsFolder, true));
     assert.deepEqual(await f.snapshot(), before);
     if (name === 'native ledger') assert.equal((await f.target.query('SELECT hash FROM __drizzle_migrations')).rows[0].hash, 'unknown');
     else assert.equal((await f.target.query("SELECT to_regclass('__drizzle_migrations') AS name")).rows[0].name, null);

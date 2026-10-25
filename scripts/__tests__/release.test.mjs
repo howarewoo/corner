@@ -1322,3 +1322,81 @@ test('single runtime traffic-switch failure never records a deployed receipt', a
   assert.equal(f.records.at(-1).phase, 'schema-attempted');
   assert(!f.records.some((row) => ['deployed', 'public-passed', 'complete'].includes(row.phase)));
 });
+
+test('legacy production adoption requires a current explicitly pinned bootstrap plan', async () => {
+  const adoption = {
+    runId: '1', sourceSha: source, bootstrap: true, provisionedVersionId: oldVersion,
+    productionAdoptionHost: 'synthetic.invalid', attestation: review, actor: 'reviewer',
+  };
+  for (const override of [
+    { automatic: true }, { bootstrap: false }, { provisionedVersionId: null },
+    { rollbackId: '10' }, { productionAdoptionHost: 'https://synthetic.invalid' },
+  ]) {
+    const f = fixture();
+    await assert.rejects(plan({ ...f.options, ...adoption, ...override }));
+    assert.deepEqual(f.effects, []);
+  }
+  const f = fixture();
+  f.github.baseline = async () => null;
+  const api = f.github.api;
+  f.github.api = async path => path === 'git/ref/heads/main'
+    ? { object: { sha: previousSource } } : api(path);
+  await assert.rejects(plan({ ...f.options, ...adoption }));
+  assert.deepEqual(f.effects, []);
+  f.github.api = api;
+  const prepared = await plan({
+    ...f.options, ...adoption,
+    qualify: async () => ({ ...report, bootstrap: true, previousDigest: null }),
+  });
+  assert.equal(prepared.payload.productionAdoptionHost, adoption.productionAdoptionHost);
+  assert.equal(prepared.payload.operatorRequired, true);
+  f.github.schema = async () => ({ payload: {
+    productionAdoptionHost: 'different.invalid',
+  } });
+  await assert.rejects(plan({ ...f.options, ...adoption }));
+  assert.deepEqual(f.effects, ['planned']);
+});
+
+test('production adoption rejects mismatched approved and protected database destinations before effects', async () => {
+  const before = {
+    database: process.env.DATABASE_URL, direct: process.env.DATABASE_URL_UNPOOLED,
+    worker: process.env.CORNER_WORKER_SECRETS_JSON,
+  };
+  try {
+    for (const mismatch of [
+      { host: 'different.invalid' },
+      { direct: 'postgresql://synthetic-pooler.invalid/unused' },
+      { direct: 'postgresql://synthetic.invalid/unused?options=-c%20search_path%3Dother' },
+      { pooled: 'postgresql://other.invalid/unused' },
+      { pooled: 'postgresql://owner@synthetic.invalid/unused' },
+      { pooled: 'postgresql://synthetic.invalid/other' },
+    ]) {
+      process.env.DATABASE_URL = mismatch.pooled ?? 'postgresql://synthetic.invalid/unused';
+      process.env.DATABASE_URL_UNPOOLED = mismatch.direct ?? 'postgresql://synthetic.invalid/unused';
+      process.env.CORNER_WORKER_SECRETS_JSON = JSON.stringify({
+        DATABASE_URL: process.env.DATABASE_URL,
+        NEON_AUTH_BASE_URL: 'https://auth.example.invalid/neondb/auth',
+        BETTER_AUTH_SECRET: 'synthetic-session-secret-over-thirty-two-characters',
+        CORNER_TOKEN_ENCRYPTION_KEY: Buffer.alloc(32, 42).toString('base64'),
+      });
+      const f = fixture();
+      f.github.baseline = async () => null;
+      Object.assign(f.payload, {
+        bootstrap: true, provisionedVersionId: oldVersion,
+        productionAdoptionHost: mismatch.host ?? 'synthetic.invalid',
+        baselineId: null, operatorRequired: true,
+        qualification: { ...report, bootstrap: true, previousDigest: null },
+      });
+      await assert.rejects(promote(f.options));
+      assert.deepEqual(f.effects, []);
+    }
+  } finally {
+    for (const [key, value] of [
+      ['DATABASE_URL', before.database], ['DATABASE_URL_UNPOOLED', before.direct],
+      ['CORNER_WORKER_SECRETS_JSON', before.worker],
+    ]) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+});
