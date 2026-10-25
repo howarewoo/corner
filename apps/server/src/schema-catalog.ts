@@ -51,7 +51,6 @@ export async function applicationCatalog(client: PoolClient, schema: string): Pr
     `SELECT t.relname,c.relname AS index_name,i.indisunique,i.indisprimary,i.indisvalid,i.indisready,i.indislive,i.indisreplident,i.indnullsnotdistinct,replace(pg_get_indexdef(i.indexrelid), ' ON ' || quote_ident($1) || '.', ' ON ') AS definition FROM pg_index i JOIN pg_class t ON t.oid=i.indrelid JOIN pg_class c ON c.oid=i.indexrelid JOIN pg_namespace n ON n.oid=t.relnamespace WHERE n.nspname=$1 AND t.relname <> ALL($2::text[]) ORDER BY t.relname,c.relname`,
   ];
   const result = [];
-  for (const sql of queries)
-    result.push((await client.query(sql, [schema, excluded])).rows);
+  for (const sql of queries) result.push((await client.query(sql, [schema, excluded])).rows);
   return JSON.stringify(result);
 }

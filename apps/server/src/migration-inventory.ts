@@ -12,27 +12,41 @@ export interface MigrationIdentity {
   journalSha256: string;
   snapshotSha256: string;
 }
-const journalSchema = z.object({
-  version: z.literal('7'),
-  dialect: z.literal('postgresql'),
-  entries: z.array(z.object({
-    idx: z.number().int().nonnegative(),
+const journalSchema = z
+  .object({
     version: z.literal('7'),
-    when: z.number().int().positive().safe(),
-    tag: z.string().regex(/^\d{4}_[A-Za-z0-9_-]+$/),
-    breakpoints: z.boolean(),
-  }).strict()).min(1),
-}).strict();
-const snapshotSchema = z.object({
-  id: z.string().uuid(), prevId: z.string().uuid(), version: z.literal('7'),
-  dialect: z.literal('postgresql'), tables: z.record(z.unknown()),
-}).passthrough();
+    dialect: z.literal('postgresql'),
+    entries: z
+      .array(
+        z
+          .object({
+            idx: z.number().int().nonnegative(),
+            version: z.literal('7'),
+            when: z.number().int().positive().safe(),
+            tag: z.string().regex(/^\d{4}_[A-Za-z0-9_-]+$/),
+            breakpoints: z.boolean(),
+          })
+          .strict(),
+      )
+      .min(1),
+  })
+  .strict();
+const snapshotSchema = z
+  .object({
+    id: z.string().uuid(),
+    prevId: z.string().uuid(),
+    version: z.literal('7'),
+    dialect: z.literal('postgresql'),
+    tables: z.record(z.unknown()),
+  })
+  .passthrough();
 
 /** Validate Kit's complete execution inputs before its permissive reader sees them. */
 export async function migrationInventory(folder = migrationsFolder): Promise<MigrationIdentity[]> {
   for (const path of [folder, join(folder, 'meta')]) {
     const stat = await lstat(path);
-    if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error('Invalid migration directory.');
+    if (!stat.isDirectory() || stat.isSymbolicLink())
+      throw new Error('Invalid migration directory.');
   }
   const read = async (path: string) => {
     const stat = await lstat(path);
@@ -59,13 +73,18 @@ export async function migrationInventory(folder = migrationsFolder): Promise<Mig
     entries.push({
       name,
       when: entry.when,
-      sha256: createHash('sha256').update(await read(join(folder, name))).digest('hex'),
+      sha256: createHash('sha256')
+        .update(await read(join(folder, name)))
+        .digest('hex'),
       journalSha256: createHash('sha256').update(JSON.stringify(entry)).digest('hex'),
       snapshotSha256: createHash('sha256').update(snapshotBytes).digest('hex'),
     });
   }
-  if (JSON.stringify((await readdir(folder)).sort()) !== JSON.stringify(['meta', ...entries.map((entry) => entry.name)].sort()) ||
-      JSON.stringify((await readdir(join(folder, 'meta'))).sort()) !== JSON.stringify(metadata.sort()))
+  if (
+    JSON.stringify((await readdir(folder)).sort()) !==
+      JSON.stringify(['meta', ...entries.map((entry) => entry.name)].sort()) ||
+    JSON.stringify((await readdir(join(folder, 'meta'))).sort()) !== JSON.stringify(metadata.sort())
+  )
     throw new Error('Unlisted migration inputs.');
   return entries;
 }

@@ -151,7 +151,9 @@ test('batch completion bookkeeping commits or rolls back with the state and is s
   const changes = [{ type: 'recipe.save' as const, data: recipe() }];
   await assert.rejects(
     store.applyBatch('user-a', 'atomic-batch-123', changes, 0, async (connection) => {
-      await connection.execute(sql`INSERT INTO applied_runs (id, status) VALUES (${'run-a'}, ${'applied'})`);
+      await connection.execute(
+        sql`INSERT INTO applied_runs (id, status) VALUES (${'run-a'}, ${'applied'})`,
+      );
       throw new Error('simulate bookkeeping failure');
     }),
     /bookkeeping failure/,

@@ -4,11 +4,7 @@ import { fileURLToPath } from 'node:url';
 import type { Pool, PoolClient } from 'pg';
 import { createDatabase } from './database.js';
 import { applicationCatalog, quoteIdentifier as quote } from './schema-catalog.js';
-import {
-  migrationHistory,
-  recordBaseline,
-  migrationLock,
-} from './migration-history.js';
+import { migrationHistory, recordBaseline, migrationLock } from './migration-history.js';
 import { migrationInventory } from './migration-inventory.js';
 
 const directory = new URL('../migrations/', import.meta.url);
@@ -59,11 +55,18 @@ export async function baselineStaging(options: StagingBaselineOptions): Promise<
       const sourceUrl = endpoint(source.options.connectionString ?? '');
       const targetUrl = endpoint(target.options.connectionString ?? '');
       const referenceUrl = endpoint(reference.options.connectionString ?? '');
-      need(Boolean(options.expectedTargetHost) && targetUrl.hostname === options.expectedTargetHost);
-      const hosts = [sourceUrl, targetUrl, referenceUrl].map((url) => url.hostname.replace('-pooler.', '.'));
+      need(
+        Boolean(options.expectedTargetHost) && targetUrl.hostname === options.expectedTargetHost,
+      );
+      const hosts = [sourceUrl, targetUrl, referenceUrl].map((url) =>
+        url.hostname.replace('-pooler.', '.'),
+      );
       need(new Set(hosts).size === 3);
     } else {
-      need(/^corner_test_[a-f0-9]{32}$/.test(sourceSchema) && /^corner_test_[a-f0-9]{32}$/.test(targetSchema));
+      need(
+        /^corner_test_[a-f0-9]{32}$/.test(sourceSchema) &&
+          /^corner_test_[a-f0-9]{32}$/.test(targetSchema),
+      );
       const disposable = new URL(process.env.CORNER_TEST_DATABASE_URL ?? '');
       disposable.searchParams.delete('options');
       for (const pool of [source, target, reference]) {
@@ -80,12 +83,16 @@ export async function baselineStaging(options: StagingBaselineOptions): Promise<
       need((await identity(ref, 'public')) !== (await identity(dst, 'public')));
     }
     await src.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
-    const sourceTables = (await src.query(
-      `SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=$1 AND c.relkind='r' ORDER BY c.relname`,
-      [sourceSchema],
-    )).rows;
+    const sourceTables = (
+      await src.query(
+        `SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=$1 AND c.relkind='r' ORDER BY c.relname`,
+        [sourceSchema],
+      )
+    ).rows;
     for (const table of sourceTables)
-      await src.query(`LOCK TABLE ${quote(sourceSchema)}.${quote(table.relname)} IN ACCESS SHARE MODE`);
+      await src.query(
+        `LOCK TABLE ${quote(sourceSchema)}.${quote(table.relname)} IN ACCESS SHARE MODE`,
+      );
     await dst.query('BEGIN');
     await dst.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [migrationLock]);
     await ref.query('BEGIN');
@@ -111,11 +118,17 @@ export async function baselineStaging(options: StagingBaselineOptions): Promise<
   } catch {
     throw refuse();
   } finally {
-    await Promise.all(clients.map(async (client) => {
-      try { await client.query('ROLLBACK'); }
-      catch { /* Preserve private-safe failure. */ }
-      finally { client.release(); }
-    }));
+    await Promise.all(
+      clients.map(async (client) => {
+        try {
+          await client.query('ROLLBACK');
+        } catch {
+          /* Preserve private-safe failure. */
+        } finally {
+          client.release();
+        }
+      }),
+    );
   }
 }
 
@@ -126,7 +139,9 @@ function endpoint(value: string): URL {
   return url;
 }
 
-export async function stagingBaselineCli(environment: NodeJS.ProcessEnv = process.env): Promise<void> {
+export async function stagingBaselineCli(
+  environment: NodeJS.ProcessEnv = process.env,
+): Promise<void> {
   const pools: Pool[] = [];
   let failed = false;
   try {
@@ -134,8 +149,15 @@ export async function stagingBaselineCli(environment: NodeJS.ProcessEnv = proces
     const target = endpoint(environment.DATABASE_URL_UNPOOLED ?? '');
     const reference = endpoint(environment.CORNER_TEST_DATABASE_URL ?? '');
     for (const url of [source, target, reference]) pools.push(createDatabase(url.href));
-    await baselineStaging({ source: pools[0]!, target: pools[1]!, reference: pools[2]!, expectedTargetHost: environment.STAGING_DATABASE_HOST });
-  } catch { failed = true; }
+    await baselineStaging({
+      source: pools[0]!,
+      target: pools[1]!,
+      reference: pools[2]!,
+      expectedTargetHost: environment.STAGING_DATABASE_HOST,
+    });
+  } catch {
+    failed = true;
+  }
   const closed = await Promise.allSettled(pools.map((pool) => pool.end()));
   if (failed || closed.some((result) => result.status === 'rejected')) throw refuse();
 }
@@ -145,7 +167,12 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
     process.stderr.write('STAGING_BASELINE_REQUIRES_EXPLICIT_APPLY\n');
     process.exitCode = 1;
   } else {
-    try { await stagingBaselineCli(); process.stdout.write('Staging migration baseline recorded.\n'); }
-    catch { process.stderr.write('STAGING_BASELINE_REFUSED\n'); process.exitCode = 1; }
+    try {
+      await stagingBaselineCli();
+      process.stdout.write('Staging migration baseline recorded.\n');
+    } catch {
+      process.stderr.write('STAGING_BASELINE_REFUSED\n');
+      process.exitCode = 1;
+    }
   }
 }

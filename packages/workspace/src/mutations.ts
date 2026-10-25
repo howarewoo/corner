@@ -8,7 +8,11 @@ import {
   RecipeSchema,
 } from '@packages/nutrition/schemas';
 import { mondayOf, weekDates } from '@packages/nutrition/dates';
-import { applyTrainingMutation, ensureTrainingState, TrainingMutationOptions } from '@packages/training/workouts';
+import {
+  applyTrainingMutation,
+  ensureTrainingState,
+  TrainingMutationOptions,
+} from '@packages/training/workouts';
 import type { AppState, Mutation } from './types.js';
 
 const text = (max: number) => z.string().trim().max(max);

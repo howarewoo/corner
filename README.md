@@ -55,30 +55,30 @@ The build compiles the nutrition, training, workspace, agent, and API packages i
 
 ### Workspace commands
 
-| Root command                   | Result                                                                                                                                      |
-| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `pnpm run dev`                | Isolated local PostgreSQL/Auth and development apps; optional `--port=45100` selects three consecutive loopback ports                         |
-| `pnpm run dev:seed`           | Explicitly create empty/demo local users; preserve existing fixture edits                                                                    |
-| `pnpm run dev:down`           | Stop owned local services without deleting data                                                                                             |
-| `pnpm run dev:reset --confirm-delete-local-data` | Delete only the owned local database; retain keys                                                              |
-| `pnpm run build`               | Cached dependency-aware builds for all workspaces                                                                                           |
-| `pnpm run check`               | Type checks for all apps and shared packages                                                                                                |
-| `pnpm run lint`                | Repository-wide Oxlint checks with the registered shadcn lint plugin                                                                        |
-| `pnpm run format`              | Format supported repository files with Oxfmt                                                                                                |
-| `pnpm run format:check`        | Check formatting without changing files                                                                                                     |
-| `pnpm test`                    | Independent server and rendered-web test suites                                                                                             |
-| `pnpm run smoke`               | Actual compiled-server account, proxy, health, and shutdown checks                                                                          |
-| `pnpm run smoke:dev`           | Actual two-app development proxy, session, and shared-catalog checks                                                                        |
-| `pnpm start`                   | The compiled production server and built web app                                                                                            |
-| `pnpm run db:generate`         | Generate reviewed SQL and snapshots from the server-owned Drizzle schema; no database connection required |
-| `pnpm run db:check`            | Check Drizzle Kit migration snapshot consistency |
-| `pnpm run db:migrate`          | Apply checked-in Drizzle migrations through `DATABASE_URL_UNPOOLED`, after a build |
-| `pnpm run db:baseline:staging` | Explicit verified migration-history baseline for a new empty schema-only staging branch; build first, private operator environment required |
-| `pnpm run build:workers`       | Build all workspaces and dry-run the single full-stack `corner` Worker without deployment |
-| `pnpm run verify -- --plan`    | Show conservative changed-path selection without running checks                                                                             |
-| `pnpm run verify`              | Run selected local checks; `-- --full` forces the complete qualification                                                                    |
-| `pnpm run test:ci`             | Native Node CI, release, and artifact regression tests                                                                                      |
-| `pnpm run smoke:workers`       | Actual full-stack workerd runtime with disposable PostgreSQL and HTTPS Auth fixtures, after `build:workers` |
+| Root command                                     | Result                                                                                                                                      |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm run dev`                                   | Isolated local PostgreSQL/Auth and development apps; optional `--port=45100` selects three consecutive loopback ports                       |
+| `pnpm run dev:seed`                              | Explicitly create empty/demo local users; preserve existing fixture edits                                                                   |
+| `pnpm run dev:down`                              | Stop owned local services without deleting data                                                                                             |
+| `pnpm run dev:reset --confirm-delete-local-data` | Delete only the owned local database; retain keys                                                                                           |
+| `pnpm run build`                                 | Cached dependency-aware builds for all workspaces                                                                                           |
+| `pnpm run check`                                 | Type checks for all apps and shared packages                                                                                                |
+| `pnpm run lint`                                  | Repository-wide Oxlint checks with the registered shadcn lint plugin                                                                        |
+| `pnpm run format`                                | Format supported repository files with Oxfmt                                                                                                |
+| `pnpm run format:check`                          | Check formatting without changing files                                                                                                     |
+| `pnpm test`                                      | Independent server and rendered-web test suites                                                                                             |
+| `pnpm run smoke`                                 | Actual compiled-server account, proxy, health, and shutdown checks                                                                          |
+| `pnpm run smoke:dev`                             | Actual two-app development proxy, session, and shared-catalog checks                                                                        |
+| `pnpm start`                                     | The compiled production server and built web app                                                                                            |
+| `pnpm run db:generate`                           | Generate reviewed SQL and snapshots from the server-owned Drizzle schema; no database connection required                                   |
+| `pnpm run db:check`                              | Check Drizzle Kit migration snapshot consistency                                                                                            |
+| `pnpm run db:migrate`                            | Apply checked-in Drizzle migrations through `DATABASE_URL_UNPOOLED`, after a build                                                          |
+| `pnpm run db:baseline:staging`                   | Explicit verified migration-history baseline for a new empty schema-only staging branch; build first, private operator environment required |
+| `pnpm run build:workers`                         | Build all workspaces and dry-run the single full-stack `corner` Worker without deployment                                                   |
+| `pnpm run verify -- --plan`                      | Show conservative changed-path selection without running checks                                                                             |
+| `pnpm run verify`                                | Run selected local checks; `-- --full` forces the complete qualification                                                                    |
+| `pnpm run test:ci`                               | Native Node CI, release, and artifact regression tests                                                                                      |
+| `pnpm run smoke:workers`                         | Actual full-stack workerd runtime with disposable PostgreSQL and HTTPS Auth fixtures, after `build:workers`                                 |
 
 For a focused build, use `pnpm run build --filter=server` or `pnpm run build --filter=web`. Turbo also builds their domain/API dependencies. Each app declares its own dependencies; import models and validation directly from their owning `@packages/nutrition`, `@packages/training`, `@packages/workspace`, or `@packages/agent` subpath, and the application contract through `@packages/api`, rather than relative paths into another workspace.
 
@@ -276,19 +276,19 @@ Old feature-preview provisioning workflows are removed. Never recreate removed l
 
 ### Main source areas
 
-| Folder                 | Responsibility                                                                                   |
-| ---------------------- | ------------------------------------------------------------------------------------------------ |
-| `apps/web/src/`        | React account UI, profile/import settings, meal planner, recipes, workouts, and agent review     |
-| `apps/server/src/`     | Managed Auth boundary, PostgreSQL persistence, oRPC procedures, model connection, and planning agent |
-| `packages/nutrition/src/` | Food and recipe types/schemas, meal calendar, macro/grocery calculations, and food estimates |
-| `packages/training/src/` | Workout types/rules, result prefill, exercise catalog, and provenance data |
+| Folder                    | Responsibility                                                                                               |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `apps/web/src/`           | React account UI, profile/import settings, meal planner, recipes, workouts, and agent review                 |
+| `apps/server/src/`        | Managed Auth boundary, PostgreSQL persistence, oRPC procedures, model connection, and planning agent         |
+| `packages/nutrition/src/` | Food and recipe types/schemas, meal calendar, macro/grocery calculations, and food estimates                 |
+| `packages/training/src/`  | Workout types/rules, result prefill, exercise catalog, and provenance data                                   |
 | `packages/workspace/src/` | Combined state/settings, validated mutation composition, training-aware nutrition targets, and initial state |
-| `packages/agent/src/` | Planning proposal contracts, allowed changes, and proposal-to-mutation validation |
-| `packages/api/src/`    | Browser-safe oRPC contract, transport schemas, and inferred client types                        |
-| `apps/web/tests/`      | Rendered account/connection controls and development configuration checks                        |
-| `apps/server/tests/`   | Accounts, email, data isolation, agent, provider, and proxy regression checks                    |
-| `scripts/`             | Workspace test runner, production/development smoke checks, configuration, and packaging         |
-| `deployment/`          | HTTPS edge configuration for the optional hosted Compose deployment                              |
+| `packages/agent/src/`     | Planning proposal contracts, allowed changes, and proposal-to-mutation validation                            |
+| `packages/api/src/`       | Browser-safe oRPC contract, transport schemas, and inferred client types                                     |
+| `apps/web/tests/`         | Rendered account/connection controls and development configuration checks                                    |
+| `apps/server/tests/`      | Accounts, email, data isolation, agent, provider, and proxy regression checks                                |
+| `scripts/`                | Workspace test runner, production/development smoke checks, configuration, and packaging                     |
+| `deployment/`             | HTTPS edge configuration for the optional hosted Compose deployment                                          |
 
 ## Project guidance
 

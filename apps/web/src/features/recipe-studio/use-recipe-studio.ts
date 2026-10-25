@@ -117,9 +117,14 @@ export function useRecipeStudio({
       const code = errorCode(error);
       if (code && !code.endsWith('_PENDING') && code !== 'AI_BUSY' && code !== 'DAILY_LIMIT')
         generationIntent.current = null;
-      notify(code === 'AI_NOT_CONFIGURED'
-        ? 'Connect your AI account in My agent to generate a recipe.'
-        : error instanceof Error ? error.message : 'Could not generate a recipe.', true);
+      notify(
+        code === 'AI_NOT_CONFIGURED'
+          ? 'Connect your AI account in My agent to generate a recipe.'
+          : error instanceof Error
+            ? error.message
+            : 'Could not generate a recipe.',
+        true,
+      );
     } finally {
       generationLock.current = false;
     }

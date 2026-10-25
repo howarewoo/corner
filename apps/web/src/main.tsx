@@ -7,7 +7,16 @@ import { Button, Alert, Toaster, createToastManager } from '@packages/ui';
 import AccountAccess, { readAccountRoute } from './account-access';
 import { authPost, errorMessage } from './api';
 import { focusManager, QueryClientProvider, useQuery } from '@tanstack/react-query';
-import { clearPrivateState, privateKey, queryClient, rpc, scoped, sessionLifetime, useSessionLifetime, useWorkspace } from './rpc';
+import {
+  clearPrivateState,
+  privateKey,
+  queryClient,
+  rpc,
+  scoped,
+  sessionLifetime,
+  useSessionLifetime,
+  useWorkspace,
+} from './rpc';
 import '@packages/ui/utilities-only.css';
 import '@packages/ui/theme.css';
 import '@packages/ui/styles.css';
@@ -61,23 +70,31 @@ function ConnectionNotice() {
 
 function App() {
   const lifetime = useSessionLifetime();
-  useEffect(() => focusManager.setEventListener(handleFocus => {
-    const refresh = () => {
-      const visible = document.visibilityState === 'visible';
-      handleFocus(visible);
-      if (visible) void queryClient.invalidateQueries(
-        { queryKey: privateKey('workspace') },
-        { cancelRefetch: false },
-      );
-    };
-    window.addEventListener('focus', refresh);
-    document.addEventListener('visibilitychange', refresh);
-    return () => {
-      window.removeEventListener('focus', refresh);
-      document.removeEventListener('visibilitychange', refresh);
-    };
-  }), []);
-  const session = useQuery({ queryKey: privateKey('session'), queryFn: ({ signal }) => scoped(() => rpc.account.session(undefined, { signal })) });
+  useEffect(
+    () =>
+      focusManager.setEventListener((handleFocus) => {
+        const refresh = () => {
+          const visible = document.visibilityState === 'visible';
+          handleFocus(visible);
+          if (visible)
+            void queryClient.invalidateQueries(
+              { queryKey: privateKey('workspace') },
+              { cancelRefetch: false },
+            );
+        };
+        window.addEventListener('focus', refresh);
+        document.addEventListener('visibilitychange', refresh);
+        return () => {
+          window.removeEventListener('focus', refresh);
+          document.removeEventListener('visibilitychange', refresh);
+        };
+      }),
+    [],
+  );
+  const session = useQuery({
+    queryKey: privateKey('session'),
+    queryFn: ({ signal }) => scoped(() => rpc.account.session(undefined, { signal })),
+  });
   const user = session.data?.user ?? null;
   const workspaceQuery = useWorkspace(Boolean(user));
   const workspace = workspaceQuery.data;

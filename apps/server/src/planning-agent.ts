@@ -128,17 +128,24 @@ export class PlanningAgent {
   }
 
   async initialize(): Promise<void> {
-    await this.db.update(aiRuns).set({
-      status: 'failed',
-      error: 'The server restarted before this request finished. No changes were applied. Start a new request to continue.',
-      updated_at: new Date().toISOString(),
-    }).where(eq(aiRuns.status, 'running'));
+    await this.db
+      .update(aiRuns)
+      .set({
+        status: 'failed',
+        error:
+          'The server restarted before this request finished. No changes were applied. Start a new request to continue.',
+        updated_at: new Date().toISOString(),
+      })
+      .where(eq(aiRuns.status, 'running'));
   }
 
   async list(userId: string): Promise<AgentRun[]> {
-    const rows = await this.db.select().from(aiRuns)
+    const rows = await this.db
+      .select()
+      .from(aiRuns)
       .where(and(eq(aiRuns.user_id, userId), eq(aiRuns.kind, 'plan')))
-      .orderBy(desc(aiRuns.created_at)).limit(30);
+      .orderBy(desc(aiRuns.created_at))
+      .limit(30);
     return (rows as Row[]).map(toRun);
   }
   async get(userId: string, id: string): Promise<AgentRun> {
@@ -149,7 +156,9 @@ export class PlanningAgent {
   }
   private async row(userId: string, id: string): Promise<Row> {
     const row = (
-      await this.db.select().from(aiRuns)
+      await this.db
+        .select()
+        .from(aiRuns)
         .where(and(eq(aiRuns.user_id, userId), eq(aiRuns.id, id)))
     )[0] as Row | undefined;
     if (!row) throw new AgentError(404, 'RUN_NOT_FOUND', 'That AI request was not found.');
@@ -173,7 +182,9 @@ export class PlanningAgent {
       payload = preferences;
     }
     const row = (
-      await this.db.select({ payload_hash: aiRuns.payload_hash }).from(aiRuns)
+      await this.db
+        .select({ payload_hash: aiRuns.payload_hash })
+        .from(aiRuns)
         .where(and(eq(aiRuns.user_id, userId), eq(aiRuns.kind, kind), eq(aiRuns.request_id, id)))
     )[0];
     if (!row) return false;
@@ -202,10 +213,14 @@ export class PlanningAgent {
       );
     return this.db.transaction(async (connection) => {
       // Admission counts and idempotent claims must remain atomic across awaited SQL.
-      await connection.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended('corner:agent-admission', 0))`);
+      await connection.execute(
+        sql`SELECT pg_advisory_xact_lock(hashtextextended('corner:agent-admission', 0))`,
+      );
       const hash = jsonHash(payload);
       const existing = (
-        await connection.select().from(aiRuns)
+        await connection
+          .select()
+          .from(aiRuns)
           .where(and(eq(aiRuns.user_id, userId), eq(aiRuns.kind, kind), eq(aiRuns.request_id, id)))
       )[0] as Row | undefined;
       if (existing) {
@@ -218,11 +233,18 @@ export class PlanningAgent {
         return { row: existing, fresh: false };
       }
       const now = new Date().toISOString();
-      const [active] = await connection.select({ count: count() }).from(aiRuns)
+      const [active] = await connection
+        .select({ count: count() })
+        .from(aiRuns)
         .where(eq(aiRuns.status, 'running'));
-      const [ownActive] = await connection.select({ id: aiRuns.id }).from(aiRuns)
-        .where(and(eq(aiRuns.user_id, userId), eq(aiRuns.status, 'running'))).limit(1);
-      const [daily] = await connection.select({ count: count() }).from(aiRuns)
+      const [ownActive] = await connection
+        .select({ id: aiRuns.id })
+        .from(aiRuns)
+        .where(and(eq(aiRuns.user_id, userId), eq(aiRuns.status, 'running')))
+        .limit(1);
+      const [daily] = await connection
+        .select({ count: count() })
+        .from(aiRuns)
         .where(and(eq(aiRuns.user_id, userId), gte(aiRuns.created_at, now.slice(0, 10))));
       if (ownActive || active.count >= 4)
         throw new AgentError(
@@ -288,9 +310,20 @@ export class PlanningAgent {
       })
       .then(async (result) => {
         signal.throwIfAborted();
-        await this.db.update(aiRuns).set({
-          status: 'completed', result: JSON.stringify(result), updated_at: new Date().toISOString(),
-        }).where(and(eq(aiRuns.id, row.id), eq(aiRuns.user_id, row.user_id), eq(aiRuns.status, 'running')));
+        await this.db
+          .update(aiRuns)
+          .set({
+            status: 'completed',
+            result: JSON.stringify(result),
+            updated_at: new Date().toISOString(),
+          })
+          .where(
+            and(
+              eq(aiRuns.id, row.id),
+              eq(aiRuns.user_id, row.user_id),
+              eq(aiRuns.status, 'running'),
+            ),
+          );
       })
       .catch(async (error) => {
         const safe =
@@ -300,10 +333,22 @@ export class PlanningAgent {
         const code =
           safe?.code && /^[a-zA-Z0-9_.-]{1,120}$/.test(safe.code) ? safe.code : 'GENERATION_FAILED';
         const status = safe?.status && safe.status >= 400 && safe.status <= 599 ? safe.status : 502;
-        await this.db.update(aiRuns).set({
-          status: 'failed', error: safeError(error), error_code: code, error_status: status,
-          updated_at: new Date().toISOString(),
-        }).where(and(eq(aiRuns.id, row.id), eq(aiRuns.user_id, row.user_id), eq(aiRuns.status, 'running')));
+        await this.db
+          .update(aiRuns)
+          .set({
+            status: 'failed',
+            error: safeError(error),
+            error_code: code,
+            error_status: status,
+            updated_at: new Date().toISOString(),
+          })
+          .where(
+            and(
+              eq(aiRuns.id, row.id),
+              eq(aiRuns.user_id, row.user_id),
+              eq(aiRuns.status, 'running'),
+            ),
+          );
       })
       .finally(() => {
         this.tasks.delete(row.id);
@@ -318,9 +363,13 @@ export class PlanningAgent {
     if (row.kind !== 'plan')
       throw new AgentError(404, 'RUN_NOT_FOUND', 'That coaching request was not found.');
     if (row.status === 'running') {
-      await this.db.update(aiRuns).set({
-        status: 'cancelled', updated_at: new Date().toISOString(),
-      }).where(and(eq(aiRuns.user_id, userId), eq(aiRuns.id, id), eq(aiRuns.status, 'running')));
+      await this.db
+        .update(aiRuns)
+        .set({
+          status: 'cancelled',
+          updated_at: new Date().toISOString(),
+        })
+        .where(and(eq(aiRuns.user_id, userId), eq(aiRuns.id, id), eq(aiRuns.status, 'running')));
       this.tasks.get(id)?.controller.abort();
     }
     return this.get(userId, id);
@@ -368,9 +417,15 @@ export class PlanningAgent {
       mutations,
       row.base_revision,
       async (connection) => {
-        await connection.update(aiRuns).set({
-          status: 'applied', updated_at: new Date().toISOString(),
-        }).where(and(eq(aiRuns.user_id, userId), eq(aiRuns.id, id), eq(aiRuns.status, 'completed')));
+        await connection
+          .update(aiRuns)
+          .set({
+            status: 'applied',
+            updated_at: new Date().toISOString(),
+          })
+          .where(
+            and(eq(aiRuns.user_id, userId), eq(aiRuns.id, id), eq(aiRuns.status, 'completed')),
+          );
       },
     );
     return { ...saved, run: await this.get(userId, id) };

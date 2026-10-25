@@ -10,10 +10,10 @@ This guide does not create a cloud account, register a domain, configure SMTP, o
 
 Production and staging share one full-stack runtime and immutable payload:
 
-| Environment | Runtime | Git source | Expected origin |
-| ----------- | ------- | ---------- | --------------- |
-| Production | Worker `corner` | `main` | `https://corner.adam-nathaniel-woo.workers.dev` |
-| Staging | Native Preview `staging` under `corner` | `staging` | `https://staging-corner.adam-nathaniel-woo.workers.dev` |
+| Environment | Runtime                                 | Git source | Expected origin                                         |
+| ----------- | --------------------------------------- | ---------- | ------------------------------------------------------- |
+| Production  | Worker `corner`                         | `main`     | `https://corner.adam-nathaniel-woo.workers.dev`         |
+| Staging     | Native Preview `staging` under `corner` | `staging`  | `https://staging-corner.adam-nathaniel-woo.workers.dev` |
 
 Both serve assets, `/api/*`, and `/auth/callback` through `apps/server/src/worker.ts`; there is no frontend Worker or service binding. Production also supports an exact HTTPS custom domain. Keep top-level `preview_urls: true`. Enable `workers_dev` only for production's exact stable `https://corner.<account-subdomain>.workers.dev` origin; custom-domain production keeps it disabled. Deployment/Preview URLs cannot be production canonical origins. Keep DB/Auth/keys isolated and hosted ChatGPT disabled.
 

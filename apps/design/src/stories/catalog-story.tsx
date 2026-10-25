@@ -8,7 +8,9 @@ export function CatalogStory({ id }: { id: string }) {
   return (
     <div className="catalog-story">
       <WorkspaceHeader title={item.label} description={item.description} />
-      <p className="source-line">{item.group} · {item.importPath}</p>
+      <p className="source-line">
+        {item.group} · {item.importPath}
+      </p>
       <Specimen key={id} id={id} />
     </div>
   );

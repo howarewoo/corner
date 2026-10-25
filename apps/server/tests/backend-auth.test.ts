@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict';
 import { after, before, test } from 'node:test';
 import type { Pool } from 'pg';
-import { testDatabase, closeTestDatabase, createTestAuth, neonTestConfig, readResponse } from './helpers.ts';
+import {
+  testDatabase,
+  closeTestDatabase,
+  createTestAuth,
+  neonTestConfig,
+  readResponse,
+} from './helpers.ts';
 import type { CornerAuth } from '../src/auth.ts';
 import { createApp } from '../src/app.ts';
 import type { Config } from '../src/config.ts';
@@ -48,7 +54,11 @@ function request(
   return app.request(`${config.origin}${path}`, {
     method,
     headers,
-    ...(rpc ? { body: JSON.stringify({ json: options.body }) } : options.body !== undefined ? { body: JSON.stringify(options.body) } : {}),
+    ...(rpc
+      ? { body: JSON.stringify({ json: options.body }) }
+      : options.body !== undefined
+        ? { body: JSON.stringify(options.body) }
+        : {}),
   });
 }
 
@@ -80,7 +90,9 @@ before(async () => {
     async callback(owner: string, _url: URL, sessionId: string) {
       callbackOwner = { owner, hasVerifiedSession: Boolean(sessionId) };
     },
-    async models() { return []; },
+    async models() {
+      return [];
+    },
   } as unknown as SubscriptionProvider;
   app = createApp({ config, auth, store, ai: { provider, agent: {} as PlanningAgent } });
   alice = await account('Alice', 'alice@example.test');
@@ -89,7 +101,7 @@ before(async () => {
 after(async () => await closeTestDatabase(db));
 
 test('anonymous requests and forged Sites headers cannot authenticate or select a workspace', async () => {
-  assert.deepEqual(await readResponse((await request('/api/rpc/account/session'))), { user: null });
+  assert.deepEqual(await readResponse(await request('/api/rpc/account/session')), { user: null });
   await expectError(
     await request('/api/rpc/workspace/get', {
       headers: {
@@ -103,14 +115,18 @@ test('anonymous requests and forged Sites headers cannot authenticate or select 
   await expectError(await request('/api/identity-test'), 401, 'SIGN_IN_REQUIRED');
   await expectError(await request('/auth/callback'), 401, 'SIGN_IN_REQUIRED');
   assert.equal((await request('/api/health')).status, 200);
-  const session = await readResponse((await request('/api/rpc/account/session', { cookie: alice.cookie })));
+  const session = await readResponse(
+    await request('/api/rpc/account/session', { cookie: alice.cookie }),
+  );
   assert.equal(session.user.id, alice.id);
   assert.equal(session.user.sessionId, undefined);
   assert.equal(session.user.token, undefined);
 });
 
 test('new authenticated accounts are empty and OAuth callbacks receive the verified session', async () => {
-  const state = await readResponse((await request('/api/rpc/workspace/get', { cookie: alice.cookie })));
+  const state = await readResponse(
+    await request('/api/rpc/workspace/get', { cookie: alice.cookie }),
+  );
   assert.equal(state.state.settings.name, 'Alice');
   assert.equal(state.revision, 0);
   assert.equal(state.aiAvailable, false);
@@ -135,7 +151,11 @@ test('cookie-authenticated writes reject missing or foreign origins before chang
     'ORIGIN_REQUIRED',
   );
   await expectError(
-    await request('/api/rpc/workspace/mutate', { cookie: alice.cookie, body, origin: 'https://other.example' }),
+    await request('/api/rpc/workspace/mutate', {
+      cookie: alice.cookie,
+      body,
+      origin: 'https://other.example',
+    }),
     403,
     'ORIGIN_NOT_ALLOWED',
   );
@@ -256,25 +276,42 @@ test('JSON/body limits and error envelopes avoid internal data exposure', async 
   });
   await expectError(await app.fetch(nonJson), 415, 'JSON_REQUIRED');
   const originalRead = store.read.bind(store);
-  store.read = async () => { throw new Error('private-database-details-and-secret'); };
+  store.read = async () => {
+    throw new Error('private-database-details-and-secret');
+  };
   try {
     const response = await request('/api/rpc/workspace/get', { cookie: alice.cookie });
     const safe = await expectError(response, 503, 'SERVICE_UNAVAILABLE');
     assert(!JSON.stringify(safe).includes('private-database'));
-  } finally { store.read = originalRead; }
+  } finally {
+    store.read = originalRead;
+  }
 });
 
 test('RPC preserves raw mutation identity before domain normalization and retained receipt replay', async () => {
   const requestId = 'raw-fingerprint-123';
-  const mutation = { type: 'grocery.check', data: { key: ' oats|g ', checked: true, extra: 'retained' } };
+  const mutation = {
+    type: 'grocery.check',
+    data: { key: ' oats|g ', checked: true, extra: 'retained' },
+  };
   const committed = await store.mutate(alice.id, requestId, mutation);
-  const replay = await request('/api/rpc/workspace/mutate', { cookie: alice.cookie, body: { requestId, mutation } });
+  const replay = await request('/api/rpc/workspace/mutate', {
+    cookie: alice.cookie,
+    body: { requestId, mutation },
+  });
   assert.equal(replay.status, 200);
   assert.equal((await readResponse(replay)).revision, committed.revision);
-  await expectError(await request('/api/rpc/workspace/mutate', {
-    cookie: alice.cookie,
-    body: { requestId, mutation: { type: 'grocery.check', data: { key: 'oats|g', checked: true } } },
-  }), 409, 'REQUEST_ID_REUSED');
+  await expectError(
+    await request('/api/rpc/workspace/mutate', {
+      cookie: alice.cookie,
+      body: {
+        requestId,
+        mutation: { type: 'grocery.check', data: { key: 'oats|g', checked: true } },
+      },
+    }),
+    409,
+    'REQUEST_ID_REUSED',
+  );
   const saved = await store.read(alice.id);
   assert.equal(saved.revision, committed.revision);
   assert.equal(saved.state.groceryChecks['oats|g'], true);
@@ -283,7 +320,11 @@ test('RPC preserves raw mutation identity before domain normalization and retain
 test('real sign-out revokes the cookie session while password sign-in creates a new session', async () => {
   const logout = await request('/api/auth/sign-out', { cookie: bob.cookie, body: {} });
   assert.equal(logout.status, 200);
-  await expectError(await request('/api/rpc/workspace/get', { cookie: bob.cookie }), 401, 'SIGN_IN_REQUIRED');
+  await expectError(
+    await request('/api/rpc/workspace/get', { cookie: bob.cookie }),
+    401,
+    'SIGN_IN_REQUIRED',
+  );
   const login = await request('/api/auth/sign-in/email', {
     body: { email: 'bob@example.test', password },
   });
@@ -302,5 +343,9 @@ test('expired database sessions cannot keep reading workspace data', async () =>
     new Date(0),
     alice.id,
   ]);
-  await expectError(await request('/api/rpc/workspace/get', { cookie: alice.cookie }), 401, 'SIGN_IN_REQUIRED');
+  await expectError(
+    await request('/api/rpc/workspace/get', { cookie: alice.cookie }),
+    401,
+    'SIGN_IN_REQUIRED',
+  );
 });

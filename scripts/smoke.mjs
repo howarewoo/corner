@@ -187,19 +187,25 @@ async function run(mode, port) {
       .map((value) => value.split(';', 1)[0])
       .join('; ');
     assert(cookie);
-    const workspace = (await (await rpc('workspace/get', undefined, { Cookie: cookie })).json()).json;
+    const workspace = (await (await rpc('workspace/get', undefined, { Cookie: cookie })).json())
+      .json;
     assert.equal(workspace.state.settings.name, 'HTTP test');
-    const native = createORPCClient(new RPCLink({
-      url: listener + '/api/rpc',
-      headers: { ...headers, Origin: origin, Cookie: cookie },
-    }));
+    const native = createORPCClient(
+      new RPCLink({
+        url: listener + '/api/rpc',
+        headers: { ...headers, Origin: origin, Cookie: cookie },
+      }),
+    );
     const oversized = {
       requestId: 'http-body-limit-123',
       mutation: { type: 'grocery.check', data: { key: 'x'.repeat(192 * 1024), checked: true } },
     };
     await assert.rejects(
       native.workspace.mutate(oversized),
-      (error) => error instanceof ORPCError && error.status === 413 && error.data.code === 'REQUEST_TOO_LARGE',
+      (error) =>
+        error instanceof ORPCError &&
+        error.status === 413 &&
+        error.data.code === 'REQUEST_TOO_LARGE',
     );
     assert.deepEqual(await native.workspace.get(), workspace);
     // Chunked uploads have no Content-Length; cancellation must still deliver
@@ -220,7 +226,8 @@ async function run(mode, port) {
     assert.equal((await streamed.json()).json.data.code, 'REQUEST_TOO_LARGE');
     assert.deepEqual(await native.workspace.get(), workspace);
     assert.equal(
-      (await rpc('workspace/get', undefined, { 'oai-authenticated-user-id': 'forged-user' })).status,
+      (await rpc('workspace/get', undefined, { 'oai-authenticated-user-id': 'forged-user' }))
+        .status,
       401,
     );
     assert.equal(

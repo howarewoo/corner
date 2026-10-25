@@ -154,7 +154,8 @@ async function render(
     globalThis,
     'fetch',
     async (request: string | URL | Request, init: RequestInit = {}) => {
-      if (request instanceof Request) init = { ...init, method: request.method, body: await request.clone().text() };
+      if (request instanceof Request)
+        init = { ...init, method: request.method, body: await request.clone().text() };
       const url = new URL(
         typeof request === 'string' ? request : request instanceof URL ? request.href : request.url,
         origin,
@@ -189,17 +190,19 @@ async function render(
   });
   await act(async () => {
     renderer = create(
-      createElement(QueryClientProvider, { client: new QueryClient({ defaultOptions: { queries: { retry: false } } }) },
       createElement(
-        BrowserRouter,
-        { window: window },
-        createElement(Component, {
-          initialRoute: options.route,
-          onSignedIn: async () => {
-            state.signedIn += 1;
-          },
-        }),
-      ),
+        QueryClientProvider,
+        { client: new QueryClient({ defaultOptions: { queries: { retry: false } } }) },
+        createElement(
+          BrowserRouter,
+          { window: window },
+          createElement(Component, {
+            initialRoute: options.route,
+            onSignedIn: async () => {
+              state.signedIn += 1;
+            },
+          }),
+        ),
       ),
     );
   });
@@ -554,7 +557,17 @@ test('rendered standalone account verification and password recovery', async (t)
       const view = await render(child, AccountAccess, hosted, {
         handler: (call) =>
           call.path === '/api/rpc/account/policy' && failures-- > 0
-            ? json({ json: { defined: true, code: 'SERVICE_UNAVAILABLE', status: 503, message: 'Temporarily unavailable' } }, 503)
+            ? json(
+                {
+                  json: {
+                    defined: true,
+                    code: 'SERVICE_UNAVAILABLE',
+                    status: 503,
+                    message: 'Temporarily unavailable',
+                  },
+                },
+                503,
+              )
             : undefined,
       });
       assert.match(text(view.renderer.root), /Account options could not be loaded/);

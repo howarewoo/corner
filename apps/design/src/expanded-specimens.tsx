@@ -74,7 +74,10 @@ function SidebarSpecimenContent() {
         empty={{
           message: 'No sample destinations match.',
           actionLabel: 'Clear search',
-          onAction: () => { setQuery(''); search.current?.focus(); },
+          onAction: () => {
+            setQuery('');
+            search.current?.focus();
+          },
         }}
         profile={{
           name: 'Sample member',
@@ -96,15 +99,17 @@ function SidebarSpecimenContent() {
             Toggle the sample sidebar
           </UI.Button>
         </div>
-        <h3 ref={heading} tabIndex={-1}>{destination.label}</h3>
+        <h3 ref={heading} tabIndex={-1}>
+          {destination.label}
+        </h3>
         <p>
           This self-contained workspace uses the real shared AppSidebar, SidebarProvider,
           SidebarInset, and SidebarTrigger. Its destinations do not navigate Storybook.
         </p>
         <p className="specimen-note" role="status">
-          Selected: {destination.label}. Desktop: {sidebar.open ? 'expanded' : 'collapsed'}.
-          On phones, open the real Sheet, search, choose a destination, or close it to return focus
-          to the trigger.
+          Selected: {destination.label}. Desktop: {sidebar.open ? 'expanded' : 'collapsed'}. On
+          phones, open the real Sheet, search, choose a destination, or close it to return focus to
+          the trigger.
         </p>
       </UI.SidebarInset>
     </>
@@ -220,7 +225,9 @@ export function ExpandedSpecimen({ id }: { id: string }) {
         <UI.Breadcrumb>
           <UI.BreadcrumbList>
             <UI.BreadcrumbItem>
-              <UI.BreadcrumbLink render={<a href={catalogHref('colors')} target="_top" />}>Design</UI.BreadcrumbLink>
+              <UI.BreadcrumbLink render={<a href={catalogHref('colors')} target="_top" />}>
+                Design
+              </UI.BreadcrumbLink>
             </UI.BreadcrumbItem>
             <UI.BreadcrumbSeparator />
             <UI.BreadcrumbItem>
@@ -756,7 +763,9 @@ export function ExpandedSpecimen({ id }: { id: string }) {
               <UI.NavigationMenuTrigger>Foundations</UI.NavigationMenuTrigger>
               <UI.NavigationMenuContent>
                 <div className="grid w-56 gap-2 p-3">
-                  <UI.NavigationMenuLink href={catalogHref('colors')} target="_top">Colors</UI.NavigationMenuLink>
+                  <UI.NavigationMenuLink href={catalogHref('colors')} target="_top">
+                    Colors
+                  </UI.NavigationMenuLink>
                   <UI.NavigationMenuLink href={catalogHref('typography')} target="_top">
                     Typography
                   </UI.NavigationMenuLink>

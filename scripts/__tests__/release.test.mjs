@@ -201,7 +201,7 @@ function fixture(overrides = {}) {
     payload,
     effects,
     records,
-    state: (phase) => states.get(String(21 + records.findLastIndex(row => row.phase === phase))),
+    state: (phase) => states.get(String(21 + records.findLastIndex((row) => row.phase === phase))),
     options: {
       github,
       planId: '11',
@@ -343,10 +343,7 @@ test('stale schema journal or cross-run plan fails before effects', async () => 
 test('missing baseline never silently bootstraps', async () => {
   const f = fixture();
   f.github.baseline = async () => null;
-  await assert.rejects(
-    plan({ ...f.options, runId: '1', sourceSha: source }),
-    /explicit bootstrap/,
-  );
+  await assert.rejects(plan({ ...f.options, runId: '1', sourceSha: source }), /explicit bootstrap/);
   assert.deepEqual(f.effects, []);
 });
 
@@ -395,7 +392,10 @@ test('plan persists exact real artifact and baseline qualification', async () =>
 test('successful promotion closes stage statuses without changing recovery journals', async () => {
   const f = fixture();
   const prepared = await plan({
-    ...f.options, runId: '1', sourceSha: source, qualify: async () => report,
+    ...f.options,
+    runId: '1',
+    sourceSha: source,
+    qualify: async () => report,
   });
   assert.equal(f.state('planned'), 'success');
   let schemaPayload;
@@ -414,11 +414,19 @@ test('successful promotion closes stage statuses without changing recovery journ
   const completed = await promote({ ...f.options, planId: String(prepared.id) });
   assert.equal(completed.payload.phase, 'complete');
   assert.deepEqual(
-    f.records.map(row => [row.phase, f.state(row.phase)]),
-    [['planned', 'inactive'], ['schema-attempted', 'success'], ['deployed', 'inactive'],
-      ['public-passed', 'inactive'], ['complete', 'success']],
+    f.records.map((row) => [row.phase, f.state(row.phase)]),
+    [
+      ['planned', 'inactive'],
+      ['schema-attempted', 'success'],
+      ['deployed', 'inactive'],
+      ['public-passed', 'inactive'],
+      ['complete', 'success'],
+    ],
   );
-  assert.deepEqual(f.records.find(row => row.phase === 'schema-attempted'), schemaPayload);
+  assert.deepEqual(
+    f.records.find((row) => row.phase === 'schema-attempted'),
+    schemaPayload,
+  );
 });
 
 test('migration and status failures remain visible without discarding the attempted schema', async () => {
@@ -434,13 +442,13 @@ test('migration and status failures remain visible without discarding the attemp
     if (state === 'failure') throw statusError;
     return status(record, state);
   };
-  await assert.rejects(promote(f.options), error => {
+  await assert.rejects(promote(f.options), (error) => {
     assert(error instanceof AggregateError);
     assert.deepEqual(error.errors, [migrationError, statusError]);
     return true;
   });
   assert.equal(f.records.at(-1).phase, 'schema-attempted');
-  assert(!f.records.some(row => row.phase === 'deployed'));
+  assert(!f.records.some((row) => row.phase === 'deployed'));
 });
 
 test('successful current main CI deploys backend changes without a second human gate and reruns do not redeploy', async () => {
@@ -484,13 +492,16 @@ test('automatic production independently downloads and verifies real archives fo
     'migration/dist/migrate.mjs': 'throw new Error("Archive fixture must not execute SQL");',
     'migration/migrations/0000_corner.sql': migration,
     'migration/migrations/meta/_journal.json': JSON.stringify({
-      version: '7', dialect: 'postgresql',
+      version: '7',
+      dialect: 'postgresql',
       entries: [{ idx: 0, version: '7', when: 1, tag: '0000_corner', breakpoints: true }],
     }),
     'migration/migrations/meta/0000_snapshot.json': JSON.stringify({
       id: '11111111-1111-4111-8111-111111111111',
       prevId: '00000000-0000-0000-0000-000000000000',
-      version: '7', dialect: 'postgresql', tables: {},
+      version: '7',
+      dialect: 'postgresql',
+      tables: {},
     }),
     'wrangler.json': JSON.stringify({
       ...packagedConfig,
@@ -519,11 +530,17 @@ test('automatic production independently downloads and verifies real archives fo
       nodeVersion: process.version,
       configurationSha256: hash(files['wrangler.json']),
       files: Object.fromEntries(Object.entries(files).map(([name, bytes]) => [name, hash(bytes)])),
-      migrations: [{
-        name: '0000_corner.sql', sha256: hash(migration), when: 1,
-        journalSha256: hash(JSON.stringify(JSON.parse(files['migration/migrations/meta/_journal.json']).entries[0])),
-        snapshotSha256: hash(files['migration/migrations/meta/0000_snapshot.json']),
-      }],
+      migrations: [
+        {
+          name: '0000_corner.sql',
+          sha256: hash(migration),
+          when: 1,
+          journalSha256: hash(
+            JSON.stringify(JSON.parse(files['migration/migrations/meta/_journal.json']).entries[0]),
+          ),
+          snapshotSha256: hash(files['migration/migrations/meta/0000_snapshot.json']),
+        },
+      ],
     }),
   );
   const verified = await verifyArtifact(candidateRoot);
@@ -872,7 +889,9 @@ test('first bootstrap recovers from transient public failure without migrating o
     await assert.rejects(promote(f.options), /Bootstrap Worker already exists/);
     assert.deepEqual(f.effects, []);
     f.options.cf = cf;
-    f.options.checkPublic = async () => { throw new Error('transient public failure'); };
+    f.options.checkPublic = async () => {
+      throw new Error('transient public failure');
+    };
     await assert.rejects(promote(f.options), /transient public failure/);
     const deployed = { id: 22, payload: f.records.at(-1) };
     assert.equal(deployed.payload.phase, 'deployed');
@@ -897,7 +916,11 @@ test('first bootstrap recovers from transient public failure without migrating o
     assert.equal(invocations.length, invocationCount);
     f.github.baseline = async () => result;
     await plan({
-      github: f.github, runId: '1', sourceSha: source, configuration, work,
+      github: f.github,
+      runId: '1',
+      sourceSha: source,
+      configuration,
+      work,
       qualify: async () => ({ ...report, previousDigest: candidateDigest }),
     });
     assert(f.effects.indexOf('migrate') < f.effects.indexOf('deploy'));
@@ -917,7 +940,11 @@ test('completion retries support public-passed receipts and rollback schema jour
   for (const rollback of [false, true]) {
     const f = fixture();
     const p = {
-      ...f.payload, phase: 'public-passed', versionId, planId: '11', rollback,
+      ...f.payload,
+      phase: 'public-passed',
+      versionId,
+      planId: '11',
+      rollback,
       schemaId: '21',
     };
     f.github.baseline = async () => ({ id: 22, payload: p });
@@ -933,7 +960,17 @@ test('completion retries support public-passed receipts and rollback schema jour
 });
 
 test('completion retry rejects stale identities, changed artifacts, schema/configuration and live drift', async (t) => {
-  for (const scenario of ['receipt', 'phase', 'artifact', 'configuration', 'schema', 'live', 'probe-drift', 'schema-drift', 'rollback-schema']) {
+  for (const scenario of [
+    'receipt',
+    'phase',
+    'artifact',
+    'configuration',
+    'schema',
+    'live',
+    'probe-drift',
+    'schema-drift',
+    'rollback-schema',
+  ]) {
     await t.test(scenario, async () => {
       const f = fixture();
       const p = { ...f.payload, phase: 'deployed', versionId, planId: '11' };
@@ -945,16 +982,22 @@ test('completion retry rejects stale identities, changed artifacts, schema/confi
       if (scenario === 'phase') p.phase = 'complete';
       if (scenario === 'artifact') p.configurationSha256 = 'f'.repeat(64);
       if (scenario === 'configuration') p.runtimeConfigurationDigest = 'f'.repeat(64);
-      if (scenario === 'schema') f.github.schema = async () => ({ id: 23, payload: { ...p, planId: '12' } });
+      if (scenario === 'schema')
+        f.github.schema = async () => ({ id: 23, payload: { ...p, planId: '12' } });
       if (scenario === 'live') options.cf = async () => ({ deployments: [] });
-      if (scenario === 'probe-drift') options.checkPublic = async () => {
-        f.github.baseline = async () => ({ id: 23, payload: p });
-      };
-      if (scenario === 'schema-drift') options.checkPublic = async () => {
-        f.github.schema = async () => ({ id: 23, payload: p });
-      };
+      if (scenario === 'probe-drift')
+        options.checkPublic = async () => {
+          f.github.baseline = async () => ({ id: 23, payload: p });
+        };
+      if (scenario === 'schema-drift')
+        options.checkPublic = async () => {
+          f.github.schema = async () => ({ id: 23, payload: p });
+        };
       if (scenario === 'rollback-schema') Object.assign(p, { rollback: true, schemaId: '20' });
-      await assert.rejects(complete(options), /exact current|artifact changed|configuration differs|schema journal|traffic does not match|Stale plan/);
+      await assert.rejects(
+        complete(options),
+        /exact current|artifact changed|configuration differs|schema journal|traffic does not match|Stale plan/,
+      );
       assert.deepEqual(f.records, []);
     });
   }
@@ -1087,10 +1130,7 @@ test('explicit rollback qualifies completed target against current attempted sch
     task: 'corner-release',
     payload: { ...receipt, phase: 'public-passed' },
   });
-  await assert.rejects(
-    plan({ ...f.options, rollbackId: '9' }),
-    /completed qualification/,
-  );
+  await assert.rejects(plan({ ...f.options, rollbackId: '9' }), /completed qualification/);
 });
 test('explicit rollback completes only after live data validation and public checks', async () => {
   for (const failPublic of [false, true]) {
@@ -1106,7 +1146,9 @@ test('explicit rollback completes only after live data validation and public che
     });
     const directory = await mkdtemp(join(work, 'rollback-'));
     const migrationEntry = 'migrate.mjs';
-    await writeFile(join(directory, migrationEntry), `
+    await writeFile(
+      join(directory, migrationEntry),
+      `
       export const currentSchema = async () => 'public';
       export const migrationHistory = async () => {};
       export const inspectImport = raw => ({ state: raw });
@@ -1117,7 +1159,8 @@ test('explicit rollback completes only after live data validation and public che
         }),
         async end() {},
       });
-    `);
+    `,
+    );
     await writeFile(join(directory, manifest.configurationEntry), JSON.stringify(packagedConfig));
     const artifact = f.github.artifact;
     f.github.artifact = async (...args) => {
@@ -1126,12 +1169,21 @@ test('explicit rollback completes only after live data validation and public che
     };
     f.options.verify = async () => ({ digest: previousDigest });
     f.options.qualify = async () => report;
-    f.options.cf = async path => path.endsWith('/settings')
-      ? { bindings: ['DATABASE_URL', 'NEON_AUTH_BASE_URL', 'BETTER_AUTH_SECRET',
-          'CORNER_TOKEN_ENCRYPTION_KEY'].map(name => ({ name, type: 'secret_text' })) }
-      : { deployments: [{ versions: [{ version_id: oldVersion, percentage: 100 }] }] };
+    f.options.cf = async (path) =>
+      path.endsWith('/settings')
+        ? {
+            bindings: [
+              'DATABASE_URL',
+              'NEON_AUTH_BASE_URL',
+              'BETTER_AUTH_SECRET',
+              'CORNER_TOKEN_ENCRYPTION_KEY',
+            ].map((name) => ({ name, type: 'secret_text' })),
+          }
+        : { deployments: [{ versions: [{ version_id: oldVersion, percentage: 100 }] }] };
     if (failPublic) {
-      f.options.checkPublic = async () => { throw new Error('public probe failed'); };
+      f.options.checkPublic = async () => {
+        throw new Error('public probe failed');
+      };
       await assert.rejects(promote(f.options), /public probe failed/);
       assert.equal(f.records.at(-1).phase, 'deployed');
       assert(!f.effects.includes('complete'));
@@ -1150,7 +1202,7 @@ test('normal promotion preserves fixed-SHA forward-only comparison without per-f
   for (const status of ['ahead', 'behind', 'diverged', 'identical']) {
     const f = fixture();
     const api = f.github.api;
-    f.github.api = async path => {
+    f.github.api = async (path) => {
       if (path.startsWith('compare/')) {
         assert.equal(path, `compare/${previousSource}...${source}`);
         return { status };
@@ -1189,7 +1241,6 @@ test('post-upload payload changes block before migrations or traffic changes', a
   await assert.rejects(promote(f.options), /Immutable payload changed/);
   assert.deepEqual(f.effects, ['upload']);
 });
-
 
 test('public probes require a canonical native protected RPC error, not an obsolete REST 401', async () => {
   const requests = [];
@@ -1286,9 +1337,7 @@ test('shared CI loader binds branch, repository, run and retained artifact befor
 test('pre-Drizzle production receipts are never recovery targets', () => {
   for (const format of [1, 2, 3]) {
     assert.throws(() => validateReceipt({ ...receipt, format }));
-    assert.throws(() => rollbackEligible(
-      { ...receipt, format }, receipt, report, config.digest,
-    ));
+    assert.throws(() => rollbackEligible({ ...receipt, format }, receipt, report, config.digest));
   }
 });
 
@@ -1366,12 +1415,18 @@ test('single runtime traffic-switch failure never records a deployed receipt', a
 
 test('legacy production adoption requires a current explicitly pinned bootstrap plan', async () => {
   const adoption = {
-    runId: '1', sourceSha: source, bootstrap: true, provisionedVersionId: oldVersion,
+    runId: '1',
+    sourceSha: source,
+    bootstrap: true,
+    provisionedVersionId: oldVersion,
     productionAdoptionHost: 'synthetic.invalid',
   };
   for (const override of [
-    { automatic: true }, { bootstrap: false }, { provisionedVersionId: null },
-    { rollbackId: '10' }, { productionAdoptionHost: 'https://synthetic.invalid' },
+    { automatic: true },
+    { bootstrap: false },
+    { provisionedVersionId: null },
+    { rollbackId: '10' },
+    { productionAdoptionHost: 'https://synthetic.invalid' },
   ]) {
     const f = fixture();
     await assert.rejects(plan({ ...f.options, ...adoption, ...override }));
@@ -1380,26 +1435,30 @@ test('legacy production adoption requires a current explicitly pinned bootstrap 
   const f = fixture();
   f.github.baseline = async () => null;
   const api = f.github.api;
-  f.github.api = async path => path === 'git/ref/heads/main'
-    ? { object: { sha: previousSource } } : api(path);
+  f.github.api = async (path) =>
+    path === 'git/ref/heads/main' ? { object: { sha: previousSource } } : api(path);
   await assert.rejects(plan({ ...f.options, ...adoption }));
   assert.deepEqual(f.effects, []);
   f.github.api = api;
   const prepared = await plan({
-    ...f.options, ...adoption,
+    ...f.options,
+    ...adoption,
     qualify: async () => ({ ...report, bootstrap: true, previousDigest: null }),
   });
   assert.equal(prepared.payload.productionAdoptionHost, adoption.productionAdoptionHost);
-  f.github.schema = async () => ({ payload: {
-    productionAdoptionHost: 'different.invalid',
-  } });
+  f.github.schema = async () => ({
+    payload: {
+      productionAdoptionHost: 'different.invalid',
+    },
+  });
   await assert.rejects(plan({ ...f.options, ...adoption }));
   assert.deepEqual(f.effects, ['planned']);
 });
 
 test('production adoption rejects mismatched approved and protected database destinations before effects', async () => {
   const before = {
-    database: process.env.DATABASE_URL, direct: process.env.DATABASE_URL_UNPOOLED,
+    database: process.env.DATABASE_URL,
+    direct: process.env.DATABASE_URL_UNPOOLED,
     worker: process.env.CORNER_WORKER_SECRETS_JSON,
   };
   try {
@@ -1407,8 +1466,16 @@ test('production adoption rejects mismatched approved and protected database des
       { host: 'different.invalid' },
       { direct: 'postgresql://synthetic-pooler.invalid/unused' },
       { direct: 'postgresql://synthetic.invalid/unused?options=-c%20search_path%3Dother' },
-      ...['host=different.invalid', 'hostaddr=127.0.0.1', 'port=5433', 'user=other', 'database=other',
-        'dbname=other', 'options=-c%20search_path%3Dother', '%68ost=different.invalid'].flatMap(query => [
+      ...[
+        'host=different.invalid',
+        'hostaddr=127.0.0.1',
+        'port=5433',
+        'user=other',
+        'database=other',
+        'dbname=other',
+        'options=-c%20search_path%3Dother',
+        '%68ost=different.invalid',
+      ].flatMap((query) => [
         { direct: `postgresql://synthetic.invalid/unused?${query}` },
         { pooled: `postgresql://synthetic.invalid/unused?${query}` },
       ]),
@@ -1419,7 +1486,8 @@ test('production adoption rejects mismatched approved and protected database des
       { pooled: 'postgresql://synthetic.invalid/other' },
     ]) {
       process.env.DATABASE_URL = mismatch.pooled ?? 'postgresql://synthetic.invalid/unused';
-      process.env.DATABASE_URL_UNPOOLED = mismatch.direct ?? 'postgresql://synthetic.invalid/unused';
+      process.env.DATABASE_URL_UNPOOLED =
+        mismatch.direct ?? 'postgresql://synthetic.invalid/unused';
       process.env.CORNER_WORKER_SECRETS_JSON = JSON.stringify({
         DATABASE_URL: process.env.DATABASE_URL,
         NEON_AUTH_BASE_URL: 'https://auth.example.invalid/neondb/auth',
@@ -1429,19 +1497,24 @@ test('production adoption rejects mismatched approved and protected database des
       const f = fixture();
       f.github.baseline = async () => null;
       Object.assign(f.payload, {
-        bootstrap: true, provisionedVersionId: oldVersion,
+        bootstrap: true,
+        provisionedVersionId: oldVersion,
         productionAdoptionHost: mismatch.host ?? 'synthetic.invalid',
         baselineId: null,
         qualification: { ...report, bootstrap: true, previousDigest: null },
       });
-      await assert.rejects(promote(f.options), mismatch.pooled?.startsWith('https:')
-        ? /Invalid bootstrap database binding/
-        : /Production adoption database destinations differ from the approved host/);
+      await assert.rejects(
+        promote(f.options),
+        mismatch.pooled?.startsWith('https:')
+          ? /Invalid bootstrap database binding/
+          : /Production adoption database destinations differ from the approved host/,
+      );
       assert.deepEqual(f.effects, []);
     }
   } finally {
     for (const [key, value] of [
-      ['DATABASE_URL', before.database], ['DATABASE_URL_UNPOOLED', before.direct],
+      ['DATABASE_URL', before.database],
+      ['DATABASE_URL_UNPOOLED', before.direct],
       ['CORNER_WORKER_SECRETS_JSON', before.worker],
     ]) {
       if (value === undefined) delete process.env[key];

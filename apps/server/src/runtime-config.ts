@@ -60,12 +60,14 @@ export function loadRuntimeConfig(environment: NodeJS.ProcessEnv, options: Optio
   } catch {
     throw new Error('NEON_AUTH_BASE_URL must be an HTTPS service URL.');
   }
-  if (development && (
-    !isLoopback(database.hostname) ||
-    !isLoopback(authHostname) ||
-    database.searchParams.has('host') ||
-    database.searchParams.has('hostaddr')
-  )) throw new Error(developmentConfigurationError);
+  if (
+    development &&
+    (!isLoopback(database.hostname) ||
+      !isLoopback(authHostname) ||
+      database.searchParams.has('host') ||
+      database.searchParams.has('hostaddr'))
+  )
+    throw new Error(developmentConfigurationError);
   if (
     environment.NEON_AUTH_REQUIRE_EMAIL_VERIFICATION !== undefined &&
     !['true', 'false'].includes(environment.NEON_AUTH_REQUIRE_EMAIL_VERIFICATION)

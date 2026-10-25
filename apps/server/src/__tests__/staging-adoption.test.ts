@@ -17,9 +17,16 @@ async function fixture() {
   await admin.query(`CREATE SCHEMA "${schema}"`);
   url.searchParams.set('options', `-c search_path=${schema}`);
   const target = createDatabase(url.href);
-  await target.query(await readFile(new URL('../../migrations/0000_corner.sql', import.meta.url), 'utf8'));
-  await target.query('CREATE TABLE corner_schema_migrations (name TEXT PRIMARY KEY, checksum TEXT NOT NULL)');
-  await target.query('INSERT INTO corner_schema_migrations VALUES ($1,$2)', ['001_corner.sql', legacyChecksum]);
+  await target.query(
+    await readFile(new URL('../../migrations/0000_corner.sql', import.meta.url), 'utf8'),
+  );
+  await target.query(
+    'CREATE TABLE corner_schema_migrations (name TEXT PRIMARY KEY, checksum TEXT NOT NULL)',
+  );
+  await target.query('INSERT INTO corner_schema_migrations VALUES ($1,$2)', [
+    '001_corner.sql',
+    legacyChecksum,
+  ]);
   await target.query(`
     INSERT INTO workspace_state VALUES ('owner','private workspace',9,'time');
     INSERT INTO mutation_receipts VALUES ('owner','request','hash',9,'time');
@@ -32,18 +39,38 @@ async function fixture() {
   `);
   // A separate schema stands in for managed Auth; adoption must not inspect or mutate it.
   const auth = `${schema}_auth`;
-  await admin.query(`CREATE SCHEMA "${auth}"; CREATE TABLE "${auth}".accounts (id text, secret text); INSERT INTO "${auth}".accounts VALUES ('account','session')`);
-  const tables = ['workspace_state', 'mutation_receipts', 'corner_ai_runs', 'corner_subscription_accounts', 'corner_subscription_attempts', 'corner_subscription_generations', 'corner_subscription_meta', 'corner_schema_migrations'];
-  const snapshot = async () => Promise.all(tables.map(async table => (await target.query(`SELECT * FROM ${table}`)).rows));
+  await admin.query(
+    `CREATE SCHEMA "${auth}"; CREATE TABLE "${auth}".accounts (id text, secret text); INSERT INTO "${auth}".accounts VALUES ('account','session')`,
+  );
+  const tables = [
+    'workspace_state',
+    'mutation_receipts',
+    'corner_ai_runs',
+    'corner_subscription_accounts',
+    'corner_subscription_attempts',
+    'corner_subscription_generations',
+    'corner_subscription_meta',
+    'corner_schema_migrations',
+  ];
+  const snapshot = async () =>
+    Promise.all(tables.map(async (table) => (await target.query(`SELECT * FROM ${table}`)).rows));
   const before = await snapshot();
-  return { target, snapshot, before, async close() {
-    await target.end();
-    await admin.query(`DROP SCHEMA "${schema}" CASCADE; DROP SCHEMA "${auth}" CASCADE`);
-    await admin.end();
-  }, async unchanged() {
-    assert.deepEqual(await snapshot(), before);
-    assert.deepEqual((await admin.query(`SELECT * FROM "${auth}".accounts`)).rows, [{ id: 'account', secret: 'session' }]);
-  } };
+  return {
+    target,
+    snapshot,
+    before,
+    async close() {
+      await target.end();
+      await admin.query(`DROP SCHEMA "${schema}" CASCADE; DROP SCHEMA "${auth}" CASCADE`);
+      await admin.end();
+    },
+    async unchanged() {
+      assert.deepEqual(await snapshot(), before);
+      assert.deepEqual((await admin.query(`SELECT * FROM "${auth}".accounts`)).rows, [
+        { id: 'account', secret: 'session' },
+      ]);
+    },
+  };
 }
 
 test('populated legacy schema adopts atomically, preserves every record, retries, then uses ordinary native migrations', async () => {
@@ -56,25 +83,41 @@ test('populated legacy schema adopts atomically, preserves every record, retries
     await migrate(f.target);
     assert.deepEqual((await f.target.query('SELECT * FROM __drizzle_migrations')).rows, history);
     await f.unchanged();
-  } finally { await f.close(); }
+  } finally {
+    await f.close();
+  }
 });
 
 for (const [name, sql] of [
   ['checksum', "UPDATE corner_schema_migrations SET checksum='unknown'"],
   ['extra history', "INSERT INTO corner_schema_migrations VALUES ('unknown.sql','unknown')"],
   ['schema', 'ALTER TABLE workspace_state ALTER COLUMN version SET DEFAULT 7'],
-  ['native ledger', "CREATE TABLE __drizzle_migrations (id SERIAL PRIMARY KEY, hash TEXT NOT NULL, created_at BIGINT); INSERT INTO __drizzle_migrations (hash,created_at) VALUES ('unknown',1)"],
-] as const) test(`adoption rejects ${name} drift without partially recording native history`, async () => {
-  const f = await fixture();
-  try {
-    await f.target.query(sql);
-    const before = await f.snapshot();
-    await assert.rejects(migrate(f.target, migrationsFolder, true));
-    assert.deepEqual(await f.snapshot(), before);
-    if (name === 'native ledger') assert.equal((await f.target.query('SELECT hash FROM __drizzle_migrations')).rows[0].hash, 'unknown');
-    else assert.equal((await f.target.query("SELECT to_regclass('__drizzle_migrations') AS name")).rows[0].name, null);
-  } finally { await f.close(); }
-});
+  [
+    'native ledger',
+    "CREATE TABLE __drizzle_migrations (id SERIAL PRIMARY KEY, hash TEXT NOT NULL, created_at BIGINT); INSERT INTO __drizzle_migrations (hash,created_at) VALUES ('unknown',1)",
+  ],
+] as const)
+  test(`adoption rejects ${name} drift without partially recording native history`, async () => {
+    const f = await fixture();
+    try {
+      await f.target.query(sql);
+      const before = await f.snapshot();
+      await assert.rejects(migrate(f.target, migrationsFolder, true));
+      assert.deepEqual(await f.snapshot(), before);
+      if (name === 'native ledger')
+        assert.equal(
+          (await f.target.query('SELECT hash FROM __drizzle_migrations')).rows[0].hash,
+          'unknown',
+        );
+      else
+        assert.equal(
+          (await f.target.query("SELECT to_regclass('__drizzle_migrations') AS name")).rows[0].name,
+          null,
+        );
+    } finally {
+      await f.close();
+    }
+  });
 
 test('adopted staging accepts a subsequent ordinary native migration without rewriting saved rows', async () => {
   const f = await fixture();
@@ -88,13 +131,28 @@ test('adopted staging accepts a subsequent ordinary native migration without rew
     const snapshot = JSON.parse(await readFile(join(folder, 'meta/0000_snapshot.json'), 'utf8'));
     snapshot.prevId = snapshot.id;
     snapshot.id = randomUUID();
-    journal.entries.push({ idx: 1, version: '7', when: journal.entries[0].when + 1, tag: '0001_next', breakpoints: true });
+    journal.entries.push({
+      idx: 1,
+      version: '7',
+      when: journal.entries[0].when + 1,
+      tag: '0001_next',
+      breakpoints: true,
+    });
     await writeFile(journalPath, JSON.stringify(journal));
     await writeFile(join(folder, 'meta/0001_snapshot.json'), JSON.stringify(snapshot));
-    await writeFile(join(folder, '0001_next.sql'), 'CREATE TABLE adoption_next (id TEXT PRIMARY KEY);');
+    await writeFile(
+      join(folder, '0001_next.sql'),
+      'CREATE TABLE adoption_next (id TEXT PRIMARY KEY);',
+    );
     await migrate(f.target, folder);
     assert.equal((await f.target.query('SELECT * FROM __drizzle_migrations')).rows.length, 2);
-    assert.equal((await f.target.query("SELECT to_regclass('adoption_next') AS name")).rows[0].name, 'adoption_next');
+    assert.equal(
+      (await f.target.query("SELECT to_regclass('adoption_next') AS name")).rows[0].name,
+      'adoption_next',
+    );
     await f.unchanged();
-  } finally { await f.close(); await rm(directory, { recursive: true, force: true }); }
+  } finally {
+    await f.close();
+    await rm(directory, { recursive: true, force: true });
+  }
 });

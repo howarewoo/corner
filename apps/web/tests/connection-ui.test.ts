@@ -121,7 +121,8 @@ async function renderConnection(
   const state = { connection: structuredClone(initial) };
   const calls: FetchCall[] = [];
   const mockFetch: typeof fetch = async (input, init = {}) => {
-    if (input instanceof Request) init = { ...init, method: input.method, body: await input.clone().text() };
+    if (input instanceof Request)
+      init = { ...init, method: input.method, body: await input.clone().text() };
     const url = new URL(
       typeof input === 'string' ? input : input instanceof URL ? input.href : input.url,
       localOrigin,
@@ -151,7 +152,9 @@ async function renderConnection(
   });
   await act(async () => {
     renderer = create(
-      createElement(QueryClientProvider, { client: new QueryClient({ defaultOptions: { queries: { retry: false } } }) },
+      createElement(
+        QueryClientProvider,
+        { client: new QueryClient({ defaultOptions: { queries: { retry: false } } }) },
         createElement(Component),
       ),
     );
@@ -312,7 +315,9 @@ test('rendered ChatGPT connection controls and independent Corner session handli
         select.props.onChange({ target: { value: 'test-model-b' } });
       });
       assert.deepEqual(
-        JSON.parse(String(view.calls.find((call) => call.path === '/api/rpc/ai/setModel')?.init.body)),
+        JSON.parse(
+          String(view.calls.find((call) => call.path === '/api/rpc/ai/setModel')?.init.body),
+        ),
         { json: { model: 'test-model-b' } },
       );
       assert.equal(view.renderer.root.findByType('select').props.value, 'test-model-b');
@@ -377,17 +382,26 @@ test('rendered ChatGPT connection controls and independent Corner session handli
       clearPrivateState();
       let code = 'CORNER_ERROR';
       child.mock.method(globalThis, 'fetch', async () =>
-        json({ defined: true, code, status: 401, message: 'Reconnect the selected connection.', data: { code: 'invalid_grant' } }, 401),
+        json(
+          {
+            defined: true,
+            code,
+            status: 401,
+            message: 'Reconnect the selected connection.',
+            data: { code: 'invalid_grant' },
+          },
+          401,
+        ),
       );
       await assert.rejects(
         scoped(() => rpc.ai.setModel({ model: 'test-model-a' })),
-        error => errorCode(error) === 'invalid_grant',
+        (error) => errorCode(error) === 'invalid_grant',
       );
       assert.deepEqual(browser.events, []);
       code = 'SIGN_IN_REQUIRED';
       await assert.rejects(
         scoped(() => rpc.workspace.get()),
-        error => errorCode(error) === 'SIGN_IN_REQUIRED',
+        (error) => errorCode(error) === 'SIGN_IN_REQUIRED',
       );
       assert.deepEqual(browser.events, ['corner:session-expired']);
     },

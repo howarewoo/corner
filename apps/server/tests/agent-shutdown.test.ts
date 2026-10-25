@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { Pool } from 'pg';
-import { testDatabase, closeTestDatabase, createTestAuth, neonTestConfig, readResponse } from './helpers.ts';
+import {
+  testDatabase,
+  closeTestDatabase,
+  createTestAuth,
+  neonTestConfig,
+  readResponse,
+} from './helpers.ts';
 import { createApp } from '../src/app.ts';
 import { createAuth } from '../src/auth.ts';
 import { PlanningAgent } from '../src/planning-agent.ts';
@@ -90,11 +96,13 @@ test(
         app.request(`${config.origin}/api/rpc/agent/start`, {
           method: 'POST',
           headers: { Origin: config.origin, Cookie: cookie, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ json: {
-            requestId: 'shutdown-race',
-            prompt: 'Help me plan a breakfast.',
-            referenceDate: '2026-10-22',
-          } }),
+          body: JSON.stringify({
+            json: {
+              requestId: 'shutdown-race',
+              prompt: 'Help me plan a breakfast.',
+              referenceDate: '2026-10-22',
+            },
+          }),
         }),
       );
       await statusEntered.promise;

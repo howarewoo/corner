@@ -120,6 +120,9 @@ export function createApp(options: AppOptions) {
     if (c.req.method === 'HEAD') return c.notFound();
     await next();
   });
-  if (ai) app.get('/auth/callback', (c) => subscriptionCallback(ai.provider, c.get('principal'), new URL(c.req.url)));
+  if (ai)
+    app.get('/auth/callback', (c) =>
+      subscriptionCallback(ai.provider, c.get('principal'), new URL(c.req.url)),
+    );
   return app;
 }

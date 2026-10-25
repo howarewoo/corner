@@ -20,13 +20,16 @@ async function fixture(t, migration = 'CREATE TABLE example (id int);') {
       'throw new Error("Artifact verification must not execute payload code");',
     'migration/migrations/0000_example.sql': migration,
     'migration/migrations/meta/_journal.json': JSON.stringify({
-      version: '7', dialect: 'postgresql',
+      version: '7',
+      dialect: 'postgresql',
       entries: [{ idx: 0, version: '7', when: 1, tag: '0000_example', breakpoints: true }],
     }),
     'migration/migrations/meta/0000_snapshot.json': JSON.stringify({
       id: '11111111-1111-4111-8111-111111111111',
       prevId: '00000000-0000-0000-0000-000000000000',
-      version: '7', dialect: 'postgresql', tables: {},
+      version: '7',
+      dialect: 'postgresql',
+      tables: {},
     }),
     'wrangler.json': JSON.stringify({
       name: 'corner',
@@ -63,11 +66,17 @@ async function fixture(t, migration = 'CREATE TABLE example (id int);') {
     workerName: 'corner',
     migrationEntry: 'migration/dist/migrate.mjs',
     files: Object.fromEntries(Object.entries(payload).map(([name, bytes]) => [name, hash(bytes)])),
-    migrations: [{
-      name: '0000_example.sql', sha256: hash(migration), when: 1,
-      journalSha256: hash(JSON.stringify(JSON.parse(payload['migration/migrations/meta/_journal.json']).entries[0])),
-      snapshotSha256: hash(payload['migration/migrations/meta/0000_snapshot.json']),
-    }],
+    migrations: [
+      {
+        name: '0000_example.sql',
+        sha256: hash(migration),
+        when: 1,
+        journalSha256: hash(
+          JSON.stringify(JSON.parse(payload['migration/migrations/meta/_journal.json']).entries[0]),
+        ),
+        snapshotSha256: hash(payload['migration/migrations/meta/0000_snapshot.json']),
+      },
+    ],
   };
   await writeFile(join(candidate, 'manifest.json'), JSON.stringify(manifest));
   return { directory, candidate, manifest };
@@ -81,7 +90,8 @@ test('packaging canonicalizes JSONC comments and trailing commas but rejects mal
     'pnpm-lock.yaml': 'lockfileVersion: "9.0"\n',
     ...Object.fromEntries(
       ['nutrition', 'training', 'workspace', 'agent'].map((name) => [
-        `packages/${name}/dist/index.js`, 'export {};',
+        `packages/${name}/dist/index.js`,
+        'export {};',
       ]),
     ),
     'apps/server/dist/migrate.js':
@@ -92,8 +102,7 @@ test('packaging canonicalizes JSONC comments and trailing commas but rejects mal
       'export function inspectImport() { throw new Error("packaging fixture"); }',
     'apps/server/dist/migration-history.js':
       'export function currentSchema() { throw new Error("packaging fixture"); } export function migrationHistory() { throw new Error("packaging fixture"); }',
-    'apps/server/dist/migration-inventory.js':
-      `export { migrationInventory } from ${JSON.stringify(fileURLToPath(new URL('../../apps/server/src/migration-inventory.ts', import.meta.url)))};`,
+    'apps/server/dist/migration-inventory.js': `export { migrationInventory } from ${JSON.stringify(fileURLToPath(new URL('../../apps/server/src/migration-inventory.ts', import.meta.url)))};`,
     'apps/server/wrangler.jsonc': await readFile(join(candidate, 'wrangler.json')),
   };
   for (const [name, bytes] of Object.entries(inputs)) {
@@ -113,7 +122,10 @@ test('packaging canonicalizes JSONC comments and trailing commas but rejects mal
     ['assets/index.html', 'apps/web/dist/index.html'],
     ['migration/migrations/0000_example.sql', 'apps/server/migrations/0000_example.sql'],
     ['migration/migrations/meta/_journal.json', 'apps/server/migrations/meta/_journal.json'],
-    ['migration/migrations/meta/0000_snapshot.json', 'apps/server/migrations/meta/0000_snapshot.json'],
+    [
+      'migration/migrations/meta/0000_snapshot.json',
+      'apps/server/migrations/meta/0000_snapshot.json',
+    ],
   ]) {
     await mkdir(join(sourceRoot, to, '..'), { recursive: true });
     await copyFile(join(candidate, from), join(sourceRoot, to));
@@ -366,10 +378,17 @@ test('published Kit metadata cannot change before executing candidate code', asy
     const f = await fixture(t);
     const prior = await fixture(t);
     const { digest } = await verifyArtifact(prior.candidate);
-    await writeFile(join(prior.directory, 'qualification.json'), JSON.stringify({
-      format: 1, sourceSha: prior.manifest.sourceSha, candidateDigest: digest,
-      previousDigest: null, bootstrap: true, passed: true,
-    }));
+    await writeFile(
+      join(prior.directory, 'qualification.json'),
+      JSON.stringify({
+        format: 1,
+        sourceSha: prior.manifest.sourceSha,
+        candidateDigest: digest,
+        previousDigest: null,
+        bootstrap: true,
+        passed: true,
+      }),
+    );
     const marker = join(f.directory, 'candidate-executed');
     const entry = `import { writeFileSync } from 'node:fs'; writeFileSync(${JSON.stringify(marker)}, 'executed'); throw new Error('unexpected execution');`;
     await writeFile(join(f.candidate, f.manifest.migrationEntry), entry);
@@ -381,14 +400,22 @@ test('published Kit metadata cannot change before executing candidate code', asy
     const bytes = JSON.stringify(metadata);
     await writeFile(join(f.candidate, name), bytes);
     f.manifest.files[name] = hash(bytes);
-    f.manifest.migrations[0][kind === 'snapshot' ? 'snapshotSha256' : 'journalSha256'] =
-      hash(kind === 'snapshot' ? bytes : JSON.stringify(metadata.entries[0]));
+    f.manifest.migrations[0][kind === 'snapshot' ? 'snapshotSha256' : 'journalSha256'] = hash(
+      kind === 'snapshot' ? bytes : JSON.stringify(metadata.entries[0]),
+    );
     await writeFile(join(f.candidate, 'manifest.json'), JSON.stringify(f.manifest));
     await verifyArtifact(f.candidate);
-    await assert.rejects(qualifyArtifact({
-      candidate: f.candidate, previous: prior.candidate,
-      report: join(f.directory, 'qualification.json'),
-    }));
-    assert.equal(existsSync(marker), false, 'changed published metadata must be rejected before code execution');
+    await assert.rejects(
+      qualifyArtifact({
+        candidate: f.candidate,
+        previous: prior.candidate,
+        report: join(f.directory, 'qualification.json'),
+      }),
+    );
+    assert.equal(
+      existsSync(marker),
+      false,
+      'changed published metadata must be rejected before code execution',
+    );
   }
 });

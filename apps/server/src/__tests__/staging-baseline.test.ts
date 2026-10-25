@@ -26,7 +26,10 @@ async function fixture() {
     const source = pools[0]!;
     const target = pools[1]!;
     await migrate(source);
-    const sql = await readFile(new URL('../../migrations/0000_corner.sql', import.meta.url), 'utf8');
+    const sql = await readFile(
+      new URL('../../migrations/0000_corner.sql', import.meta.url),
+      'utf8',
+    );
     await target.query(sql);
     await target.query(
       'CREATE TABLE __drizzle_migrations (id SERIAL PRIMARY KEY, hash TEXT NOT NULL, created_at BIGINT)',
@@ -36,8 +39,7 @@ async function fixture() {
       "INSERT INTO workspace_state VALUES ('private-owner','private-workspace',9,'private-time')",
     );
     const before = (await source.query('SELECT * FROM workspace_state')).rows;
-    const history = (await source.query('SELECT * FROM __drizzle_migrations ORDER BY id'))
-      .rows;
+    const history = (await source.query('SELECT * FROM __drizzle_migrations ORDER BY id')).rows;
     return {
       source,
       target,
@@ -132,8 +134,8 @@ test('schema drift and unsupported objects refuse atomically without ledger writ
       await f.target.query(sql);
       await assert.rejects(baselineStaging(f.options), { message: 'STAGING_BASELINE_REFUSED' });
       assert.equal(
-        (await f.target.query('SELECT count(*)::int AS count FROM __drizzle_migrations'))
-          .rows[0].count,
+        (await f.target.query('SELECT count(*)::int AS count FROM __drizzle_migrations')).rows[0]
+          .count,
         0,
       );
       await f.unchanged();
@@ -145,8 +147,14 @@ test('schema drift and unsupported objects refuse atomically without ledger writ
 
 test('nonempty application tables, missing history, and edited source checksums refuse', async () => {
   for (const change of [
-    'rows', 'checksum', 'missing', 'unknown', 'extra-history',
-    'source-ledger-shape', 'source-drift', 'default-grants',
+    'rows',
+    'checksum',
+    'missing',
+    'unknown',
+    'extra-history',
+    'source-ledger-shape',
+    'source-drift',
+    'default-grants',
   ]) {
     const f = await fixture();
     try {
@@ -174,14 +182,11 @@ test('nonempty application tables, missing history, and edited source checksums 
       const before = (await f.source.query('SELECT * FROM __drizzle_migrations')).rows;
       await assert.rejects(baselineStaging(f.options), { message: 'STAGING_BASELINE_REFUSED' });
       assert.equal(
-        (await f.target.query('SELECT count(*)::int AS count FROM __drizzle_migrations'))
-          .rows[0].count,
+        (await f.target.query('SELECT count(*)::int AS count FROM __drizzle_migrations')).rows[0]
+          .count,
         0,
       );
-      assert.deepEqual(
-        (await f.source.query('SELECT * FROM __drizzle_migrations')).rows,
-        before,
-      );
+      assert.deepEqual((await f.source.query('SELECT * FROM __drizzle_migrations')).rows, before);
       if (change === 'rows' || change === 'source-drift') await f.unchanged();
     } finally {
       await f.close();

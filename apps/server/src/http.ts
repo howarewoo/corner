@@ -11,7 +11,6 @@ export class ApiError extends Error {
   }
 }
 
-
 export function json(data: unknown, status = 200, extraHeaders?: HeadersInit): Response {
   const headers = new Headers(extraHeaders);
   headers.set('Cache-Control', 'private, no-store, max-age=0');
