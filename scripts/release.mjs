@@ -816,8 +816,11 @@ export async function promote({
     need(
       ['postgres:', 'postgresql:'].includes(direct.protocol) &&
         direct.hostname === p.productionAdoptionHost && !direct.hostname.includes('-pooler.') &&
-        !direct.searchParams.has('options') &&
+        [direct, pooled].every(url =>
+          ['postgres:', 'postgresql:'].includes(url.protocol) &&
+          [...url.searchParams.keys()].every(key => key === 'sslmode' || key === 'channel_binding')) &&
         pooled.hostname.replace(/-pooler(?=\.)/, '') === direct.hostname &&
+        (pooled.port || '5432') === (direct.port || '5432') &&
         pooled.pathname === direct.pathname && pooled.username === direct.username,
       'Production adoption database destinations differ from the approved host',
     );
