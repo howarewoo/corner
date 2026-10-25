@@ -9,8 +9,8 @@ import { migrationInventory } from './migration-inventory.js';
 export const legacyChecksum = 'f8304ded9b6bf1c380f83972155710d975a46fc1493ed14ecb6ef5a47ac657cf';
 const legacyDdl = 'CREATE TABLE corner_schema_migrations (name TEXT PRIMARY KEY, checksum TEXT NOT NULL)';
 
-/** Called only by the explicit staging operator command, under the migration session lock. */
-export async function adoptStaging(connection: PoolClient, folder: string): Promise<void> {
+/** Called only by explicitly pinned operator cutovers, under the migration session lock. */
+export async function adoptLegacySchema(connection: PoolClient, folder: string): Promise<void> {
   await connection.query('BEGIN');
   try {
     const schema = await currentSchema(connection);
@@ -35,6 +35,6 @@ export async function adoptStaging(connection: PoolClient, folder: string): Prom
     await connection.query('COMMIT');
   } catch {
     await connection.query('ROLLBACK');
-    throw new Error('STAGING_ADOPTION_REFUSED');
+    throw new Error('LEGACY_ADOPTION_REFUSED');
   }
 }
