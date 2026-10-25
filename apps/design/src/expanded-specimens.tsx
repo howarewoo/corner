@@ -1,9 +1,10 @@
-import { useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import * as UI from '@packages/ui';
 import { ArrowRight, Bookmark, Check, Dumbbell, Info, Plus, Search, Settings2 } from 'lucide-react';
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from 'recharts';
 import { DataTableSpecimen } from './table-specimen';
 import { ConversationSpecimen } from './conversation-specimens';
+import { catalogHref } from './catalog';
 
 // Compositions sourced from the live shadcn Base UI documentation on 2026-10-23.
 // Each ID maps to https://ui.shadcn.com/docs/components/base/<id>.
@@ -22,26 +23,99 @@ const chartConfig = {
 } satisfies UI.ChartConfig;
 const sampleAvatar = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="80" height="80"><rect width="80" height="80" rx="40" fill="#d9e8de"/><text x="40" y="49" font-family="Arial,sans-serif" font-size="26" text-anchor="middle" fill="#234b35">CW</text></svg>')}`;
 
+const sidebarDestinations = [
+  { id: 'overview', label: 'Overview', icon: <Dumbbell size={18} /> },
+  { id: 'sessions', label: 'Sessions', icon: <Bookmark size={18} /> },
+  { id: 'preferences', label: 'Preferences', icon: <Settings2 size={18} /> },
+];
+
 function SidebarSpecimenContent() {
   const sidebar = UI.useSidebar();
+  const [selected, setSelected] = useState('overview');
+  const [query, setQuery] = useState('');
+  const search = useRef<HTMLInputElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const heading = useRef<HTMLHeadingElement>(null);
+  const selectedFromDrawer = useRef(false);
+  useEffect(() => {
+    if (sidebar.openMobile) selectedFromDrawer.current = false;
+  }, [sidebar.openMobile]);
+  const destination = sidebarDestinations.find((item) => item.id === selected)!;
+  const matches = sidebarDestinations.filter((item) =>
+    item.label.toLowerCase().includes(query.trim().toLowerCase()),
+  );
+  function select(id: string) {
+    setSelected(id);
+    if (sidebar.isMobile) {
+      selectedFromDrawer.current = true;
+      sidebar.setOpenMobile(false);
+    } else {
+      heading.current?.focus();
+    }
+  }
   return (
-    <div className="specimen-stack">
-      <div className="specimen-row">
-        <UI.SidebarTrigger aria-label="Toggle live catalog sidebar" />
-        <UI.Button variant="outline" onClick={sidebar.toggleSidebar}>
-          Toggle the app sidebar
-        </UI.Button>
-      </div>
-      <p>
-        The surrounding navigation is the shared AppSidebar composition, built from SidebarProvider,
-        Sidebar, SidebarHeader, SidebarContent, SidebarGroup, SidebarMenuButton, SidebarFooter, and
-        SidebarInset.
-      </p>
-      <p className="specimen-note">
-        Desktop: {sidebar.open ? 'expanded' : 'collapsed'}. On phones, the same component uses its
-        real Sheet navigation.
-      </p>
-    </div>
+    <>
+      <UI.AppSidebar
+        id="specimen-navigation"
+        label="Sample workspace navigation"
+        brand={{ id: 'overview', label: 'Sample workspace home' }}
+        caption="Illustrative workspace"
+        groups={[{ label: 'Workspace', items: matches }]}
+        selectedId={selected}
+        selectedIndicator
+        onSelect={select}
+        search={{
+          value: query,
+          onChange: setQuery,
+          label: 'Search sample destinations',
+          placeholder: 'Search destinations…',
+          inputRef: search,
+        }}
+        empty={{
+          message: 'No sample destinations match.',
+          actionLabel: 'Clear search',
+          onAction: () => { setQuery(''); search.current?.focus(); },
+        }}
+        profile={{
+          name: 'Sample member',
+          initial: 'SM',
+          label: 'Open sample preferences',
+          selected: selected === 'preferences',
+          onSelect: () => select('preferences'),
+        }}
+        note="Local specimen only. No product navigation or data."
+        mobileContentProps={{
+          initialFocus: () => search.current,
+          finalFocus: () => (selectedFromDrawer.current ? heading.current : trigger.current),
+        }}
+      />
+      <UI.SidebarInset className="sidebar-specimen-content">
+        <div className="specimen-row">
+          <UI.SidebarTrigger ref={trigger} aria-label="Toggle sample workspace navigation" />
+          <UI.Button variant="outline" onClick={sidebar.toggleSidebar}>
+            Toggle the sample sidebar
+          </UI.Button>
+        </div>
+        <h3 ref={heading} tabIndex={-1}>{destination.label}</h3>
+        <p>
+          This self-contained workspace uses the real shared AppSidebar, SidebarProvider,
+          SidebarInset, and SidebarTrigger. Its destinations do not navigate Storybook.
+        </p>
+        <p className="specimen-note" role="status">
+          Selected: {destination.label}. Desktop: {sidebar.open ? 'expanded' : 'collapsed'}.
+          On phones, open the real Sheet, search, choose a destination, or close it to return focus
+          to the trigger.
+        </p>
+      </UI.SidebarInset>
+    </>
+  );
+}
+
+function SidebarSpecimen() {
+  return (
+    <UI.SidebarProvider className="sidebar-specimen">
+      <SidebarSpecimenContent />
+    </UI.SidebarProvider>
   );
 }
 
@@ -146,11 +220,11 @@ export function ExpandedSpecimen({ id }: { id: string }) {
         <UI.Breadcrumb>
           <UI.BreadcrumbList>
             <UI.BreadcrumbItem>
-              <UI.BreadcrumbLink render={<a href="?component=colors" />}>Design</UI.BreadcrumbLink>
+              <UI.BreadcrumbLink render={<a href={catalogHref('colors')} target="_top" />}>Design</UI.BreadcrumbLink>
             </UI.BreadcrumbItem>
             <UI.BreadcrumbSeparator />
             <UI.BreadcrumbItem>
-              <UI.BreadcrumbLink render={<a href="?component=sidebar" />}>
+              <UI.BreadcrumbLink render={<a href={catalogHref('sidebar')} target="_top" />}>
                 Navigation
               </UI.BreadcrumbLink>
             </UI.BreadcrumbItem>
@@ -602,21 +676,21 @@ export function ExpandedSpecimen({ id }: { id: string }) {
       example = (
         <div className="specimen-stack">
           <p>
-            Find a component{' '}
+            Illustrative find action{' '}
             <UI.KbdGroup>
               <UI.Kbd>⌘ / Ctrl</UI.Kbd>
               <UI.Kbd>K</UI.Kbd>
             </UI.KbdGroup>
           </p>
           <p>
-            Toggle the sidebar{' '}
+            Illustrative sidebar action{' '}
             <UI.KbdGroup>
               <UI.Kbd>⌘ / Ctrl</UI.Kbd>
               <UI.Kbd>B</UI.Kbd>
             </UI.KbdGroup>
           </p>
           <p className="specimen-note">
-            Shortcuts respect editing in inputs, textareas, and dialogs.
+            Keycap presentation only; these examples do not register shortcuts.
           </p>
         </div>
       );
@@ -682,11 +756,11 @@ export function ExpandedSpecimen({ id }: { id: string }) {
               <UI.NavigationMenuTrigger>Foundations</UI.NavigationMenuTrigger>
               <UI.NavigationMenuContent>
                 <div className="grid w-56 gap-2 p-3">
-                  <UI.NavigationMenuLink href="?component=colors">Colors</UI.NavigationMenuLink>
-                  <UI.NavigationMenuLink href="?component=typography">
+                  <UI.NavigationMenuLink href={catalogHref('colors')} target="_top">Colors</UI.NavigationMenuLink>
+                  <UI.NavigationMenuLink href={catalogHref('typography')} target="_top">
                     Typography
                   </UI.NavigationMenuLink>
-                  <UI.NavigationMenuLink href="?component=spacing">
+                  <UI.NavigationMenuLink href={catalogHref('spacing')} target="_top">
                     Spacing & shape
                   </UI.NavigationMenuLink>
                 </div>
@@ -694,7 +768,8 @@ export function ExpandedSpecimen({ id }: { id: string }) {
             </UI.NavigationMenuItem>
             <UI.NavigationMenuItem>
               <UI.NavigationMenuLink
-                href="?component=sidebar"
+                href={catalogHref('sidebar')}
+                target="_top"
                 className={UI.navigationMenuTriggerStyle()}
               >
                 Sidebar
@@ -711,7 +786,8 @@ export function ExpandedSpecimen({ id }: { id: string }) {
             <UI.PaginationContent>
               <UI.PaginationItem>
                 <UI.PaginationPrevious
-                  href={`?component=pagination&page=${Math.max(1, page - 1)}`}
+                  href={`${catalogHref('pagination')}&page=${Math.max(1, page - 1)}`}
+                  target="_top"
                   onClick={(event) => {
                     event.preventDefault();
                     setPage(Math.max(1, page - 1));
@@ -722,7 +798,8 @@ export function ExpandedSpecimen({ id }: { id: string }) {
               {[1, 2, 3].map((number) => (
                 <UI.PaginationItem key={number}>
                   <UI.PaginationLink
-                    href={`?component=pagination&page=${number}`}
+                    href={`${catalogHref('pagination')}&page=${number}`}
+                    target="_top"
                     isActive={number === page}
                     onClick={(event) => {
                       event.preventDefault();
@@ -735,7 +812,8 @@ export function ExpandedSpecimen({ id }: { id: string }) {
               ))}
               <UI.PaginationItem>
                 <UI.PaginationNext
-                  href={`?component=pagination&page=${Math.min(3, page + 1)}`}
+                  href={`${catalogHref('pagination')}&page=${Math.min(3, page + 1)}`}
+                  target="_top"
                   onClick={(event) => {
                     event.preventDefault();
                     setPage(Math.min(3, page + 1));
@@ -820,7 +898,7 @@ export function ExpandedSpecimen({ id }: { id: string }) {
       );
       break;
     case 'sidebar':
-      example = <SidebarSpecimenContent />;
+      example = <SidebarSpecimen />;
       break;
     case 'skeleton':
       example = (

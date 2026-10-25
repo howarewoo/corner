@@ -457,3 +457,21 @@
     gap: 12px;
   }
 }
+
+/* Bound only the desktop specimen; the shared phone Sheet remains portaled. */
+.sidebar-specimen {
+  position: relative;
+  isolation: isolate;
+  contain: layout;
+  min-height: 520px;
+  overflow: hidden;
+  border-radius: 16px;
+}
+.sidebar-specimen .ui-sidebar-container {
+  height: 100%;
+}
+.sidebar-specimen-content {
+  min-width: 0;
+  padding: 24px;
+  gap: 22px;
+}
