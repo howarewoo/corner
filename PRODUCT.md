@@ -8,6 +8,8 @@ web
 
 ## Users
 
+Corner is unreleased and currently in development/evaluation, with no active users.
+
 Corner's intended primary audience is performance-focused trainees managing their own nutrition, training, recovery, and progress. Detailed workout progression and nutrition around training matter to this audience. Coach/client roles and shared workspaces are not implemented.
 
 ## Product Purpose

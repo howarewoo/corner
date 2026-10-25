@@ -12,6 +12,12 @@ Use woostack skills when available. At the start of work, `using-woostack`, when
 
 Follow this file first when it conflicts with generic agent defaults. Preserve any scoped instructions introduced below this root.
 
+## Stage, compatibility, and retained data
+
+- Corner is unreleased, in development/evaluation, and has no active users. Revisit these instructions when consumers or compatibility commitments change.
+- There is no backwards-compatibility requirement for external clients or versions. Within the requested scope, update affected in-repository callers, tests, and docs together and remove superseded implementations. Do not retain aliases, dual paths, or compatibility shims solely for hypothetical consumers. Existing supported workspace-import and recovery guarantees remain requirements.
+- Retained data is not disposable: preserve local records/keys, staging synthetic records/Auth/keys, production data, backups, and historical receipts. Migrate retained data when necessary; the absence of active users does not authorize resets. Follow [README.md](README.md#data-backups-and-upgrades) and [HOSTING.md](HOSTING.md) for preservation and recovery; only explicitly authorized owned-local resets are permitted.
+
 ## Shared UI first
 
 Always prioritize the shared shadcn/Base UI primitives in `packages/ui` and their live examples in `apps/design` when adding or changing product UI. Inspect and reuse the existing `@packages/ui` component and its shipped styling before using an app-local control or building a custom equivalent. This includes feedback: use the shared Base UI `Toaster` and toast manager for notifications. Do not recreate primitive markup, interaction behavior, or component CSS in the app. If a required capability is missing, extend the shared component rather than creating a parallel app-only implementation. Preserve unrelated legacy controls until their own flow is changed.

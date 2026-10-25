@@ -71,7 +71,7 @@ The build compiles the nutrition, training, workspace, agent, and API packages i
 | `pnpm test`                                      | Native Node server suite and Vitest web suite, with Turbo shared-build prerequisites                                                         |
 | `pnpm run test:browser`                          | After a full build: Chromium desktop and WebKit phone journeys against disposable PostgreSQL/Auth on port 43141                              |
 | `pnpm run smoke`                                 | Actual compiled-server account, proxy, health, and shutdown checks                                                                          |
-| `pnpm run smoke:dev`                             | Actual two-app development proxy, session, and shared-catalog checks                                                                        |
+| `pnpm run smoke:dev`                             | Actual two-app development proxy, session, and shared exercise-catalog checks; excludes the design catalog                                   |
 | `pnpm start`                                     | The compiled production server and built web app                                                                                            |
 | `pnpm run db:generate`                           | Generate reviewed SQL and snapshots from the server-owned Drizzle schema; no database connection required                                   |
 | `pnpm run db:check`                              | Check Drizzle Kit migration snapshot consistency                                                                                            |
