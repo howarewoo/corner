@@ -54,6 +54,33 @@ async function credentials(user: UserEvent) {
   await user.type(screen.getByLabelText('Password', { exact: true }), password);
 }
 
+test('password visibility is keyboard accessible, preserves input, and resets between account modes', async () => {
+  const view = await account(local);
+  await credentials(view.user);
+  const input = screen.getByLabelText('Password', { exact: true });
+  expect(input).toHaveAttribute('type', 'password');
+  await view.user.tab();
+  expect(screen.getByRole('button', { name: 'Show password' })).toHaveFocus();
+  await view.user.keyboard('[Space]');
+  expect(input).toHaveAttribute('type', 'text');
+  expect(input).toHaveValue(password);
+  expect(input).toHaveAttribute('autocomplete', 'current-password');
+  expect(screen.getByRole('button', { name: 'Hide password' })).toHaveFocus();
+  await view.user.keyboard('[Enter]');
+  expect(input).toHaveAttribute('type', 'password');
+  expect(input).toHaveValue(password);
+  expect(view.calls.some((call) => call.path === '/api/auth/sign-in/email')).toBe(false);
+
+  await view.user.click(screen.getByRole('button', { name: 'Show password' }));
+  await view.user.click(screen.getByRole('button', { name: 'Create account' }));
+  expect(screen.getByLabelText('Password', { exact: true })).toHaveAttribute('type', 'password');
+  expect(screen.getByLabelText('Password', { exact: true })).toHaveValue('');
+  expect(screen.getByLabelText('Password', { exact: true })).toHaveAttribute(
+    'autocomplete',
+    'new-password',
+  );
+});
+
 test('local signup signs in without offering unavailable recovery', async () => {
   const view = await account(local, {
     handler: (call) =>
@@ -243,6 +270,7 @@ test('sign-in completing after unmount cannot authenticate a retired screen', as
   });
   await credentials(view.user);
   await view.user.click(signInButton());
+  expect(screen.getByRole('button', { name: 'Show password' })).toBeDisabled();
   view.unmount();
   await act(async () => {
     pending.resolve(json({ token: 'synthetic-session' }));

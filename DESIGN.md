@@ -85,6 +85,7 @@ Workspace load and refresh errors use a persistent error toast with a Retry acti
 Account entry keeps the brand, main introduction, and credential forms without the introductory eyebrow, principles list, signup preamble, or AI-connection footnote.
 On desktop, the main introduction stays vertically centered in its column while the brand remains at the top. Phones retain the stacked brand, introduction, and form layout.
 The Forgot password action is horizontally centered beneath the sign-in form.
+Sign-in and create-account password fields use the shared ButtonGroup with a regular Input and an attached 44px-wide outline eye button, following the [shadcn Input button-group pattern](https://ui.shadcn.com/docs/components/base/input#button-group). Input and button share aligned edges and joined corners; each retains its own keyboard-focus outline. Passwords start masked; the button announces Show password or Hide password, preserves the entered value, and never submits the form. Switching account modes clears the password and restores masking.
 
 Sign-in/create-account switching keeps one live form and the shared mode controls. Pointer and touch changes use a 220ms directional fade with a 12px horizontal offset; keyboard and reduced-motion changes are immediate. Motion is limited to the form content, cancels on the next mode change, and does not run on initial entry or verification/recovery flows.
 

@@ -72,6 +72,7 @@ import {
 import './specimens.css';
 import { coreCatalog } from './catalog';
 import { ExpandedSpecimen } from './expanded-specimens';
+import { InputExamples } from './input-specimen';
 
 function Section({
   title,
@@ -393,17 +394,18 @@ function CoreSpecimen({ id }: { id: string }) {
           <Section title="Editable & invalid">
             <div className="specimen-grid">
               <Field label="Workout name" hint="Name the session so you can find it later.">
-                <Input placeholder="e.g. Upper body" />
+                <Input id="input-workout-name" placeholder="e.g. Upper body" />
               </Field>
               <label className="specimen-field">
                 <span>Duration in minutes</span>
                 <Input
+                  id="input-duration"
                   type="number"
                   defaultValue={-5}
                   aria-invalid="true"
-                  aria-describedby="duration-error"
+                  aria-describedby="input-duration-error"
                 />
-                <small id="duration-error" className="specimen-error">
+                <small id="input-duration-error" className="specimen-error">
                   Enter a duration greater than zero.
                 </small>
               </label>
@@ -415,13 +417,14 @@ function CoreSpecimen({ id }: { id: string }) {
           >
             <div className="specimen-grid">
               <Field label="Recorded unit">
-                <Input readOnly value="Kilograms (kg)" />
+                <Input id="input-recorded-unit" readOnly value="Kilograms (kg)" />
               </Field>
               <Field label="Previous session">
-                <Input disabled value="No previous session" />
+                <Input id="input-previous-session" disabled value="No previous session" />
               </Field>
             </div>
           </Section>
+          <InputExamples Section={Section} Status={Status} />
         </>
       );
     case 'textarea':
