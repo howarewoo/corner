@@ -223,17 +223,20 @@ export class GitHub {
         description: `Corner ${payload.phase}`,
       }),
     });
-    id(record.id);
-    await this.api(`deployments/${record.id}/statuses`, {
+    await this.status(record, state);
+    return record;
+  }
+  async status(record, state) {
+    const payload = record.payload;
+    await this.api(`deployments/${id(record.id)}/statuses`, {
       method: 'POST',
       body: JSON.stringify({
         state,
-        auto_inactive: false,
+        auto_inactive: state === 'success' && ['planned', 'schema-attempted'].includes(payload.phase),
         environment_url: payload.origin,
         description: `Corner ${payload.phase}`,
       }),
     });
-    return record;
   }
   async artifact(reference, destination) {
     releaseTarget();
@@ -245,6 +248,36 @@ export class GitHub {
       destination,
     });
   }
+}
+
+async function runDeployment(github, record, operation, successState = 'success') {
+  let result;
+  try {
+    result = await operation();
+  } catch (error) {
+    try {
+      await github.status(record, 'failure');
+    } catch (statusError) {
+      throw new AggregateError([error, statusError], 'Release stage and status finalization failed');
+    }
+    throw error;
+  }
+  await github.status(record, successState);
+  return result;
+}
+
+async function recordCompletion(github, receipt) {
+  const publicRecord = await github.record({ ...receipt, phase: 'public-passed' }, 'success');
+  const completed = await github.record(
+    { ...receipt, phase: 'complete', publicDeploymentId: String(publicRecord.id) },
+    'success',
+  );
+  await github.status(publicRecord, 'inactive');
+  await github.status({
+    id: receipt.planId,
+    payload: { phase: 'planned', origin: receipt.origin },
+  }, 'inactive');
+  return completed;
 }
 async function assertForwardSource(github, previous, source) {
   if (!previous) return;
@@ -423,7 +456,7 @@ export async function plan({
     executionRunId: process.env.GITHUB_RUN_ID,
     executionRunAttempt: process.env.GITHUB_RUN_ATTEMPT,
   };
-  const record = await github.record(payload);
+  const record = await github.record(payload, 'success');
   if (process.env.GITHUB_STEP_SUMMARY)
     await writeFile(
       process.env.GITHUB_STEP_SUMMARY,
@@ -842,8 +875,10 @@ export async function promote({
     }
     await assertCurrentCandidate();
     // Journal before migration: even a lost response cannot hide a possible schema advance.
-    await github.record({ ...p, phase: 'schema-attempted', planId: String(prepared.id) });
-    execute(
+    const schemaAttempt = await github.record({
+      ...p, phase: 'schema-attempted', planId: String(prepared.id),
+    });
+    await runDeployment(github, schemaAttempt, () => execute(
       process.execPath,
       [join(candidate.directory, candidate.manifest.migrationEntry), '--apply',
         ...(p.productionAdoptionHost ? ['--adopt-production'] : [])],
@@ -852,7 +887,7 @@ export async function promote({
         PRODUCTION_ADOPTION_MODE: p.productionAdoptionHost ? 'pinned-bootstrap' : '',
         PRODUCTION_ADOPTION_HOST: p.productionAdoptionHost ?? '',
       } },
-    );
+    ));
     await reverify();
     if (p.bootstrap) {
       // First tracked release creates or explicitly adopts the approved Worker.
@@ -883,7 +918,7 @@ export async function promote({
   assertBaseline(p.baselineId, latest?.id);
   await assertCurrentCandidate();
   if (!p.bootstrap) wrangler(['versions', 'deploy', `${versionId}@100%`, ...common, '--yes']);
-  let receipt = {
+  const receipt = {
     ...p,
     phase: 'deployed',
     versionId,
@@ -891,22 +926,19 @@ export async function promote({
     rollbackCompatibility: p.rollback ? p.qualification : null,
     qualification: p.rollback ? p.targetQualification : p.qualification,
   };
-  await github.record(receipt);
-  await reverify();
-  const deployments = await cf(`workers/scripts/${target.workerName}/deployments`);
-  need(
-    deployments.deployments?.[0]?.versions?.length === 1 &&
-      deployments.deployments[0].versions[0].version_id === versionId &&
-      deployments.deployments[0].versions[0].percentage === 100,
-    'Cloudflare traffic does not match approved Worker',
-  );
-  await checkPublic(p.origin, versionId);
-  receipt = { ...receipt, phase: 'public-passed' };
-  const publicRecord = await github.record(receipt);
-  return github.record(
-    { ...receipt, phase: 'complete', publicDeploymentId: String(publicRecord.id) },
-    'success',
-  );
+  const deployed = await github.record(receipt);
+  return runDeployment(github, deployed, async () => {
+    await reverify();
+    const deployments = await cf(`workers/scripts/${target.workerName}/deployments`);
+    need(
+      deployments.deployments?.[0]?.versions?.length === 1 &&
+        deployments.deployments[0].versions[0].version_id === versionId &&
+        deployments.deployments[0].versions[0].percentage === 100,
+      'Cloudflare traffic does not match approved Worker',
+    );
+    await checkPublic(p.origin, versionId);
+    return recordCompletion(github, receipt);
+  }, 'inactive');
 }
 export async function complete({
   github,
@@ -950,16 +982,14 @@ export async function complete({
       'Cloudflare traffic does not match the incomplete release',
     );
   };
-  await assertLive();
-  await checkPublic(p.origin, p.versionId);
-  assertBaseline(current.id, (await github.baseline())?.id);
-  assertBaseline(schema?.id, (await github.schema())?.id);
-  await assertLive();
-  const publicRecord = await github.record({ ...p, phase: 'public-passed' });
-  return github.record(
-    { ...p, phase: 'complete', publicDeploymentId: String(publicRecord.id) },
-    'success',
-  );
+  return runDeployment(github, current, async () => {
+    await assertLive();
+    await checkPublic(p.origin, p.versionId);
+    assertBaseline(current.id, (await github.baseline())?.id);
+    assertBaseline(schema?.id, (await github.schema())?.id);
+    await assertLive();
+    return recordCompletion(github, p);
+  }, 'inactive');
 }
 export async function deploy(options) {
   const prepared = await plan({
