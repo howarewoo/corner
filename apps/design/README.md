@@ -1,6 +1,6 @@
 # Corner Design
 
-Internal developer catalog, owned by this repository. No account, database, model provider, Woostack installation, or remote registry is needed at runtime. The production Corner server does not serve this app.
+Internal developer catalog, owned by this repository, using Storybook **10.6.3** with its native manager and React/Vite preview. No account, database, model provider, Woostack installation, or remote registry is needed at runtime. The production Corner server does not serve this app.
 
 ## Commands
 
@@ -16,14 +16,19 @@ From the repository root, with Node `>=24.15.0 <25` and pnpm `10.33.2`:
 ## Ownership and compatibility
 
 - `../../packages/ui/src/components.tsx`: public exports, imported as `@packages/ui`.
-- `../../packages/ui/src/primitives.tsx`: the original 18 Corner/Base UI controls, reused by the expanded catalog and chrome.
+- `../../packages/ui/src/primitives.tsx`: the original 18 Corner/Base UI controls, reused by the expanded catalog.
 - `../../packages/ui/src/catalog/`: the remaining sourced controls and their public compositions.
 - `../../packages/ui/src/components.css`: flat Corner styling and adaptations to the existing public control APIs.
 - `../../packages/ui/src/tokens.css`: canonical Corner light palette, shared by the product and catalog.
 - `../../packages/ui/src/theme.css`: opt-in shadcn semantic aliases and Corner's dark extension. Set `data-corner-theme="light"` or `"dark"` on the document element; `.corner-ui` scopes the light aliases around migrated legacy controls and portal viewports without changing the whole product. The catalog also keeps the `.dark` class aligned for chart theme selectors.
-- `../../packages/ui/src/utilities.css`: complete Tailwind v4 setup, including Preflight. `utilities-only.css` shares the utility definitions without Preflight for gradual product migration and imports the official `shadcn/tailwind.css` utilities. Both workspace scrollers use its `scroll-fade` class. Consumers need their own Tailwind build integration; `vite.config.ts` is the working reference.
+- `../../packages/ui/src/utilities.css`: complete Tailwind v4 setup, including Preflight. `utilities-only.css` shares the utility definitions without Preflight for gradual product migration and imports the official `shadcn/tailwind.css` utilities. Consumers need their own Tailwind build integration; the catalog's Storybook Vite integration supplies it.
 - `src/specimens.tsx`, `src/expanded-specimens.tsx`, `src/conversation-specimens.tsx`, and `src/table-specimen.tsx`: live implementation references, not generated snippets or separate usage examples.
-- `src/main.tsx`: chrome built from shared `AppSidebar`, `WorkspaceHeader`, and Sidebar layout primitives. The Sidebar specimen operates this same live composition; product and catalog supply different group, search, selection, and footer parameters. Base UI provides the single root toaster, not one per specimen.
+- `src/catalog.ts`: the single metadata inventory and canonical story-link builder.
+- `src/stories/*.stories.tsx` and `src/stories/catalog-story.tsx`: grouped CSF3 entries and their shared wrapper, rendering existing live specimens rather than copies of component implementations.
+- `.storybook/main.ts`: Storybook discovery, React/Vite integration, private-file boundaries, and legacy catalog-link redirects.
+- `.storybook/manager.ts`: native manager options; no custom navigation or source/copy panels.
+- `.storybook/preview.tsx`: shared UI/specimen styles, TooltipProvider, a single shared Base UI toaster keyed by story, and the light/dark theme toolbar. Theme selection aligns `data-corner-theme` and `.dark` on the preview document root, so controls, charts, and body-mounted portals receive the same theme.
+- The Sidebar story owns a self-contained live `AppSidebar`/SidebarProvider composition. Storybook's native manager supplies catalog navigation; it is not the Sidebar specimen and does not use `AppSidebar`.
 
 Product account, setup, profile, nutrition, training, and agent controls use these shared shadcn/Base UI primitives and shipped styling rather than parallel app-local controls. Domain forms, layouts, and visualizations remain product-owned. The initial controls retain their project-owned APIs; compositions adapt to those APIs. Newly sourced controls retain current shadcn Base UI/Tailwind composition. No Radix UI primitives or Next.js runtime are introduced. `Toaster` accepts `viewportProps` for portal theme scoping.
 
@@ -31,11 +36,13 @@ The UI package explicitly declares React and ReactDOM ambient types rather than 
 
 Semantic names include `--background`, `--foreground`, `--primary`, `--primary-foreground`, `--secondary`, `--muted`, `--muted-foreground`, `--accent`, `--destructive`, `--border`, `--input`, `--ring`, chart colors, and the sidebar family. Product surfaces opt into aliases with `.corner-ui` and use `--muted-foreground` for subdued text; `--muted` denotes a background. Editable controls retain the green-gray treatment. Surfaces are flat; toasts use `--shadow-floating` for separation without borders. Visible focus outlines do not depend on shadows.
 
+The tooling migration reuses all existing project specimens and controls without re-sourcing or changing their implementations. Storybook `10.6.3`, `@storybook/react-vite`, and `@storybook/addon-themes` were resolved from the npm registry on **2026-10-25**; integration follows the current [React/Vite](https://storybook.js.org/docs/get-started/frameworks/react-vite), [Vite builder](https://storybook.js.org/docs/builders/vite), and [themes](https://storybook.js.org/docs/essentials/themes) documentation. The original shadcn source provenance and notices below remain authoritative for controls.
+
 ## Declared coverage
 
-**Exhaustive current component inventory**, explicitly requested after the initial focused creation: every one of the **66 entries** in the live [shadcn component index](https://ui.shadcn.com/docs/components), retrieved **2026-10-23**, plus registry entry **Form**. Corner **Colors** and **Spacing & shape** remain additional foundations: **67 upstream entries, 69 navigation entries total**. Notifications use only the Base UI **Toast** composition.
+**Exhaustive existing Corner catalog migration:** preserve the inventory established after the initial focused creation: every one of the **66 entries** in the [shadcn component index](https://ui.shadcn.com/docs/components) retrieved **2026-10-23**, plus registry entry **Form**. Corner **Colors** and **Spacing & shape** remain additional foundations: **67 upstream entries, 69 indexed stories total**. This tooling migration preserves existing variants, states, and interactions; it is not a newly checked full upstream inventory as of the migration date. Notifications use only the Base UI **Toast** composition.
 
-The exact upstream IDs, source URLs, retrieved source-file SHA-256 digests, implementation owners, specimen locations, extensions, and limits are recorded in `../../packages/ui/provenance.json`. The table below is the complete navigation inventory. Every ID has a live specimen; stable links use `?component=<id>`.
+The exact upstream IDs, source URLs, retrieved source-file SHA-256 digests, implementation owners, specimen locations, extensions, and limits are recorded in `../../packages/ui/provenance.json`. The table below is the complete navigation inventory. Every ID has a live story; canonical manager links use `?path=/story/<group-lowercase>--<id>` (for example, `?path=/story/actions--button`). Existing `?component=<id>` links redirect to those stories; missing or unknown legacy IDs default to Colors.
 
 | Group        | Identifiers                                                                                                                                                                    |
 | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -56,13 +63,16 @@ The exact upstream IDs, source URLs, retrieved source-file SHA-256 digests, impl
 - `../../packages/ui/NOTICE` retains the upstream MIT copyright and permission terms. Builds emit the same notice as `dist/licenses/shadcn-ui.txt`.
 - Corner-owned extensions are Colors, Spacing & shape, dark semantic tokens, and Alert success/warning variants. Sidebar uses the product's 760px phone breakpoint, editable-safe shortcuts, and explicit phone focus targets.
 - **No required inventory entry is omitted.** Inventory completeness does not mean every upstream variant, subcomponent, recipe, or API is reproduced unchanged. The initial 18 controls deliberately retain compact Corner APIs. Code Block shows illustrative terminal output without a copy control; no generated usage snippets are presented.
+- **Inherited interaction gap (`toast`, `coverage: gap`):** the shared `@packages/ui` toast dismiss icon has no accessible name in the browser accessibility tree. The toast action and story-local reset work; changing the shared primitive is outside this tooling migration.
 
 ## Navigation and interaction
 
-Search matches component names, groups, and descriptions; an unmatched query has an explicit empty state and clear action. Selection updates the URL; direct links, reload, and browser Back/Forward restore the selected specimen.
+Storybook's native manager owns component search, grouped navigation, story selection, and browser history. Direct story links and reloads select the requested specimen. The custom React Router catalog shell is replaced; only the product retains React Router. Links between catalog stories use canonical manager URLs and navigate the top-level window rather than nesting the manager in the preview iframe.
 
-`AppSidebar` composes Sidebar, SidebarHeader, SidebarContent, SidebarGroup, SidebarGroupLabel, SidebarMenu, SidebarMenuButton, and SidebarFooter inside SidebarProvider/SidebarInset. Its styling, including equal sidebar header/footer side padding, belongs only to `packages/ui`. Desktop catalog navigation collapses with its trigger or `Command+B` / `Control+B`; the product keeps desktop navigation expanded without a toggle. The product supplies `mobileNavigation` for Home/Nutrition/Training and uses `mobileLayout="fullscreen"` with a shared `WorkspaceMobileBar`. The catalog omits those parameters and retains inset Sheet navigation: search receives initial focus, selection closes navigation and focuses the heading, and cancellation restores the trigger. Both frames fit the viewport and scroll their inner content rather than the frame.
+On phones, selecting a navigation-tree link closes the native menu. Keyboard search selects a story with Enter but leaves that menu open; use **Close menu** to reveal the selected preview. Escape in the search field clears the query rather than dismissing the menu. This is retained Storybook manager behavior, not a custom catalog shortcut.
 
-`Command+K` / `Control+K` focuses component search, expanding collapsed desktop navigation first, or opens phone navigation. Both shortcut families respect editable fields, dialogs, and extra modifiers. The appearance button applies light/dark colors to chrome, controls, charts, and specimens and remembers the selection when local storage is available.
+The Sidebar story composes real Sidebar, SidebarHeader, SidebarContent, SidebarGroup, SidebarGroupLabel, SidebarMenu, SidebarMenuButton, and SidebarFooter inside SidebarProvider/SidebarInset through shared `AppSidebar`. Its styling belongs only to `packages/ui`. Its desktop collapse and default inset phone Sheet behavior are specimen interactions, not Storybook manager behavior. The product keeps desktop navigation expanded and supplies `mobileNavigation` for Home/Nutrition/Training with `mobileLayout="fullscreen"` and shared `WorkspaceMobileBar`.
+
+The preview toolbar selects light/dark shared themes for specimens and their portals, independently of Storybook's manager chrome. It retains the existing `corner-design-theme` local-storage preference when storage is available. Existing live specimens remain the implementation reference: no Autodocs, generated usage documentation, source/code-snippet panels, or copy controls are added.
 
 Specimen state is local and synthetic. Switching specimens or reloading resets it; no preview saves product data. Attachment reads only local filename/size, messages are appended locally without an AI transport, questionnaire answers remain local, and form submission makes no server request. Keyboard behavior, focus management, portals, and dismissal belong to the real shared primitives.
