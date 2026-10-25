@@ -1720,7 +1720,7 @@ h1 {
     --shell-gutter: 0;
   }
   .workspace {
-    padding: 20px 18px;
+    padding: 20px 18px 0;
   }
   .nutrition-mobile-tabs {
     display: flex;

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, rm, rmdir, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import test from 'node:test';
+import { test } from 'vitest';
 import { fileURLToPath } from 'node:url';
 import { resolveConfig } from 'vite';
 import configuration, { developmentServer } from '../vite.config.ts';
@@ -55,7 +55,7 @@ test('resolved Vite configuration exposes only public environment values', async
   const generated = join(webRoot, 'tests', '.generated');
   await mkdir(generated, { recursive: true });
   const fixture = await mkdtemp(join(generated, 'vite-env-'));
-  t.after(async () => {
+  t.onTestFinished(async () => {
     await rm(fixture, { recursive: true, force: true });
     await rmdir(generated).catch(() => {});
   });

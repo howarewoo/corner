@@ -17,6 +17,8 @@ test('ordinary changes stay narrow while contracts, policy, and uncertainty sele
     'apps/web/src/api.ts',
     'apps/web/src/account-access.tsx',
     'apps/web/vite.config.ts',
+    'apps/web/src/features/food-log/__tests__/food-log.browser.ts',
+    'apps/web/src/__tests__/browser.ts',
     'apps/server/src/store.ts',
     'packages/nutrition/src/schemas.ts',
     'packages/training/src/workouts.ts',
@@ -36,6 +38,8 @@ test('ordinary changes stay narrow while contracts, policy, and uncertainty sele
     '.npmrc',
     'packages/ui/.npmrc',
     'apps/design/vite.config.ts',
+    'apps/web/playwright.config.ts',
+    'apps/web/vitest.config.ts',
     'unknown-root-config',
   ]) {
     assert.deepEqual(

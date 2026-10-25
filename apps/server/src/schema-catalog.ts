@@ -7,7 +7,12 @@ function need(condition: unknown): asserts condition {
 }
 // Deliberately bounded to the application's plain tables, built-in types and btree indexes.
 // Migration metadata is validated separately, never treated as application schema.
-export async function applicationCatalog(client: PoolClient, schema: string): Promise<string> {
+// A table scope leaves local Auth/bookkeeping intact; unsupported schema-level objects still refuse.
+export async function applicationCatalog(
+  client: PoolClient,
+  schema: string,
+  tables: string[] | null = null,
+): Promise<string> {
   const excluded = ['__drizzle_migrations', '__drizzle_migrations_id_seq'];
   const unsupported = await client.query(
     `SELECT
@@ -17,10 +22,10 @@ export async function applicationCatalog(client: PoolClient, schema: string): Pr
     EXISTS (SELECT 1 FROM pg_type t JOIN pg_namespace n ON n.oid=t.typnamespace WHERE n.nspname=$1 AND NOT
       (t.typtype='c' AND EXISTS (SELECT 1 FROM pg_class c WHERE c.oid=t.typrelid AND c.relkind='r') OR
        t.typelem<>0 AND EXISTS (SELECT 1 FROM pg_type b JOIN pg_class c ON c.oid=b.typrelid WHERE b.oid=t.typelem AND b.typtype='c' AND c.relkind='r'))) OR
-    EXISTS (SELECT 1 FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=$1) OR
+    EXISTS (SELECT 1 FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=$1 AND ($3::text[] IS NULL OR c.relname=ANY($3::text[]))) OR
     EXISTS (SELECT 1 FROM pg_rewrite r JOIN pg_class c ON c.oid=r.ev_class JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=$1) OR
     EXISTS (SELECT 1 FROM pg_policy p JOIN pg_class c ON c.oid=p.polrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=$1) OR
-    EXISTS (SELECT 1 FROM pg_constraint c JOIN pg_namespace n ON n.oid=c.connamespace WHERE n.nspname=$1 AND c.contype NOT IN ('p','u','n')) OR
+    EXISTS (SELECT 1 FROM pg_constraint c JOIN pg_namespace n ON n.oid=c.connamespace WHERE n.nspname=$1 AND c.contype NOT IN ('p','u','n') AND ($3::text[] IS NULL OR c.conrelid IN (SELECT oid FROM pg_class WHERE relnamespace=n.oid AND relname=ANY($3::text[])))) OR
     EXISTS (SELECT 1 FROM pg_attribute a JOIN pg_class c ON c.oid=a.attrelid JOIN pg_namespace n ON n.oid=c.relnamespace JOIN pg_type t ON t.oid=a.atttypid JOIN pg_namespace tn ON tn.oid=t.typnamespace
       WHERE n.nspname=$1 AND c.relkind='r' AND a.attnum>0 AND (a.attisdropped OR a.attidentity<>'' OR a.attgenerated<>'' OR a.atthasmissing OR a.attacl IS NOT NULL OR tn.nspname<>'pg_catalog' OR EXISTS (SELECT 1 FROM pg_collation co JOIN pg_namespace cn ON cn.oid=co.collnamespace WHERE co.oid=a.attcollation AND cn.nspname<>'pg_catalog'))) OR
     EXISTS (SELECT 1 FROM pg_inherits i JOIN pg_class c ON c.oid=i.inhrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=$1) OR
@@ -40,17 +45,17 @@ export async function applicationCatalog(client: PoolClient, schema: string): Pr
     EXISTS (SELECT 1 FROM pg_ts_dict d JOIN pg_namespace n ON n.oid=d.dictnamespace WHERE n.nspname=$1) OR
     EXISTS (SELECT 1 FROM pg_ts_parser p JOIN pg_namespace n ON n.oid=p.prsnamespace WHERE n.nspname=$1) OR
     EXISTS (SELECT 1 FROM pg_ts_template t JOIN pg_namespace n ON n.oid=t.tmplnamespace WHERE n.nspname=$1) AS unsupported`,
-    [schema, excluded],
+    [schema, excluded, tables],
   );
   need(!unsupported.rows[0].unsupported);
   await client.query(`SET LOCAL search_path TO ${quote(schema)}, pg_catalog`);
   const queries = [
-    `SELECT c.relname,c.relkind,c.relpersistence,c.relreplident,am.amname FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace LEFT JOIN pg_am am ON am.oid=c.relam WHERE n.nspname=$1 AND c.relname <> ALL($2::text[]) AND NOT EXISTS (SELECT 1 FROM pg_index i JOIN pg_class t ON t.oid=i.indrelid WHERE i.indexrelid=c.oid AND t.relname = ANY($2::text[])) ORDER BY c.relname`,
-    `SELECT c.relname,a.attnum,a.attname,format_type(a.atttypid,a.atttypmod) AS type,a.attnotnull,a.attstorage,a.attcompression,co.collname,pg_get_expr(d.adbin,d.adrelid) AS default_value FROM pg_attribute a JOIN pg_class c ON c.oid=a.attrelid JOIN pg_namespace n ON n.oid=c.relnamespace LEFT JOIN pg_attrdef d ON d.adrelid=c.oid AND d.adnum=a.attnum LEFT JOIN pg_collation co ON co.oid=a.attcollation WHERE n.nspname=$1 AND c.relkind='r' AND c.relname <> ALL($2::text[]) AND a.attnum>0 ORDER BY c.relname,a.attnum`,
-    `SELECT t.relname,c.conname,c.contype,c.condeferrable,c.condeferred,c.convalidated,pg_get_constraintdef(c.oid) AS definition FROM pg_constraint c JOIN pg_class t ON t.oid=c.conrelid JOIN pg_namespace n ON n.oid=t.relnamespace WHERE n.nspname=$1 AND t.relname <> ALL($2::text[]) ORDER BY t.relname,c.conname`,
-    `SELECT t.relname,c.relname AS index_name,i.indisunique,i.indisprimary,i.indisvalid,i.indisready,i.indislive,i.indisreplident,i.indnullsnotdistinct,replace(pg_get_indexdef(i.indexrelid), ' ON ' || quote_ident($1) || '.', ' ON ') AS definition FROM pg_index i JOIN pg_class t ON t.oid=i.indrelid JOIN pg_class c ON c.oid=i.indexrelid JOIN pg_namespace n ON n.oid=t.relnamespace WHERE n.nspname=$1 AND t.relname <> ALL($2::text[]) ORDER BY t.relname,c.relname`,
+    `SELECT c.relname,c.relkind,c.relpersistence,c.relreplident,am.amname FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace LEFT JOIN pg_am am ON am.oid=c.relam WHERE n.nspname=$1 AND c.relname <> ALL($2::text[]) AND NOT EXISTS (SELECT 1 FROM pg_index i JOIN pg_class t ON t.oid=i.indrelid WHERE i.indexrelid=c.oid AND t.relname = ANY($2::text[])) AND ($3::text[] IS NULL OR c.relname=ANY($3::text[]) OR EXISTS (SELECT 1 FROM pg_index i JOIN pg_class t ON t.oid=i.indrelid WHERE i.indexrelid=c.oid AND t.relname=ANY($3::text[]))) ORDER BY c.relname`,
+    `SELECT c.relname,a.attnum,a.attname,format_type(a.atttypid,a.atttypmod) AS type,a.attnotnull,a.attstorage,a.attcompression,co.collname,pg_get_expr(d.adbin,d.adrelid) AS default_value FROM pg_attribute a JOIN pg_class c ON c.oid=a.attrelid JOIN pg_namespace n ON n.oid=c.relnamespace LEFT JOIN pg_attrdef d ON d.adrelid=c.oid AND d.adnum=a.attnum LEFT JOIN pg_collation co ON co.oid=a.attcollation WHERE n.nspname=$1 AND c.relkind='r' AND c.relname <> ALL($2::text[]) AND a.attnum>0 AND ($3::text[] IS NULL OR c.relname=ANY($3::text[])) ORDER BY c.relname,a.attnum`,
+    `SELECT t.relname,c.conname,c.contype,c.condeferrable,c.condeferred,c.convalidated,pg_get_constraintdef(c.oid) AS definition FROM pg_constraint c JOIN pg_class t ON t.oid=c.conrelid JOIN pg_namespace n ON n.oid=t.relnamespace WHERE n.nspname=$1 AND t.relname <> ALL($2::text[]) AND ($3::text[] IS NULL OR t.relname=ANY($3::text[])) ORDER BY t.relname,c.conname`,
+    `SELECT t.relname,c.relname AS index_name,i.indisunique,i.indisprimary,i.indisvalid,i.indisready,i.indislive,i.indisreplident,i.indnullsnotdistinct,replace(pg_get_indexdef(i.indexrelid), ' ON ' || quote_ident($1) || '.', ' ON ') AS definition FROM pg_index i JOIN pg_class t ON t.oid=i.indrelid JOIN pg_class c ON c.oid=i.indexrelid JOIN pg_namespace n ON n.oid=t.relnamespace WHERE n.nspname=$1 AND t.relname <> ALL($2::text[]) AND ($3::text[] IS NULL OR t.relname=ANY($3::text[])) ORDER BY t.relname,c.relname`,
   ];
   const result = [];
-  for (const sql of queries) result.push((await client.query(sql, [schema, excluded])).rows);
+  for (const sql of queries) result.push((await client.query(sql, [schema, excluded, tables])).rows);
   return JSON.stringify(result);
 }

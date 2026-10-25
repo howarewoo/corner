@@ -3,7 +3,6 @@ import { and, count, desc, eq, gte, sql } from 'drizzle-orm';
 import type { Database } from './queries.js';
 import { aiRuns } from './schema.js';
 import { z } from 'zod';
-import { zodToJsonSchema } from 'zod-to-json-schema';
 import {
   AgentRequestSchema,
   AgentResultSchema,
@@ -89,8 +88,8 @@ const safeError = (error: unknown): string => {
   return 'The agent could not produce a valid result. Try a more specific request. No changes were applied.';
 };
 
-function tool(name: string, description: string, schema: z.ZodTypeAny) {
-  const parameters = zodToJsonSchema(schema, { $refStrategy: 'none' }) as Record<string, unknown>;
+function tool(name: string, description: string, schema: z.ZodType) {
+  const parameters = z.toJSONSchema(schema, { target: 'draft-7', io: 'input' });
   delete parameters.$schema;
   return { type: 'function', name, description, parameters, strict: false };
 }

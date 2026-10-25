@@ -22,7 +22,7 @@ const journalSchema = z
           .object({
             idx: z.number().int().nonnegative(),
             version: z.literal('7'),
-            when: z.number().int().positive().safe(),
+            when: z.int().positive(),
             tag: z.string().regex(/^\d{4}_[A-Za-z0-9_-]+$/),
             breakpoints: z.boolean(),
           })
@@ -33,11 +33,11 @@ const journalSchema = z
   .strict();
 const snapshotSchema = z
   .object({
-    id: z.string().uuid(),
-    prevId: z.string().uuid(),
+    id: z.guid(),
+    prevId: z.guid(),
     version: z.literal('7'),
     dialect: z.literal('postgresql'),
-    tables: z.record(z.unknown()),
+    tables: z.record(z.string(), z.unknown()),
   })
   .passthrough();
 

@@ -25,6 +25,8 @@ The explicit seed command creates `empty@corner.test` and `demo@corner.test`, bo
 
 `dev` never seeds automatically. Reseeding preserves edits and uses persistent seed dates/identities to recover interrupted account creation or imports. Account data and seed-completion records live in the owned Docker volume; `.corner-local/` holds private configuration, application keys, and the local Auth certificate. Both Git and Docker build contexts exclude that directory. No production/staging data is copied, and **there is no staging or production seed option**.
 
+Existing owned local databases from before Drizzle are baselined automatically by `dev`: after verifying the installation identity, the controller compares application tables, columns, defaults, constraints, and indexes against the checked-in initial Drizzle SQL under the migration lock. Only a matching schema with the old audit ledger and no applied native history receives a baseline entry. Existing application/Auth records, seed state, keys, and the old audit ledger are retained; schema drift refuses adoption rather than resetting data. Hosted migration and staging-provisioning commands do not use this local-only path.
+
 If the default ports are occupied, use `pnpm run dev --port=45100`; the API and catalog use the next two ports. Occupied listeners are never killed. `pnpm run dev:down` stops owned services and retains all records and keys. To delete the entire owned local database, first finish any work using it, then run `pnpm run dev:reset --confirm-delete-local-data`. Reset retains local keys; restart and explicitly seed again. No existing repository `data/` or `.env` file is modified.
 
 Running `pnpm dev` again reuses the authenticated controller for this checkout and exits successfully, printing its actual URL. It does not restart, stop, or reseed services; `--port` applies only when starting a new stack. Use `dev:down` before changing ports. Unrelated listeners or a controller with a different installation identity are never adopted.
@@ -66,9 +68,10 @@ The build compiles the nutrition, training, workspace, agent, and API packages i
 | `pnpm run lint`                                  | Repository-wide Oxlint checks with the registered shadcn lint plugin                                                                        |
 | `pnpm run format`                                | Format supported repository files with Oxfmt                                                                                                |
 | `pnpm run format:check`                          | Check formatting without changing files                                                                                                     |
-| `pnpm test`                                      | Independent server and rendered-web test suites                                                                                             |
+| `pnpm test`                                      | Native Node server suite and Vitest web suite, with Turbo shared-build prerequisites                                                         |
+| `pnpm run test:browser`                          | After a full build: Chromium desktop and WebKit phone journeys against disposable PostgreSQL/Auth on port 43141                              |
 | `pnpm run smoke`                                 | Actual compiled-server account, proxy, health, and shutdown checks                                                                          |
-| `pnpm run smoke:dev`                             | Actual two-app development proxy, session, and shared-catalog checks                                                                        |
+| `pnpm run smoke:dev`                             | Actual two-app development proxy, session, and shared exercise-catalog checks; excludes the design catalog                                   |
 | `pnpm start`                                     | The compiled production server and built web app                                                                                            |
 | `pnpm run db:generate`                           | Generate reviewed SQL and snapshots from the server-owned Drizzle schema; no database connection required                                   |
 | `pnpm run db:check`                              | Check Drizzle Kit migration snapshot consistency                                                                                            |
@@ -239,9 +242,28 @@ pnpm run verify -- --base origin/main
 pnpm run verify -- --full --report /tmp/corner-verification.jsonl
 ```
 
-Server tests and all runtime smoke checks require `CORNER_TEST_DATABASE_URL`; they never fall back to the real `DATABASE_URL`. Each fixture owns a random PostgreSQL schema and drops only that schema. Test files still run sequentially in separate processes. Better Auth is a **test-only** dependency for a local managed-service fixture; no test sends real account email or model requests.
+Server tests, browser journeys, and runtime smoke checks require `CORNER_TEST_DATABASE_URL`; they never fall back to the real `DATABASE_URL`. Each fixture owns a random PostgreSQL schema and drops only that schema. Server files run sequentially in separate Node processes; web files run sequentially in isolated Vitest forks. Better Auth is a **test-only** dependency for a local managed-service fixture; no test requires live email delivery, model access, or cloud credentials.
 
 Production smoke starts disposable compiled servers on loopback ports 43137 and 43138. Development smoke starts only the web/API processes and five domain/API-package watchers on 43139 and 43140, excluding the independent design catalog. Task-prefixed streaming logs expose readiness without waiting for persistent tasks to exit. Both use actual PostgreSQL and a private local HTTPS auth fixture, exercise cookie sessions and proxy boundaries, and clean up only their own resources. Run development smoke in a clean checkout without `.env`, `.env.local`, or Vite environment files; never remove a user's configuration just to pass it.
+
+### Web component and browser tests
+
+`pnpm test --filter=web` runs Vitest with React Testing Library and jsdom for component interactions, and Node environments for service-worker and Vite-configuration checks. Tests import production modules directly and interact through accessible roles/labels with `user-event`; React Test Renderer and manual React test bundles are no longer used. `pnpm --filter web test:watch` starts Vitest watch mode after shared dependencies have been built.
+
+Colocate component/logic tests as `__tests__/*.test.ts` or `*.test.tsx`; configuration tests live in `apps/web/__tests__`. Colocate Playwright journeys as `__tests__/*.browser.ts`. The runners use separate discovery patterns, so neither executes the other's files.
+
+```bash
+pnpm --filter web exec playwright install chromium webkit
+# Linux CI also installs system dependencies with: playwright install --with-deps chromium webkit
+pnpm run build
+pnpm run test:browser
+```
+
+Browser tests require the disposable database configured above and own a compiled web/API runtime on `127.0.0.1:43141`, with temporary keys and the existing local HTTPS Auth fixture. They never reuse a running development server or persistent demo accounts. Every test uses an independent synthetic account and browser context; teardown closes owned processes and drops the fixture schema.
+
+Both Chromium desktop and WebKit with an emulated iPhone cover deep-link sign-in/logout/account separation, manual food logging, and recorded workouts surviving reload. Connection redirect checks use intercepted synthetic responses and block service workers so WebKit cannot bypass those mocks; the persistence journeys retain production service-worker behavior. These checks do not qualify real inbox delivery, live OAuth/model access, or installed Safari on a real iPhone.
+
+Full CI installs both engines and runs the browser suite after building. Failure screenshots/traces and the HTML report are ignored locally and retained as CI artifacts for 14 days; they contain only synthetic test data.
 
 ### Targeted verification and merge protection
 
@@ -250,10 +272,10 @@ Local targeting uses [scripts/verify.mjs](scripts/verify.mjs). Selection compare
 | Change                                                                    | Selected work                                                                                                |
 | ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
 | Root product/hosting Markdown or `docs/*.md`                              | Local Markdown link targets; source claims and anchors remain human checks                                   |
-| Ordinary web components/styles                                            | Web build and existing rendered-web suite, with Turbo shared prerequisites                                   |
+| Ordinary web components/styles                                            | Web build and Vitest suite, with Turbo shared prerequisites                                                    |
 | Design catalog                                                            | Catalog build/typecheck                                                                                      |
 | Shared UI source                                                          | UI, web, and catalog builds plus existing web suite                                                          |
-| Server/shared/auth/runtime, mixed or uncertain changes                    | CI/release regressions, root check, server/web suites, all builds, and production/development/Workers smokes |
+| Server/shared/auth/runtime/browser, mixed or uncertain changes             | CI/release regressions, root check, server/web suites, all builds, Playwright journeys, and runtime smokes    |
 | Workflows, scripts, dependency/build configuration, unknown root controls | Full profile                                                                                                 |
 
 All non-documentation rows also run repository-wide lint.
@@ -300,7 +322,8 @@ Old feature-preview provisioning workflows are removed. Never recreate removed l
 | `packages/workspace/src/` | Combined state/settings, validated mutation composition, training-aware nutrition targets, and initial state |
 | `packages/agent/src/`     | Planning proposal contracts, allowed changes, and proposal-to-mutation validation                            |
 | `packages/api/src/`       | Browser-safe oRPC contract, transport schemas, and inferred client types                                     |
-| `apps/web/tests/`         | Rendered account/connection controls and development configuration checks                                    |
+| `apps/web/src/**/__tests__/` | Vitest component/logic tests and Playwright browser journeys colocated with their owners                                  |
+| `apps/web/__tests__/`     | Node-environment Vitest checks for web configuration                                                         |
 | `apps/server/tests/`      | Accounts, email, data isolation, agent, provider, and proxy regression checks                                |
 | `scripts/`                | Workspace test runner, production/development smoke checks, configuration, and packaging                     |
 | `deployment/`             | HTTPS edge configuration for the optional hosted Compose deployment                                          |

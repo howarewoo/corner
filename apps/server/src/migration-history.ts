@@ -73,7 +73,7 @@ export async function migrationHistory(
   return inventory.slice(0, rows.length);
 }
 
-/** Record only a schema-verified baseline; never called by ordinary migration/startup. */
+/** Record only a schema-verified baseline; the ordinary migrator never adopts existing tables. */
 export async function recordBaseline(
   client: PoolClient,
   schema: string,

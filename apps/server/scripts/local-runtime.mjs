@@ -6,7 +6,7 @@ import { betterAuth } from 'better-auth';
 import { getMigrations } from 'better-auth/db/migration';
 import { createInitialState } from '@packages/workspace/initial-state';
 import { createDatabase } from '../dist/database.js';
-import { migrate } from '../dist/migrate.js';
+import { migrateLocalDatabase } from '../dist/local-migrations.js';
 import { createApp } from '../dist/app.js';
 import { createAuth } from '../dist/auth.js';
 import { WorkspaceStore } from '../dist/store.js';
@@ -41,7 +41,7 @@ export async function startLocalServices({
     )
       throw new Error('Refusing an unexpected local database or role.');
     await initializeLocalDatabase(database, config.instance);
-    await migrate(database);
+    await migrateLocalDatabase(database, config.instance);
     let authUrl;
     server = createServer(
       { key: await readFile(key), cert: await readFile(certificate) },
