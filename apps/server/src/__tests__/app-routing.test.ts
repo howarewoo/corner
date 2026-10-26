@@ -4,6 +4,7 @@ import type { Pool } from 'pg';
 import { createApp } from '../app.ts';
 import type { Config } from '../config.ts';
 import { WorkspaceStore } from '../store.ts';
+import { createQueries } from '../queries.ts';
 import {
   closeTestDatabase,
   createTestAuth,
@@ -29,7 +30,7 @@ let cookie: string;
 before(async () => {
   db = await testDatabase();
   const auth = await createTestAuth(config, db);
-  app = createApp({ config, auth, store: new WorkspaceStore(db) });
+  app = createApp({ config, auth, store: new WorkspaceStore(createQueries(db)) });
   const response = await app.request(`${config.origin}/api/auth/sign-up/email`, {
     method: 'POST',
     headers: { Origin: config.origin, 'Content-Type': 'application/json' },

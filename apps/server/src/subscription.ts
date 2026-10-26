@@ -7,10 +7,9 @@ import {
   randomUUID,
   timingSafeEqual,
 } from 'node:crypto';
-import type { Pool } from 'pg';
 import { createLocalJWKSet, jwtVerify, type JSONWebKeySet, type JWTPayload } from 'jose';
 import { and, eq, lt, or, sql } from 'drizzle-orm';
-import { createQueries, type Database } from './queries.js';
+import type { Database } from './queries.js';
 import {
   subscriptionAccounts,
   subscriptionAttempts,
@@ -341,7 +340,7 @@ export class SubscriptionProvider {
     config,
     fetch: fetcher = globalThis.fetch,
   }: {
-    db: Pool;
+    db: Database;
     config: SubscriptionConfig;
     fetch?: Fetch;
   }) {
@@ -351,7 +350,7 @@ export class SubscriptionProvider {
     ) {
       throw new Error('Subscription token encryption requires a 32-byte key.');
     }
-    this.db = createQueries(db);
+    this.db = db;
     this.config = config;
     this.fetcher = fetcher;
   }

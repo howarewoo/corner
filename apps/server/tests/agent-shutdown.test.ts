@@ -12,6 +12,7 @@ import { createApp } from '../src/app.ts';
 import { createAuth } from '../src/auth.ts';
 import { PlanningAgent } from '../src/planning-agent.ts';
 import { WorkspaceStore } from '../src/store.ts';
+import { createQueries } from '../src/queries.ts';
 import type { Config } from '../src/config.ts';
 import type { SubscriptionProvider, SubscriptionStatus } from '../src/subscription.ts';
 
@@ -39,7 +40,7 @@ test(
       tokenEncryptionKey: Buffer.alloc(32, 7),
     };
     const auth = await createTestAuth(config, db);
-    const store = new WorkspaceStore(db);
+    const store = new WorkspaceStore(createQueries(db));
     const statusEntered = gate();
     const releaseStatus = gate();
     let inferenceCalls = 0;

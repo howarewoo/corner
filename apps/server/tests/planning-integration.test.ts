@@ -12,6 +12,7 @@ import { createApp } from '../src/app.ts';
 import { connectionDTO } from '../src/ai-routes.ts';
 import { PlanningAgent, type InferenceProvider } from '../src/planning-agent.ts';
 import { WorkspaceStore } from '../src/store.ts';
+import { createQueries } from '../src/queries.ts';
 import type { Config } from '../src/config.ts';
 import type { SubscriptionProvider, SubscriptionStatus } from '../src/subscription.ts';
 import { createInitialState } from '@packages/workspace/initial-state';
@@ -195,7 +196,7 @@ describe('authenticated planning routes with fake inference only', { concurrency
   beforeEach(async () => {
     db = await testDatabase();
     const auth = await createTestAuth(config, db);
-    store = new WorkspaceStore(db);
+    store = new WorkspaceStore(createQueries(db));
     connected = true;
     calls = [];
     answer = async () => completed(clarification);

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import type { Pool } from 'pg';
 import { testDatabase, closeTestDatabase, createTestAuth, neonTestConfig } from './helpers.ts';
 import { WorkspaceStore } from '../src/store.js';
+import { createQueries } from '../src/queries.js';
 import { PlanningAgent, buildContext, type InferenceProvider } from '../src/planning-agent.js';
 import { proposalMutations, type AgentResult, type AgentRun } from '@packages/agent/proposals';
 import { createInitialState } from '@packages/workspace/initial-state';
@@ -74,7 +75,7 @@ const completed = (result: unknown) => ({
 });
 async function fixture(respond: InferenceProvider['respond']) {
   const db = await testDatabase();
-  const store = new WorkspaceStore(db);
+  const store = new WorkspaceStore(createQueries(db));
   const agent = new PlanningAgent(store, { respond });
   await agent.initialize();
   return { db, store, agent };

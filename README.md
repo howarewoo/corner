@@ -81,7 +81,7 @@ The build compiles the nutrition, training, workspace, agent, and API packages i
 | `pnpm run verify -- --plan`                      | Show conservative changed-path selection without running checks                                                                             |
 | `pnpm run verify`                                | Run selected local checks; `-- --full` forces the complete qualification                                                                    |
 | `pnpm run test:ci`                               | Native Node CI, release, and artifact regression tests                                                                                      |
-| `pnpm run smoke:workers`                         | Actual full-stack workerd runtime with disposable PostgreSQL and HTTPS Auth fixtures, after `build:workers`                                 |
+| `pnpm run smoke:workers`                         | Actual full-stack workerd runtime with a local Neon-compatible WebSocket proxy, disposable PostgreSQL, and HTTPS Auth, after `build:workers` |
 
 For a focused build, use `pnpm run build --filter=server` or `pnpm run build --filter=web`. Turbo also builds their domain/API dependencies. Each app declares its own dependencies; import models and validation directly from their owning `@packages/nutrition`, `@packages/training`, `@packages/workspace`, or `@packages/agent` subpath, and the application contract through `@packages/api`, rather than relative paths into another workspace.
 
@@ -245,6 +245,8 @@ pnpm run verify -- --full --report /tmp/corner-verification.jsonl
 Server tests, browser journeys, and runtime smoke checks require `CORNER_TEST_DATABASE_URL`; they never fall back to the real `DATABASE_URL`. Each fixture owns a random PostgreSQL schema and drops only that schema. Server files run sequentially in separate Node processes; web files run sequentially in isolated Vitest forks. Better Auth is a **test-only** dependency for a local managed-service fixture; no test requires live email delivery, model access, or cloud credentials.
 
 Production smoke starts disposable compiled servers on loopback ports 43137 and 43138. Development smoke starts only the web/API processes and five domain/API-package watchers on 43139 and 43140, excluding the independent design catalog. Task-prefixed streaming logs expose readiness without waiting for persistent tasks to exit. Both use actual PostgreSQL and a private local HTTPS auth fixture, exercise cookie sessions and proxy boundaries, and clean up only their own resources. Run development smoke in a clean checkout without `.env`, `.env.local`, or Vite environment files; never remove a user's configuration just to pass it.
+
+Worker smoke uses an in-process, fixed-destination WebSocket-to-TCP proxy so the production Neon WebSocket driver exercises the actual PostgreSQL protocol against the disposable schema. It requires no cloud Neon connection or separately installed proxy service. It checks concurrent idempotent writes, owner isolation, transaction rollback after a receipt-write failure, and clean candidate database shutdown. Ordinary `pnpm dev`, Node runtime checks, and explicit migrations continue using native `pg`.
 
 ### Web component and browser tests
 

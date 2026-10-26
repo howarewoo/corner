@@ -2,7 +2,7 @@ import { extname } from 'node:path';
 import { createApp } from './app.js';
 import { createAuth } from './auth.js';
 import { loadRuntimeConfig } from './runtime-config.js';
-import { createDatabase } from './database.js';
+import { createWorkerDatabase } from './worker-database.js';
 import { WorkspaceStore } from './store.js';
 import { SubscriptionProvider } from './subscription.js';
 import { PlanningAgent } from './planning-agent.js';
@@ -93,7 +93,7 @@ async function fetchApplication(request: Request, env: WorkerEnvironment): Promi
       headers.delete(name);
     const incoming = new Request(request, { headers });
     // Workers sockets belong to the invoking request, never to an isolate-wide pool.
-    const db = createDatabase(config.databaseUrl);
+    const { pool, db } = createWorkerDatabase(config.databaseUrl);
     const store = new WorkspaceStore(db);
     const provider = new SubscriptionProvider({ db, config });
     const agent = new PlanningAgent(store, provider);
@@ -113,8 +113,11 @@ async function fetchApplication(request: Request, env: WorkerEnvironment): Promi
         result.headers.set('X-Corner-Version', env.CF_VERSION_METADATA.id);
       return result;
     } finally {
-      await agent.close();
-      await db.end();
+      try {
+        await agent.close();
+      } finally {
+        await pool.end();
+      }
     }
   } catch {
     return secure(

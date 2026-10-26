@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { afterEach, beforeEach, test } from 'node:test';
 import type { Pool } from 'pg';
 import { sql } from 'drizzle-orm';
-import type { Transaction } from '../src/queries.js';
+import { createQueries, type Transaction } from '../src/queries.js';
 import { testDatabase, closeTestDatabase } from './helpers.ts';
 import { createInitialState } from '@packages/workspace/initial-state';
 import type { AppState } from '@packages/workspace/types';
@@ -14,7 +14,7 @@ let database: Pool;
 let store: WorkspaceStore;
 beforeEach(async () => {
   database = await testDatabase();
-  store = new WorkspaceStore(database);
+  store = new WorkspaceStore(createQueries(database));
 });
 afterEach(async () => await closeTestDatabase(database));
 
