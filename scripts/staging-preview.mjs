@@ -412,7 +412,7 @@ async function main() {
   if (process.env.GITHUB_ACTIONS === 'true')
     need(
       process.env.GITHUB_REF === 'refs/heads/staging' &&
-        ['workflow_run', 'workflow_dispatch'].includes(process.env.GITHUB_EVENT_NAME),
+        process.env.GITHUB_EVENT_NAME === 'workflow_dispatch',
       'Preview deployment must run from trusted staging workflow source',
     );
   const work = await mkdtemp(join(tmpdir(), 'corner-native-preview-'));
