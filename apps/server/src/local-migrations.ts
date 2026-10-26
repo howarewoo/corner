@@ -60,6 +60,18 @@ export async function migrateLocalDatabase(database: Pool, instance: string): Pr
         throw new Error(
           'Local application schema differs from the Drizzle baseline. No baseline was recorded.',
         );
+      // Adoption must not commit a native baseline when the following empty-only
+      // relational migration cannot run. The exclusive locks above also fence
+      // legacy writers until this decision has committed.
+      if (inventory.length > 1) {
+        const retained = await connection.query(
+          `SELECT 1 FROM ${quote(schema)}.workspace_state LIMIT 1`,
+        );
+        if (retained.rowCount)
+          throw new Error(
+            'Local workspace records prevent the empty-only relational migration. No baseline was recorded.',
+          );
+      }
       await connection.query(`DROP SCHEMA ${quote(reference)} CASCADE`);
       await recordBaseline(connection, schema, baseline);
     }

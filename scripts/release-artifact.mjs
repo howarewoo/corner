@@ -144,7 +144,33 @@ export async function verifyArtifact(directory) {
   const migrations = await migrationInventory(join(directory, 'migration/migrations'));
   if (!isDeepStrictEqual(manifest.migrations, migrations))
     throw new Error('Artifact migration inventory differs from validated Kit metadata.');
-  return { manifest, digest: hash(bytes) };
+  const snapshot = JSON.parse(
+    await readFile(
+      join(directory, 'migration/migrations/meta', `${String(migrations.length - 1).padStart(4, '0')}_snapshot.json`),
+      'utf8',
+    ),
+  );
+  const tables = snapshot.tables;
+  const relational = Object.hasOwn(tables, 'public.workspace_metadata');
+  if (relational && Object.hasOwn(tables, 'public.workspace_state'))
+    throw new Error('Ambiguous artifact storage generation.');
+  return { manifest, digest: hash(bytes), generation: relational ? 'relational-v1' : 'document-v1' };
+}
+
+export function qualificationRecovery(current, prior) {
+  if (!prior) return 'bootstrap';
+  if (current.generation === prior.generation) return 'compatible';
+  if (current.generation === 'relational-v1' && prior.generation === 'document-v1')
+    return 'forward-only';
+  throw new Error('Unsupported artifact storage generation transition.');
+}
+
+export function assertQualificationGeneration(report, current, prior) {
+  if (
+    report.generation !== current.generation ||
+    report.previousGeneration !== (prior?.generation ?? null) ||
+    report.recovery !== qualificationRecovery(current, prior)
+  ) throw new Error('Qualification storage generation mismatch.');
 }
 
 async function copyTree(source, destination) {
@@ -188,7 +214,7 @@ export async function packageArtifact({ root: sourceRoot = root, out, sourceSha 
   await build({
     stdin: {
       contents:
-        "export { migrate, migrationCli } from './migrate.js'; export { migrationInventory } from './migration-inventory.js'; export { migrationHistory, currentSchema } from './migration-history.js'; export { createDatabase } from './database.js'; export { inspectImport } from './store.js';",
+        "export { migrate, migrationCli } from './migrate.js'; export { migrationInventory } from './migration-inventory.js'; export { migrationHistory, currentSchema } from './migration-history.js'; export { createDatabase } from './database.js'; export { storageGeneration, validatePersistedRecords } from './persisted-records.js';",
       resolveDir: join(sourceRoot, 'apps/server/dist'),
       sourcefile: 'packaged-migration.js',
       loader: 'js',
@@ -273,6 +299,13 @@ export async function qualifyArtifact({ candidate, previous, bootstrap = false, 
       (receipt.bootstrap ? receipt.previousDigest !== null : !sha(receipt.previousDigest))
     )
       throw new Error('Previous artifact has no matching successful qualification.');
+    if (prior.generation === 'relational-v1' &&
+        (receipt.generation !== prior.generation ||
+          !['bootstrap', 'forward-only', 'compatible'].includes(receipt.recovery) ||
+          (receipt.bootstrap
+            ? receipt.previousGeneration !== null || receipt.recovery !== 'bootstrap'
+            : receipt.previousGeneration !== (receipt.recovery === 'forward-only' ? 'document-v1' : 'relational-v1'))))
+      throw new Error('Previous artifact has no matching storage generation qualification.');
     for (const [index, item] of prior.manifest.migrations.entries()) {
       const candidateMigration = current.manifest.migrations[index];
       if (!isDeepStrictEqual(candidateMigration, item))
@@ -281,6 +314,7 @@ export async function qualifyArtifact({ candidate, previous, bootstrap = false, 
         );
     }
   }
+  const recovery = qualificationRecovery(current, prior);
   execFileSync(
     process.execPath,
     [
@@ -312,6 +346,9 @@ export async function qualifyArtifact({ candidate, previous, bootstrap = false, 
     candidateDigest: current.digest,
     previousDigest: prior?.digest ?? null,
     bootstrap,
+    generation: current.generation,
+    previousGeneration: prior?.generation ?? null,
+    recovery,
     passed: true,
   };
   await writeFile(report, `${JSON.stringify(result, null, 2)}\n`, { flag: 'wx' });

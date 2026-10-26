@@ -41,7 +41,7 @@ test('deep-link sign-in survives logout and a different account cannot see priva
   expect(signup.status()).toBe(200);
   await signIn(page, other);
   await expect(page.getByRole('button', { name: 'Add food', exact: true })).toBeVisible();
-  expect((await other.api.workspace.get()).state.logs).toEqual([]);
+  expect((await other.api.workspace.foodWindow({ from: date, through: date, limit: 200 })).entries).toEqual([]);
   await expect(page.getByRole('heading', { name: privateFood })).not.toBeVisible();
   await page.reload();
   await expect(page.getByRole('button', { name: 'Add food', exact: true })).toBeVisible();

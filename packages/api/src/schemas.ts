@@ -1,6 +1,24 @@
 import { z } from 'zod';
 import { MutationSchema } from '@packages/workspace/mutations';
 import { FoodDescriptionSchema } from '@packages/nutrition/food-estimate';
+import { DateSchema } from '@packages/nutrition/schemas';
+
+export const foodWindowSchema = z.object({
+  from: DateSchema,
+  through: DateSchema,
+  limit: z.number().int().min(1).max(200).default(100),
+  cursor: z.object({
+    revision: z.number().int().nonnegative(),
+    date: DateSchema,
+    position: z.number().int().nonnegative(),
+    id: z.string().min(1).max(120),
+  }).optional(),
+}).strict().refine(
+  (value) => value.from <= value.through &&
+    Date.parse(value.through) - Date.parse(value.from) <= 92 * 86400000,
+  'Choose a date range of at most 93 days.',
+);
+export type FoodWindowInput = z.input<typeof foodWindowSchema>;
 
 export const requestIdSchema = z
   .string()

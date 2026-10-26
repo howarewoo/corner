@@ -3,6 +3,9 @@ import type {
   ExerciseHistoryEntry,
   ExerciseTarget,
   LoadType,
+  TrainingCheckIn,
+  TrainingRequest,
+  TrainingReview,
   TrainingMutation,
   TrainingState,
   TrainingStats,
@@ -396,20 +399,46 @@ function requireUnloggedProposal(session: WorkoutSession): void {
     );
   }
 }
-function markDates(training: TrainingState, dates: string[]): void {
-  training.scheduledDates = [...new Set([...training.scheduledDates, ...dates])].sort();
+export interface TrainingCommandDependencies {
+  sessions: WorkoutSession[];
+  templates: WorkoutTemplate[];
+  requests: TrainingRequest[];
+  reviews: TrainingReview[];
+  scheduledDates: string[];
+  schedule?: Record<string, string>;
 }
-export function applyTrainingMutation(
-  previous: TrainingState,
+export interface PreparedTrainingCommand {
+  sessions: WorkoutSession[];
+  deletedSessionIds: string[];
+  templates: WorkoutTemplate[];
+  checkIns: TrainingCheckIn[];
+  requests: TrainingRequest[];
+  reviews: TrainingReview[];
+  scheduledDates: string[];
+}
+function markDates(command: PreparedTrainingCommand, dates: string[]): void {
+  command.scheduledDates = [...new Set([...command.scheduledDates, ...dates])].sort();
+}
+/**
+ * Dependencies must include every existing record addressed by the command:
+ * save/delete IDs, request session, and review request/change IDs. Absent rows
+ * mean nonexistent records, never unloaded records. Week preparation needs only
+ * that week's occupied/scheduled dates and schedule-selected templates.
+ * Returns writes only; callers must persist the complete result atomically.
+ */
+export function prepareTrainingCommand(
   raw: TrainingMutation,
-  schedule?: Record<string, string>,
-): TrainingState {
+  dependencies: TrainingCommandDependencies,
+): PreparedTrainingCommand {
   const mutation = TrainingMutationSchema.parse(raw);
-  const next = structuredClone(previous);
+  const next: PreparedTrainingCommand = {
+    sessions: [], deletedSessionIds: [], templates: [], checkIns: [],
+    requests: [], reviews: [], scheduledDates: [],
+  };
   switch (mutation.type) {
     case 'training.session.save': {
       const { session, expectedUpdatedAt } = mutation.data;
-      const existing = next.sessions.find((item) => item.id === session.id);
+      const existing = dependencies.sessions.find((item) => item.id === session.id);
       checkVersion(existing, expectedUpdatedAt);
       if (existing?.status === 'completed' && session.status !== 'completed')
         throw new Error(
@@ -425,14 +454,14 @@ export function applyTrainingMutation(
       break;
     }
     case 'training.session.delete': {
-      const existing = next.sessions.find((item) => item.id === mutation.data.id);
+      const existing = dependencies.sessions.find((item) => item.id === mutation.data.id);
       if (!existing) throw new Error('This workout no longer exists. Refresh your plan.');
       checkVersion(existing, mutation.data.expectedUpdatedAt);
       if (!['planned', 'skipped'].includes(existing.status) || hasRecordedData(existing))
         throw new Error(
           'Logged workouts cannot be removed here. Edit the recorded workout instead.',
         );
-      next.sessions = next.sessions.filter((item) => item.id !== existing.id);
+      next.deletedSessionIds.push(existing.id);
       markDates(next, [existing.date]);
       break;
     }
@@ -440,10 +469,10 @@ export function applyTrainingMutation(
       if (monday(mutation.data.weekStart) !== mutation.data.weekStart)
         throw new Error('The week must start on a Monday.');
       const occupied = new Set([
-        ...next.scheduledDates,
-        ...next.sessions.map((session) => session.date),
+        ...dependencies.scheduledDates,
+        ...dependencies.sessions.map((session) => session.date),
       ]);
-      const entries = starterTrainingWeek(mutation.data.weekStart, next.templates, schedule).filter(
+      const entries = starterTrainingWeek(mutation.data.weekStart, dependencies.templates, dependencies.schedule).filter(
         (session) => !occupied.has(session.date),
       );
       next.sessions.push(...entries);
@@ -454,7 +483,7 @@ export function applyTrainingMutation(
       break;
     }
     case 'training.template.save': {
-      const existing = next.templates.find((item) => item.id === mutation.data.id);
+      const existing = dependencies.templates.find((item) => item.id === mutation.data.id);
       next.templates = upsert(next.templates, {
         ...mutation.data,
         createdAt: existing?.createdAt ?? mutation.data.createdAt,
@@ -470,11 +499,11 @@ export function applyTrainingMutation(
         throw new Error('New coaching requests must be pending.');
       if (
         mutation.data.sessionId &&
-        !next.sessions.some((session) => session.id === mutation.data.sessionId)
+        !dependencies.sessions.some((session) => session.id === mutation.data.sessionId)
       )
         throw new Error('Choose a workout from your current plan.');
       if (
-        next.requests.some(
+        dependencies.requests.some(
           (request) => request.id === mutation.data.id && request.status === 'answered',
         )
       )
@@ -487,12 +516,12 @@ export function applyTrainingMutation(
       const review = mutation.data;
       if (review.status !== 'proposed')
         throw new Error('Save a review as proposed before applying it.');
-      if (next.reviews.some((item) => item.id === review.id))
+      if (dependencies.reviews.some((item) => item.id === review.id))
         throw new Error('This review already exists. Use a new ID for a new review.');
-      if (review.requestId && !next.requests.some((item) => item.id === review.requestId))
+      if (review.requestId && !dependencies.requests.some((item) => item.id === review.requestId))
         throw new Error('That coaching request no longer exists.');
       for (const change of review.changes) {
-        const existing = next.sessions.find((session) => session.id === change.session.id);
+        const existing = dependencies.sessions.find((session) => session.id === change.session.id);
         checkVersion(existing, change.expectedUpdatedAt);
         if (
           existing &&
@@ -507,19 +536,19 @@ export function applyTrainingMutation(
       }
       next.reviews.push(review);
       if (review.requestId)
-        next.requests = next.requests.map((item) =>
-          item.id === review.requestId ? { ...item, status: 'answered' } : item,
-        );
+        next.requests = dependencies.requests
+          .filter((item) => item.id === review.requestId)
+          .map((item) => ({ ...item, status: 'answered' }));
       break;
     }
     case 'training.review.apply': {
-      const review = next.reviews.find((item) => item.id === mutation.data.id);
+      const review = dependencies.reviews.find((item) => item.id === mutation.data.id);
       if (!review) throw new Error('This coaching review no longer exists.');
       if (review.status !== 'proposed')
         throw new Error('This review has already been applied or dismissed.');
       // Validate the complete proposal before changing any session.
       for (const change of review.changes) {
-        const existing = next.sessions.find((session) => session.id === change.session.id);
+        const existing = dependencies.sessions.find((session) => session.id === change.session.id);
         checkVersion(existing, change.expectedUpdatedAt);
         if (
           existing &&
@@ -533,7 +562,7 @@ export function applyTrainingMutation(
         requireUnloggedProposal(change.session);
       }
       for (const change of review.changes) {
-        const existing = next.sessions.find((session) => session.id === change.session.id);
+        const existing = dependencies.sessions.find((session) => session.id === change.session.id);
         const session = {
           ...change.session,
           changeReason: change.reason,
@@ -543,21 +572,40 @@ export function applyTrainingMutation(
         next.sessions = upsert(next.sessions, session);
         markDates(next, [session.date, ...(existing ? [existing.date] : [])]);
       }
-      next.reviews = next.reviews.map((item) =>
-        item.id === review.id ? { ...item, status: 'applied' } : item,
-      );
+      next.reviews = [{ ...review, status: 'applied' }];
       break;
     }
     case 'training.review.dismiss': {
-      const review = next.reviews.find((item) => item.id === mutation.data.id);
+      const review = dependencies.reviews.find((item) => item.id === mutation.data.id);
       if (!review || review.status !== 'proposed')
         throw new Error('Only a proposed review can be dismissed.');
-      next.reviews = next.reviews.map((item) =>
-        item.id === review.id ? { ...item, status: 'dismissed' } : item,
-      );
+      next.reviews = [{ ...review, status: 'dismissed' }];
       break;
     }
   }
+  return structuredClone(next);
+}
+
+export function applyTrainingMutation(
+  previous: TrainingState,
+  raw: TrainingMutation,
+  schedule?: Record<string, string>,
+): TrainingState {
+  const command = prepareTrainingCommand(raw, { ...previous, schedule });
+  const next = structuredClone(previous);
+  next.sessions = next.sessions.filter((item) => !command.deletedSessionIds.includes(item.id));
+  for (const session of command.sessions) next.sessions = upsert(next.sessions, session);
+  for (const template of command.templates) next.templates = upsert(next.templates, template);
+  for (const checkIn of command.checkIns) next.checkIns = upsert(next.checkIns, checkIn);
+  for (const request of command.requests) next.requests = upsert(next.requests, request);
+  for (const review of command.reviews) next.reviews = upsert(next.reviews, review);
+  if (
+    raw.type === 'training.session.save' ||
+    raw.type === 'training.session.delete' ||
+    raw.type === 'training.week' ||
+    (raw.type === 'training.review.apply' && command.sessions.length > 0)
+  )
+    next.scheduledDates = [...new Set([...next.scheduledDates, ...command.scheduledDates])].sort();
   if (
     next.templates.length > 100 ||
     next.sessions.length > 2500 ||

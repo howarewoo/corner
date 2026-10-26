@@ -5,24 +5,26 @@ import { createToastManager } from '@packages/ui';
 import { useMutation } from '@tanstack/react-query';
 import type { WorkspaceMutationInput } from '@packages/api/schemas';
 import type { CornerAppProps, Mutate } from './types';
-import { rpc, useWorkspace, writeWorkspace, sessionLifetime } from '../../rpc';
+import { rpc, useWorkspace, writeWorkspace, sessionLifetime, mutationFamilies } from '../../rpc';
 import { newId } from './utils';
 
 export function useWorkspaceState({
   initialState,
+  initialSettings,
   initialRevision = 0,
   preview,
-}: Pick<CornerAppProps, 'initialState' | 'initialRevision' | 'preview'>) {
+}: Pick<CornerAppProps, 'initialState' | 'initialSettings' | 'initialRevision' | 'preview'>) {
   const generation = useRef(sessionLifetime()).current;
-  const [previewState, setPreviewState] = useState<AppState>(initialState);
+  const [previewState, setPreviewState] = useState<AppState | undefined>(initialState);
   const workspace = useWorkspace(!preview);
   const saveMutation = useMutation({
     mutationFn: (input: WorkspaceMutationInput) =>
-      writeWorkspace(() => rpc.workspace.mutate(input), generation),
+      writeWorkspace(() => rpc.workspace.mutate(input), generation, mutationFamilies(input.mutation)),
     retry: false,
   });
-  const state = preview ? previewState : (workspace.data?.state ?? initialState);
-  const revision = preview ? initialRevision : (workspace.data?.revision ?? initialRevision);
+  const state = preview ? previewState : undefined;
+  const settings = preview ? previewState!.settings : (workspace.data?.settings ?? initialSettings!);
+  const revision = preview ? initialRevision : Math.max(workspace.observedRevision, workspace.data?.revision ?? initialRevision);
   const [notifications] = useState(() => createToastManager());
   const [busy, setBusy] = useState(false);
   const loading = !preview && workspace.isFetching;
@@ -79,7 +81,7 @@ export function useWorkspaceState({
       mutationLock.current = true;
       setBusy(true);
       try {
-        if (preview) setPreviewState(applyMutation(state, mutation));
+        if (preview) setPreviewState(applyMutation(state!, mutation));
         else await saveMutation.mutateAsync({ mutation, requestId: newId() });
         if (!preview && generation !== sessionLifetime()) return false;
         if (success) notify(success);
@@ -124,6 +126,7 @@ export function useWorkspaceState({
   const disabled = busy || loading || !hydrated;
   return {
     state,
+    settings,
     revision,
     busy,
     disabled,

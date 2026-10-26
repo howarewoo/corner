@@ -1,5 +1,8 @@
+import type { FoodEntry, Macros, Recipe, PlanEntry } from '@packages/nutrition/types';
+import type { NutritionWindow } from '../workspace/resources';
+import { foodDay, nutritionWindow } from '../workspace/resources';
+import { useResource } from '../../rpc';
 import type { AppState } from '@packages/workspace/types';
-import type { Recipe, PlanEntry } from '@packages/nutrition/types';
 import { SLOTS } from '@packages/nutrition/types';
 import { activityForStateDate, targetForStateDate } from '@packages/workspace/targets';
 import { dateKey, mondayOf, weekDates } from '@packages/nutrition/dates';
@@ -32,19 +35,21 @@ import type { Mutate, Notify, Overlay, View } from '../workspace/types';
 import { activityIcon, activityLabel, cap, formatDate, newId, num } from '../workspace/utils';
 import { DateControls, Empty, IconButton, MacroLine, Progress } from '../workspace/workspace-ui';
 
-export default function Today({
-  state,
-  selectedDate,
-  setSelectedDate,
-  displayName,
-  disabled,
-  navigate,
-  mutate,
-  notify,
-  setOverlay,
-  openRecipe,
-}: {
-  state: AppState;
+
+export function LiveToday(props: TodayActions) {
+  const days = weekDates(mondayOf(props.selectedDate));
+  const nutrition = useResource('nutrition', { from: days[0], through: days[6] },
+    (signal) => nutritionWindow(days[0]!, days[6]!, signal));
+  const food = useResource('food', { date: props.selectedDate }, (signal) => foodDay(props.selectedDate, signal));
+  if (!nutrition.data || !food.data || nutrition.isError || food.isError) {
+    const error = nutrition.error ?? food.error;
+    return <section aria-label="Today"><p role={error ? 'alert' : 'status'}>{error?.message ?? 'Loading your day…'}</p>
+      {error && <Button onClick={() => { void nutrition.refetch(); void food.refetch(); }}>Retry</Button>}
+    </section>;
+  }
+  return <TodayView {...props} state={nutrition.data} food={food.data} />;
+}
+type TodayActions = {
   selectedDate: string;
   setSelectedDate: (date: string) => void;
   displayName: string;
@@ -54,7 +59,17 @@ export default function Today({
   notify: Notify;
   setOverlay: (overlay: Overlay) => void;
   openRecipe: (recipe: Recipe) => void;
-}) {
+};
+export default function Today({ state, ...props }: TodayActions & { state?: AppState }) {
+  if (!state) return <LiveToday {...props} />;
+  const entries = state.logs.filter((entry) => entry.date === props.selectedDate);
+  return <TodayView {...props}
+    state={{ ...state, revision: 0, loggedPlanIds: state.logs.flatMap((entry) => entry.planEntryId ? [entry.planEntryId] : []) }}
+    food={{ entries, totals: macroTotal(entries) }} />;
+}
+function TodayView({
+  state, food, selectedDate, setSelectedDate, displayName, disabled, navigate, mutate, notify, setOverlay, openRecipe,
+}: TodayActions & { state: NutritionWindow; food: { entries: FoodEntry[]; totals: Macros } }) {
   const targetsSet =
     state.settings.setup?.nutritionTargetsSet ??
     (state.settings.training.calories > 0 && state.settings.rest.calories > 0);
@@ -66,10 +81,9 @@ export default function Today({
   const dayPlan = state.plan
     .filter((entry) => entry.date === selectedDate)
     .sort((a, b) => SLOTS.indexOf(a.slot) - SLOTS.indexOf(b.slot));
-  const dayLogs = state.logs
-    .filter((entry) => entry.date === selectedDate)
+  const dayLogs = [...food.entries]
     .sort((a, b) => SLOTS.indexOf(a.slot) - SLOTS.indexOf(b.slot));
-  const actual = macroTotal(dayLogs);
+  const actual = food.totals;
   const planned = macroTotal(
     dayPlan.flatMap((entry) => {
       const recipe = state.recipes.find((r) => r.id === entry.recipeId);
@@ -81,7 +95,7 @@ export default function Today({
   const logMeal = async (entry: PlanEntry) => {
     const recipe = state.recipes.find((r) => r.id === entry.recipeId);
     if (!recipe) return;
-    const alreadyLogged = state.logs.some((log) => log.planEntryId === entry.id);
+    const alreadyLogged = state.loggedPlanIds.includes(entry.id);
     if (alreadyLogged) {
       notify('This planned meal is already in your food log. Edit its portion in the log.');
       return;
@@ -273,7 +287,7 @@ export default function Today({
               {dayPlan.map((entry) => {
                 const recipe = state.recipes.find((r) => r.id === entry.recipeId);
                 if (!recipe) return null;
-                const logged = state.logs.some((log) => log.planEntryId === entry.id);
+                const logged = state.loggedPlanIds.includes(entry.id);
                 return (
                   <div className="planned-meal" key={entry.id}>
                     <span className={`meal-glyph ${recipe.category}`}>

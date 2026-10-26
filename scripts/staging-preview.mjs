@@ -8,7 +8,7 @@ import { pathToFileURL } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
 import { GitHub, publicChecks } from './release.mjs';
 import { loadCiArtifact } from './ci-artifact.mjs';
-import { qualifyArtifact, verifyArtifact } from './release-artifact.mjs';
+import { qualifyArtifact, verifyArtifact, assertQualificationGeneration } from './release-artifact.mjs';
 
 const workerName = 'corner';
 const previewName = 'staging';
@@ -260,6 +260,7 @@ export async function deployPreview({
       qualification.previousDigest === (prior?.digest ?? null),
     'Qualification does not bind candidate and serving Preview code',
   );
+  assertQualificationGeneration(qualification, candidate, prior);
   const reverify = async () =>
     need(
       (await verify(candidate.directory)).digest === candidate.digest,

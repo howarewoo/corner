@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import { packageArtifact, verifyArtifact, qualifyArtifact } from '../release-artifact.mjs';
+import { packageArtifact, verifyArtifact, qualifyArtifact, qualificationRecovery, assertQualificationGeneration } from '../release-artifact.mjs';
 
 const hash = (bytes) => createHash('sha256').update(bytes).digest('hex');
 
@@ -15,6 +15,23 @@ test('published initial migration snapshot retains its immutable digest', async 
     new URL('../../apps/server/migrations/meta/0000_snapshot.json', import.meta.url),
   );
   assert.equal(hash(snapshot), '6fc033de3477b3926ebfa00dd322c44c0e6306b22d18d82d1f6213dd4642cf9c');
+});
+
+test('storage transition is artifact-derived, distinct from bootstrap, and cannot qualify document recovery', () => {
+  const document = { generation: 'document-v1' };
+  const relational = { generation: 'relational-v1' };
+  assert.equal(qualificationRecovery(relational), 'bootstrap');
+  assert.equal(qualificationRecovery(relational, document), 'forward-only');
+  assert.equal(qualificationRecovery(relational, relational), 'compatible');
+  assert.throws(() => qualificationRecovery(document, relational), /Unsupported/);
+  for (const report of [
+    { generation: 'relational-v1', previousGeneration: 'document-v1', recovery: 'compatible' },
+    { generation: 'relational-v1', previousGeneration: null, recovery: 'bootstrap' },
+    { generation: 'document-v1', previousGeneration: 'document-v1', recovery: 'compatible' },
+  ]) assert.throws(() => assertQualificationGeneration(report, relational, document), /generation mismatch/);
+  assert.doesNotThrow(() => assertQualificationGeneration({
+    generation: 'relational-v1', previousGeneration: 'document-v1', recovery: 'forward-only',
+  }, relational, document));
 });
 
 async function fixture(t, migration = 'CREATE TABLE example (id int);') {
@@ -90,6 +107,25 @@ async function fixture(t, migration = 'CREATE TABLE example (id int);') {
   return { directory, candidate, manifest };
 }
 
+test('verified snapshot generation cannot be relabelled by a report or an ambiguous tip', async (t) => {
+  const { candidate, manifest } = await fixture(t);
+  assert.equal((await verifyArtifact(candidate)).generation, 'document-v1');
+  const path = 'migration/migrations/meta/0000_snapshot.json';
+  const snapshot = JSON.parse(await readFile(join(candidate, path), 'utf8'));
+  snapshot.tables['public.workspace_metadata'] = {};
+  let bytes = JSON.stringify(snapshot);
+  await writeFile(join(candidate, path), bytes);
+  manifest.files[path] = manifest.migrations[0].snapshotSha256 = hash(bytes);
+  await writeFile(join(candidate, 'manifest.json'), JSON.stringify(manifest));
+  assert.equal((await verifyArtifact(candidate)).generation, 'relational-v1');
+  snapshot.tables['public.workspace_state'] = {};
+  bytes = JSON.stringify(snapshot);
+  await writeFile(join(candidate, path), bytes);
+  manifest.files[path] = manifest.migrations[0].snapshotSha256 = hash(bytes);
+  await writeFile(join(candidate, 'manifest.json'), JSON.stringify(manifest));
+  await assert.rejects(verifyArtifact(candidate), /Ambiguous/);
+});
+
 test('packaging canonicalizes JSONC comments and trailing commas but rejects malformed configs', async (t) => {
   const { directory, candidate } = await fixture(t);
   const sourceRoot = join(directory, 'source');
@@ -106,8 +142,8 @@ test('packaging canonicalizes JSONC comments and trailing commas but rejects mal
       'export function migrate() { throw new Error("packaging fixture"); } export function migrationCli() { throw new Error("packaging fixture CLI"); }',
     'apps/server/dist/database.js':
       'export function createDatabase() { throw new Error("packaging fixture"); }',
-    'apps/server/dist/store.js':
-      'export function inspectImport() { throw new Error("packaging fixture"); }',
+    'apps/server/dist/persisted-records.js':
+      'export const storageGeneration = "relational-v1"; export function validatePersistedRecords() { throw new Error("packaging fixture"); }',
     'apps/server/dist/migration-history.js':
       'export function currentSchema() { throw new Error("packaging fixture"); } export function migrationHistory() { throw new Error("packaging fixture"); }',
     'apps/server/dist/migration-inventory.js': `export { migrationInventory } from ${JSON.stringify(fileURLToPath(new URL('../../apps/server/src/migration-inventory.ts', import.meta.url)))};`,

@@ -15,6 +15,8 @@ import RecipeForm from '../recipes/recipe-form';
 import FoodForm from '../food-log/food-form';
 import RecipePicker from '../meal-planner/recipe-picker';
 import type { Confirmation, Mutate, Overlay } from './types';
+import { rpc, useResource } from '../../rpc';
+import { Dialog, ResourceStatus } from './workspace-ui';
 
 export default function WorkspaceOverlays({
   state,
@@ -29,7 +31,7 @@ export default function WorkspaceOverlays({
   mutate,
   saveRecipe,
 }: {
-  state: AppState;
+  state?: AppState;
   selectedDate: string;
   disabled: boolean;
   busy: boolean;
@@ -41,13 +43,20 @@ export default function WorkspaceOverlays({
   mutate: Mutate;
   saveRecipe: (recipe: Recipe) => Promise<void>;
 }) {
+  const recipeId = overlay?.kind === 'recipe' ? overlay.recipe.id : undefined;
+  const detail = useResource('details', { recipeIds: recipeId ? [recipeId] : [] },
+    (signal) => rpc.workspace.details({ recipeIds: recipeId ? [recipeId] : [] }, { signal }),
+    !state && Boolean(recipeId));
+  const savedRecipe = (state?.recipes ?? detail.data?.recipes ?? []).find((recipe) => recipe.id === recipeId);
   return (
     <>
-      {overlay?.kind === 'recipe' && (
+      {overlay?.kind === 'recipe' && !state && (!detail.data || detail.isError) ?
+        <Dialog title="Recipe" onClose={() => setOverlay(null)}><ResourceStatus error={detail.error} loading={detail.isPending} retry={() => void detail.refetch()} /></Dialog>
+        : overlay?.kind === 'recipe' && (
         <RecipeDetail
-          recipe={state.recipes.find((r) => r.id === overlay.recipe.id) || overlay.recipe}
+          recipe={savedRecipe || overlay.recipe}
           busy={disabled}
-          saved={state.recipes.some((r) => r.id === overlay.recipe.id)}
+          saved={Boolean(savedRecipe)}
           onClose={() => setOverlay(null)}
           onFavorite={(recipe) =>
             void mutate({
@@ -109,7 +118,7 @@ export default function WorkspaceOverlays({
       )}
       {overlay?.kind === 'pick' && (
         <RecipePicker
-          recipes={state.recipes}
+          recipes={state?.recipes}
           date={overlay.date}
           slot={overlay.slot}
           initialRecipeId={overlay.recipeId}

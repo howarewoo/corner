@@ -1,4 +1,6 @@
-import type { AppState } from '@packages/workspace/types';
+import { useRef, useState } from 'react';
+import type { AppState, Settings as WorkspaceSettings } from '@packages/workspace/types';
+import { rpc, scoped, sessionLifetime } from '../../rpc';
 import { dateKey } from '@packages/nutrition/dates';
 import { ArrowDownToLine, LogOut } from 'lucide-react';
 import { Button, WorkspaceHeader } from '@packages/ui';
@@ -10,7 +12,7 @@ import { download } from '../workspace/utils';
 
 export default function Settings({
   state,
-  revision,
+  settings,
   disabled,
   busy,
   preview,
@@ -21,8 +23,8 @@ export default function Settings({
   readState,
   mutate,
 }: {
-  state: AppState;
-  revision: number;
+  state?: AppState;
+  settings: WorkspaceSettings;
   disabled: boolean;
   busy: boolean;
   preview: boolean;
@@ -33,7 +35,25 @@ export default function Settings({
   readState: () => Promise<void>;
   mutate: Mutate;
 }) {
-  const currentDate = dateKey(new Date(), state.settings.timezone);
+  const generation = useRef(sessionLifetime()).current;
+  const exportLock = useRef(false);
+  const [exporting, setExporting] = useState(false);
+  const currentDate = dateKey(new Date(), settings.timezone);
+  const exportWorkspace = async () => {
+    if (exportLock.current) return;
+    exportLock.current = true;
+    setExporting(true);
+    try {
+      const snapshot = state ?? (await scoped(() => rpc.workspace.export(), generation)).state;
+      if (!preview && generation !== sessionLifetime()) return;
+      download(JSON.stringify(snapshot), `corner-data-${currentDate}.json`, 'application/json');
+    } catch (error) {
+      notify(error instanceof Error ? error.message : 'Could not export your workspace.', true);
+    } finally {
+      exportLock.current = false;
+      setExporting(false);
+    }
+  };
   return (
     <>
       <WorkspaceHeader
@@ -45,16 +65,11 @@ export default function Settings({
             <Button
               variant="outline"
               size="default"
-              onClick={() =>
-                download(
-                  JSON.stringify(state, null, 2),
-                  `corner-data-${currentDate}.json`,
-                  'application/json',
-                )
-              }
+              disabled={exporting}
+              onClick={() => void exportWorkspace()}
             >
               <ArrowDownToLine size={16} />
-              Export workspace
+              {exporting ? 'Exporting…' : 'Export workspace'}
             </Button>
             {onSignOut && (
               <Button variant="outline" disabled={signingOut || busy} onClick={onSignOut}>
@@ -71,8 +86,8 @@ export default function Settings({
         request history is not included.
       </p>
       <ProfileForm
-        key={revision}
-        settings={state.settings}
+        key={JSON.stringify(settings)}
+        settings={settings}
         busy={disabled}
         onSave={(settings) =>
           mutate({ type: 'settings.save', data: settings }, 'Your profile is saved')

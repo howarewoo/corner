@@ -8,6 +8,7 @@ import { createDatabase } from '../database.js';
 import type { Pool } from 'pg';
 import { migrate } from '../migrate.js';
 import { migrationsFolder } from '../migration-inventory.js';
+import { createInitialState } from '@packages/workspace/initial-state';
 
 async function fixture() {
   assert.ok(process.env.CORNER_TEST_DATABASE_URL, 'Disposable PostgreSQL is required.');
@@ -31,13 +32,31 @@ async function fixture() {
 }
 
 async function savedRecord(database: Pool) {
-  await database.query('INSERT INTO workspace_state VALUES ($1,$2,$3,$4)', [
-    'owner',
-    JSON.stringify({ saved: 'record' }),
-    7,
-    '2026-10-24T12:00:00.000Z',
-  ]);
-  return (await database.query('SELECT * FROM workspace_state')).rows;
+  const { timezone, ...settings } = createInitialState().settings;
+  await database.query(
+    'INSERT INTO workspace_metadata(user_id,settings,timezone,revision,next_position) VALUES ($1,$2,$3,7,0)',
+    ['owner', JSON.stringify(settings), timezone],
+  );
+  return (await database.query('SELECT * FROM workspace_metadata')).rows;
+}
+
+async function appendFixtureMigration(folder: string, name: string, source: string) {
+  const journalPath = join(folder, 'meta/_journal.json');
+  const journal = JSON.parse(await readFile(journalPath, 'utf8'));
+  const previous = journal.entries.at(-1);
+  const prefix = String(journal.entries.length).padStart(4, '0');
+  const snapshot = JSON.parse(await readFile(
+    join(folder, `meta/${String(previous.idx).padStart(4, '0')}_snapshot.json`), 'utf8',
+  ));
+  snapshot.prevId = snapshot.id;
+  snapshot.id = randomUUID();
+  journal.entries.push({
+    idx: journal.entries.length, version: '7', when: previous.when + 1,
+    tag: `${prefix}_${name}`, breakpoints: true,
+  });
+  await writeFile(journalPath, JSON.stringify(journal));
+  await writeFile(join(folder, `meta/${prefix}_snapshot.json`), JSON.stringify(snapshot));
+  await writeFile(join(folder, `${prefix}_${name}.sql`), source);
 }
 
 test('concurrent fresh migrations serialize and replays preserve saved records and native history', async () => {
@@ -46,9 +65,9 @@ test('concurrent fresh migrations serialize and replays preserve saved records a
     await Promise.all([migrate(f.database), migrate(f.database)]);
     const before = await savedRecord(f.database);
     const history = (await f.database.query('SELECT * FROM __drizzle_migrations')).rows;
-    assert.equal(history.length, 1);
+    assert.equal(history.length, 2);
     await migrate(f.database);
-    assert.deepEqual((await f.database.query('SELECT * FROM workspace_state')).rows, before);
+    assert.deepEqual((await f.database.query('SELECT * FROM workspace_metadata')).rows, before);
     assert.deepEqual((await f.database.query('SELECT * FROM __drizzle_migrations')).rows, history);
   } finally {
     await f.close();
@@ -64,29 +83,13 @@ test('a failing pending migration rolls back its DDL and ledger entry without lo
     const before = await savedRecord(f.database);
     const history = (await f.database.query('SELECT * FROM __drizzle_migrations')).rows;
     await cp(migrationsFolder, folder, { recursive: true });
-    const journalPath = join(folder, 'meta/_journal.json');
-    const journal = JSON.parse(await readFile(journalPath, 'utf8'));
-    const snapshot = JSON.parse(await readFile(join(folder, 'meta/0000_snapshot.json'), 'utf8'));
-    snapshot.prevId = snapshot.id;
-    snapshot.id = randomUUID();
-    journal.entries.push({
-      idx: 1,
-      version: '7',
-      when: journal.entries[0].when + 1,
-      tag: '0001_failure',
-      breakpoints: true,
-    });
-    await writeFile(journalPath, JSON.stringify(journal));
-    await writeFile(join(folder, 'meta/0001_snapshot.json'), JSON.stringify(snapshot));
-    await writeFile(
-      join(folder, '0001_failure.sql'),
-      'ALTER TABLE workspace_state ADD COLUMN migration_note TEXT;\n--> statement-breakpoint\nSELECT corner_missing_migration_function();',
-    );
+    await appendFixtureMigration(folder, 'failure',
+      'ALTER TABLE workspace_metadata ADD COLUMN migration_note TEXT;\n--> statement-breakpoint\nSELECT corner_missing_migration_function();');
     await assert.rejects(migrate(f.database, folder));
-    assert.deepEqual((await f.database.query('SELECT * FROM workspace_state')).rows, before);
+    assert.deepEqual((await f.database.query('SELECT * FROM workspace_metadata')).rows, before);
     assert.deepEqual((await f.database.query('SELECT * FROM __drizzle_migrations')).rows, history);
     const column = await f.database.query(
-      "SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='workspace_state' AND column_name='migration_note'",
+      "SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='workspace_metadata' AND column_name='migration_note'",
     );
     assert.equal(column.rowCount, 0);
   } finally {
@@ -104,15 +107,15 @@ test('modified applied SQL and unknown ledger entries refuse before changing sav
     const before = await savedRecord(f.database);
     await cp(migrationsFolder, folder, { recursive: true });
     const path = join(folder, '0000_corner.sql');
-    await writeFile(path, `${await readFile(path, 'utf8')}\nDELETE FROM workspace_state;`);
+    await writeFile(path, `${await readFile(path, 'utf8')}\nDELETE FROM workspace_metadata;`);
     await assert.rejects(migrate(f.database, folder));
-    assert.deepEqual((await f.database.query('SELECT * FROM workspace_state')).rows, before);
+    assert.deepEqual((await f.database.query('SELECT * FROM workspace_metadata')).rows, before);
     await f.database.query('INSERT INTO __drizzle_migrations(hash,created_at) VALUES ($1,$2)', [
       'f'.repeat(64),
       Number.MAX_SAFE_INTEGER,
     ]);
     await assert.rejects(migrate(f.database));
-    assert.deepEqual((await f.database.query('SELECT * FROM workspace_state')).rows, before);
+    assert.deepEqual((await f.database.query('SELECT * FROM workspace_metadata')).rows, before);
   } finally {
     await f.close();
     await rm(directory, { recursive: true, force: true });
@@ -136,30 +139,13 @@ test('native follow-up migration preserves application records and legacy audit 
     ]);
     const audit = (await f.database.query('SELECT * FROM corner_schema_migrations')).rows;
     await cp(migrationsFolder, folder, { recursive: true });
-    const journalPath = join(folder, 'meta/_journal.json');
-    const journal = JSON.parse(await readFile(journalPath, 'utf8'));
-    const snapshot = JSON.parse(await readFile(join(folder, 'meta/0000_snapshot.json'), 'utf8'));
-    snapshot.prevId = snapshot.id;
-    snapshot.id = randomUUID();
-    journal.entries.push({
-      idx: 1,
-      version: '7',
-      when: journal.entries[0].when + 1,
-      tag: '0001_next',
-      breakpoints: true,
-    });
-    await writeFile(journalPath, JSON.stringify(journal));
-    await writeFile(join(folder, 'meta/0001_snapshot.json'), JSON.stringify(snapshot));
-    await writeFile(
-      join(folder, '0001_next.sql'),
-      'CREATE TABLE migration_next (id TEXT PRIMARY KEY);',
-    );
+    await appendFixtureMigration(folder, 'next', 'CREATE TABLE migration_next (id TEXT PRIMARY KEY);');
     await migrate(f.database, folder);
     assert.equal(
       (await f.database.query("SELECT to_regclass('migration_next') AS name")).rows[0].name,
       'migration_next',
     );
-    assert.deepEqual((await f.database.query('SELECT * FROM workspace_state')).rows, before);
+    assert.deepEqual((await f.database.query('SELECT * FROM workspace_metadata')).rows, before);
     assert.deepEqual(
       (await f.database.query('SELECT * FROM corner_schema_migrations')).rows,
       audit,

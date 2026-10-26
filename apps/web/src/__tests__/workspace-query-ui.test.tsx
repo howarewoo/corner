@@ -3,101 +3,386 @@ import { useRef } from 'react';
 import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClientProvider, useMutation } from '@tanstack/react-query';
-import { expect, test } from 'vitest';
+import { expect, test, vi } from 'vitest';
 import { createInitialState } from '@packages/workspace/initial-state';
-import type { StateResponse } from '@packages/workspace/types';
+import type { Bootstrap, CommandResult } from '@packages/api/workspace-data';
+import type { FoodEntry, Recipe } from '@packages/nutrition/types';
 import * as runtime from '../rpc';
+import { foodDay, groceryWeek, nutritionWindow } from '../features/workspace/resources';
 import { json, mockHttp } from './http';
-
-const snapshot = (revision: number): StateResponse => ({
-  revision,
-  state: createInitialState(),
-  aiAvailable: false,
+import { LiveToday } from '../features/today/today';
+import RecipePicker from '../features/meal-planner/recipe-picker';
+import TrainingPanel from '../components/training-panel';
+import type { WorkoutSession } from '@packages/training/types';
+import Settings from '../features/settings/settings';
+import { download } from '../features/workspace/utils';
+import type * as WorkspaceUtils from '../features/workspace/utils';
+import { MAX_WORKSPACE_TRANSFER_BYTES } from '@packages/api/workspace-data';
+vi.mock('../features/workspace/utils', async (importOriginal) => {
+  const actual = await importOriginal<typeof WorkspaceUtils>();
+  return { ...actual, download: vi.fn() };
 });
 
-test('workspace rendering never rolls back and a new session rejects the old session write', async () => {
-  const response = Promise.withResolvers<Response>();
-  let requests = 0;
-  mockHttp(() => (requests++ === 0 ? response.promise : json({ json: snapshot(2) })));
-  const oldWrite = Promise.withResolvers<StateResponse>();
-  const completedWrite = Promise.withResolvers<StateResponse>();
-  let writeAttempts = 0;
-  let pendingWrite!: Promise<StateResponse>;
+const bootstrap = (revision: number): Bootstrap => ({
+  revision, settings: createInitialState().settings, aiAvailable: false,
+});
+
+test('revision-only writes preserve bootstrap settings and an older refresh cannot roll back the workspace', async () => {
+  let serverRevision = 3;
+  mockHttp(() => json({ json: bootstrap(serverRevision) }));
+  const lateWrite = Promise.withResolvers<CommandResult>();
+  let attempts = 0;
+  let pendingWrite!: Promise<CommandResult>;
   function Consumer() {
     runtime.useSessionLifetime();
     const generation = useRef(runtime.sessionLifetime()).current;
     const workspace = runtime.useWorkspace();
     const write = useMutation({
-      mutationFn: () =>
-        runtime.writeWorkspace(
-          () => (writeAttempts++ === 0 ? completedWrite : oldWrite).promise,
-          generation,
-        ),
-      retry: false,
+      mutationFn: () => runtime.writeWorkspace(() => {
+        if (attempts++ === 0) {
+          serverRevision = 9;
+          return Promise.resolve({ revision: 9 });
+        }
+        return lateWrite.promise;
+      }, generation, ['food']),
     });
-    return (
-      <section>
-        <output aria-label="Workspace revision">{workspace.data?.revision ?? 'loading'}</output>
-        <button
-          disabled={write.isPending}
-          onClick={() => {
-            pendingWrite = write.mutateAsync();
-            void pendingWrite.catch(() => {});
-          }}
-        >
-          Save
-        </button>
-      </section>
-    );
+    return <section>
+      <output aria-label="Workspace revision">{workspace.data?.revision ?? 'loading'}</output>
+      <output aria-label="Timezone">{workspace.data?.settings.timezone}</output>
+      <button disabled={write.isPending} onClick={() => {
+        pendingWrite = write.mutateAsync();
+        void pendingWrite.catch(() => {});
+      }}>Save</button>
+    </section>;
   }
-  render(
-    <QueryClientProvider client={runtime.queryClient}>
-      <Consumer />
-    </QueryClientProvider>,
-  );
-  await waitFor(() => expect(requests).toBe(1));
-  await act(async () => {
-    runtime.acceptWorkspace(snapshot(9));
-    response.resolve(json({ json: snapshot(8) }));
-    await runtime.queryClient.getQueryCache().find({ queryKey: runtime.privateKey('workspace') })
-      ?.promise;
-  });
-  await waitFor(() => expect(screen.getByLabelText('Workspace revision')).toHaveTextContent('9'));
+  render(<QueryClientProvider client={runtime.queryClient}><Consumer /></QueryClientProvider>);
+  await waitFor(() => expect(screen.getByLabelText('Workspace revision')).toHaveTextContent('3'));
   const user = userEvent.setup();
   await user.click(screen.getByRole('button', { name: 'Save' }));
-  await act(async () => {
-    completedWrite.resolve(snapshot(10));
-    await pendingWrite;
-  });
-  await waitFor(() => expect(screen.getByLabelText('Workspace revision')).toHaveTextContent('10'));
-  const query = runtime.queryClient
-    .getQueryCache()
-    .find<StateResponse>({ queryKey: runtime.privateKey('workspace') })!;
-  const readWorkspace = query.options.queryFn;
-  if (typeof readWorkspace !== 'function')
-    throw new Error('Workspace consumer must supply its production query.');
-  await act(async () => {
-    await query.fetch({
-      ...query.options,
-      queryFn: async (context) => {
-        const read = await readWorkspace(context);
-        // A mutation wins between transport resolution and Query ingesting the older read.
-        runtime.acceptWorkspace(snapshot(11));
-        return read;
-      },
-    });
-  });
-  await waitFor(() => expect(screen.getByLabelText('Workspace revision')).toHaveTextContent('11'));
-  await waitFor(() => expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled());
+  await waitFor(() => expect(screen.getByLabelText('Workspace revision')).toHaveTextContent('9'));
+  expect(screen.getByLabelText('Timezone')).toHaveTextContent(bootstrap(3).settings.timezone);
+  serverRevision = 8;
+  await act(async () => { await runtime.queryClient.refetchQueries({ queryKey: runtime.privateKey('workspace') }); });
+  expect(screen.getByLabelText('Workspace revision')).toHaveTextContent('9');
   await user.click(screen.getByRole('button', { name: 'Save' }));
-  expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
-  const rejectedWrite = expect(pendingWrite).rejects.toThrow('session has ended');
+  const rejected = expect(pendingWrite).rejects.toThrow('session has ended');
   await act(async () => {
     runtime.clearPrivateState();
-    runtime.acceptWorkspace(snapshot(2));
-    oldWrite.resolve(snapshot(20));
-    await rejectedWrite;
+    lateWrite.resolve({ revision: 20 });
+    await rejected;
   });
-  expect(screen.getByLabelText('Workspace revision')).toHaveTextContent('2');
   expect(runtime.queryClient.getMutationCache().getAll()).toEqual([]);
+});
+
+test('a write rejects a stale read even for an empty key without poisoning unrelated families', async () => {
+  const pending = Promise.withResolvers<{ revision: number; entries: string[] }>();
+  const read = runtime.readResource('food', () => pending.promise);
+  const rejected = expect(read).rejects.toThrow('changed while loading');
+  await runtime.invalidateWorkspace(5, ['food']);
+  pending.resolve({ revision: 4, entries: ['retired food'] });
+  await rejected;
+  await expect(runtime.readResource('recipes', async () => ({ revision: 2, items: [] })))
+    .resolves.toEqual({ revision: 2, items: [] });
+  const retired = Promise.withResolvers<{ revision: number }>();
+  const oldSession = runtime.readResource('recipes', () => retired.promise);
+  const ended = expect(oldSession).rejects.toThrow('session has ended');
+  runtime.clearPrivateState();
+  retired.resolve({ revision: 100 });
+  await ended;
+});
+
+test('newer resource observations never relabel old settings or discard a genuine in-flight bootstrap', async () => {
+  const second = Promise.withResolvers<Response>();
+  const third = Promise.withResolvers<Response>();
+  let bootstrapCalls = 0;
+  const payload = (revision: number, name: string) => ({
+    ...bootstrap(revision), settings: { ...bootstrap(revision).settings, name },
+  });
+  mockHttp((call) => {
+    if (call.path !== '/api/rpc/workspace/get') return;
+    bootstrapCalls++;
+    if (bootstrapCalls === 1) return json({ json: payload(1, 'Settings one') });
+    return bootstrapCalls === 2 ? second.promise : third.promise;
+  });
+  function Consumer() {
+    const workspace = runtime.useWorkspace();
+    return <>
+      <output aria-label="Authoritative settings">{workspace.data?.settings.name}</output>
+      <output aria-label="Settings revision">{workspace.data?.revision}</output>
+      <output aria-label="Observed revision">{workspace.observedRevision}</output>
+    </>;
+  }
+  render(<QueryClientProvider client={runtime.queryClient}><Consumer /></QueryClientProvider>);
+  await screen.findByText('Settings one');
+  let refreshing!: Promise<void>;
+  act(() => { refreshing = runtime.queryClient.refetchQueries({ queryKey: runtime.privateKey('workspace') }); });
+  await waitFor(() => expect(bootstrapCalls).toBe(2));
+  await act(async () => {
+    await runtime.readResource('food', async () => ({ revision: 3, entries: [] }));
+  });
+  expect(screen.getByLabelText('Settings revision')).toHaveTextContent('1');
+  expect(screen.getByLabelText('Authoritative settings')).toHaveTextContent('Settings one');
+  expect(screen.getByLabelText('Observed revision')).toHaveTextContent('3');
+  await act(async () => {
+    second.resolve(json({ json: payload(2, 'Settings two') }));
+    await refreshing;
+  });
+  await waitFor(() => expect(screen.getByLabelText('Settings revision')).toHaveTextContent('2'));
+  expect(screen.getByLabelText('Authoritative settings')).toHaveTextContent('Settings two');
+  await waitFor(() => expect(bootstrapCalls).toBe(3));
+  await act(async () => { third.resolve(json({ json: payload(3, 'Settings three') })); });
+  await waitFor(() => expect(screen.getByLabelText('Authoritative settings')).toHaveTextContent('Settings three'));
+});
+
+const foodEntry = (id: string): FoodEntry => ({
+  id, date: '2026-10-24', slot: 'breakfast', name: 'Synthetic oats', servings: 2,
+  nutrition: { calories: 100, protein: 10, carbs: 12, fat: 4 }, createdAt: '2026-10-24T09:00:00.000Z',
+});
+
+test('a dense day follows food continuations and retains authoritative whole-day totals', async () => {
+  const entries = Array.from({ length: 201 }, (_, index) => foodEntry(`food-${index}`));
+  const totals = { calories: 40200, protein: 4020, carbs: 4824, fat: 1608 };
+  const calls = mockHttp((call) => {
+    if (call.path !== '/api/rpc/workspace/foodWindow') return;
+    const input = call.body?.json as { cursor?: unknown };
+    return json({ json: { revision: 7, entries: input.cursor ? entries.slice(200) : entries.slice(0, 200), totals,
+      nextCursor: input.cursor ? null : { revision: 7, date: '2026-10-24', position: 199, id: 'food-199' } } });
+  });
+  const day = await foodDay('2026-10-24', new AbortController().signal);
+  expect(day.entries).toEqual(entries);
+  expect(day.totals).toEqual(totals);
+  expect(calls).toHaveLength(2);
+});
+
+test('a drifting food continuation or calendar dependency cannot become a complete calculation', async () => {
+  let foodCalls = 0;
+  mockHttp((call) => {
+    if (call.path === '/api/rpc/workspace/foodWindow') {
+      foodCalls += 1;
+      return json({ json: { revision: foodCalls === 1 ? 7 : 8, entries: [foodEntry(`food-${foodCalls}`)],
+        totals: { calories: 200, protein: 20, carbs: 24, fat: 8 },
+        nextCursor: foodCalls === 1 ? { revision: 7, date: '2026-10-24', position: 0, id: 'food-1' } : null } });
+    }
+    if (call.path === '/api/rpc/workspace/get') return json({ json: bootstrap(7) });
+    if (call.path === '/api/rpc/workspace/page') {
+      const input = call.body?.json as { resource: string };
+      return json({ json: { resource: input.resource, revision: input.resource === 'sessions' ? 8 : 7,
+        items: [], loggedPlanIds: [], nextCursor: null } });
+    }
+  });
+  await expect(foodDay('2026-10-24', new AbortController().signal)).rejects.toThrow('changed while loading');
+  await expect(nutritionWindow('2026-10-19', '2026-10-25', new AbortController().signal))
+    .rejects.toThrow('changed while loading');
+});
+
+const savedRecipe: Recipe = {
+  id: 'saved-oats', name: 'Saved oats', description: 'Synthetic recipe', category: 'breakfast',
+  prepMinutes: 5, cookMinutes: 0, nutrition: { calories: 100, protein: 10, carbs: 12, fat: 4 },
+  ingredients: [{ name: 'Oats', quantity: 1, unit: 'cup', aisle: 'Pantry' }],
+  steps: ['Mix.'], storage: '', variation: '', tags: ['quick'], color: 'sage',
+  source: 'manual', favorite: false, createdAt: '2026-10-24T09:00:00.000Z',
+};
+
+test('Today respects logged planned-meal membership even when its food entry is on another day', async () => {
+  mockHttp((call) => {
+    if (call.path === '/api/rpc/workspace/get') return json({ json: bootstrap(7) });
+    if (call.path === '/api/rpc/workspace/page') {
+      const input = call.body?.json as { resource: string };
+      const plan = input.resource === 'plan';
+      return json({ json: { resource: input.resource, revision: 7,
+        items: plan ? [{ id: 'planned-oats', date: '2026-10-24', slot: 'breakfast', recipeId: savedRecipe.id, servings: 1 }] : [],
+        loggedPlanIds: plan ? ['planned-oats'] : [], nextCursor: null } });
+    }
+    if (call.path === '/api/rpc/workspace/details')
+      return json({ json: { revision: 7, recipes: [savedRecipe], plan: [], sessions: [], templates: [] } });
+    if (call.path === '/api/rpc/workspace/foodWindow')
+      return json({ json: { revision: 7, entries: [], totals: { calories: 0, protein: 0, carbs: 0, fat: 0 }, nextCursor: null } });
+  });
+  render(<QueryClientProvider client={runtime.queryClient}>
+    <LiveToday selectedDate="2026-10-24" setSelectedDate={() => {}} displayName="Synthetic trainee"
+      disabled={false} navigate={() => {}} mutate={async () => true} notify={() => {}}
+      setOverlay={() => {}} openRecipe={() => {}} />
+  </QueryClientProvider>);
+  expect(await screen.findByRole('button', { name: 'Logged' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Add food' })).toBeEnabled();
+});
+
+test('the selected recipe remains actionable when it is outside the current picker page', async () => {
+  const add = vi.fn();
+  mockHttp((call) => {
+    if (call.path === '/api/rpc/workspace/page')
+      return json({ json: { resource: 'recipes', revision: 7, items: [], loggedPlanIds: [],
+        nextCursor: { revision: 7, position: 30, id: 'another-recipe' } } });
+    if (call.path === '/api/rpc/workspace/details')
+      return json({ json: { revision: 7, recipes: [savedRecipe], plan: [], sessions: [], templates: [] } });
+  });
+  render(<QueryClientProvider client={runtime.queryClient}>
+    <RecipePicker date="2026-10-24" slot="breakfast" initialRecipeId={savedRecipe.id}
+      busy={false} onClose={() => {}} onAdd={add} />
+  </QueryClientProvider>);
+  const submit = await screen.findByRole('button', { name: 'Add to plan' });
+  await waitFor(() => expect(submit).toBeEnabled());
+  await userEvent.setup().click(submit);
+  expect(add).toHaveBeenCalledWith(savedRecipe, '2026-10-24', 'breakfast', 1, expect.any(String));
+});
+
+test('query ingestion checks the write floor again when its cache key is still empty', async () => {
+  const parameters = { date: '2026-10-24' };
+  const key = [...runtime.privateKey('food'), parameters];
+  function Consumer() {
+    const query = runtime.useResource('food', parameters,
+      async () => ({ revision: 4, entries: ['stale'] }), false);
+    return <output aria-label="Food results">{query.data?.entries.join(',') ?? 'not loaded'}</output>;
+  }
+  render(<QueryClientProvider client={runtime.queryClient}><Consumer /></QueryClientProvider>);
+  await runtime.invalidateWorkspace(5, ['food']);
+  expect(() => runtime.queryClient.setQueryData(key, { revision: 4, entries: ['stale'] }))
+    .toThrow('changed while loading');
+  expect(screen.getByLabelText('Food results')).toHaveTextContent('not loaded');
+  await act(async () => {
+    runtime.queryClient.setQueryData(key, { revision: 5, entries: ['current'] });
+  });
+  await waitFor(() => expect(screen.getByLabelText('Food results')).toHaveTextContent('current'));
+});
+
+const plannedSession: WorkoutSession = {
+  id: 'planned-squat', date: '2026-10-24', name: 'Synthetic strength session', kind: 'strength',
+  status: 'planned', unit: 'kg', plannedMinutes: 45, durationMinutes: null, rounds: null,
+  sessionRpe: null, readiness: null, notes: '', changeReason: '',
+  createdAt: '2026-10-24T09:00:00.000Z', updatedAt: '2026-10-24T09:00:00.000Z',
+  exercises: [{ id: 'squat', name: 'Synthetic squat', loadType: 'total', targetSets: 1,
+    repMin: 8, repMax: 10, targetRir: 2, restSeconds: 90, notes: '',
+    targetLoad: { weight: 40, unit: 'kg' },
+    sets: [{ id: 'working-set', weight: null, reps: null, rir: null, completed: false, kind: 'working' }] }],
+};
+const historicalSession: WorkoutSession = {
+  ...plannedSession, id: 'historical-squat', date: '2010-01-02', status: 'completed', unit: 'lb',
+  durationMinutes: 40, createdAt: '2010-01-02T09:00:00.000Z', updatedAt: '2010-01-02T09:00:00.000Z',
+  exercises: [{ ...plannedSession.exercises[0]!, id: 'old-squat',
+    sets: [{ id: 'old-set', weight: 100, reps: 9, rir: 1, completed: true, kind: 'working' }] }],
+};
+
+test('workout prefill uses the bounded historical context without recording displayed suggestions', async () => {
+  const mutate = vi.fn(async () => true);
+  mockHttp((call) => {
+    if (call.path === '/api/rpc/workspace/page')
+      return json({ json: { resource: 'sessions', revision: 7, items: [plannedSession], loggedPlanIds: [], nextCursor: null } });
+    if (call.path === '/api/rpc/workspace/prefill')
+      return json({ json: { revision: 7, sessions: [historicalSession] } });
+  });
+  render(<QueryClientProvider client={runtime.queryClient}>
+    <TrainingPanel settings={bootstrap(7).settings} selectedDate={plannedSession.date}
+      onDateChange={() => {}} mutate={mutate} busy={false} notify={() => {}}
+      onRefresh={() => {}} onOpenAgent={() => {}} />
+  </QueryClientProvider>);
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole('button', { name: 'Start workout' }));
+  await waitFor(() => expect(screen.getByLabelText('Synthetic squat set 1 weight kg', { exact: true })).toHaveValue(45.359));
+  expect(screen.getByLabelText('Synthetic squat set 1 reps', { exact: true })).toHaveValue(9);
+  expect(screen.getByLabelText('Synthetic squat set 1 completed', { exact: true })).not.toBeChecked();
+  await user.click(screen.getByRole('button', { name: 'Save workout' }));
+  expect(mutate).toHaveBeenCalledWith({
+    type: 'training.session.save',
+    data: { session: expect.objectContaining({ id: plannedSession.id, status: 'in_progress', exercises: plannedSession.exercises }), expectedUpdatedAt: plannedSession.updatedAt },
+  }, 'Workout saved');
+});
+
+test('progress uses lifetime counts, old measurements and explicit historical session details', async () => {
+  const stats = { sessions: 0, strengthSessions: 0, boxingSessions: 0, conditioningSessions: 0,
+    minutes: 0, workingSets: 0, externalVolumeLb: 0, averageRpe: null };
+  const calls = mockHttp((call) => {
+    if (call.path === '/api/rpc/workspace/page') {
+      const input = call.body?.json as { resource: string };
+      return json({ json: { resource: input.resource, revision: 7, items: [], loggedPlanIds: [], nextCursor: null } });
+    }
+    if (call.path === '/api/rpc/workspace/progress')
+      return json({ json: { revision: 7, completedCount: 213, stats, weekly: [], latestWeight: {
+        id: 'old-measurement', date: '2009-12-01', bodyWeight: 170, waist: null, sleepHours: null,
+        energy: null, soreness: null, boxingQuality: null, notes: '',
+      } } });
+    if (call.path === '/api/rpc/workspace/exerciseChoices')
+      return json({ json: { revision: 7, names: ['Synthetic squat'], nextCursor: null } });
+    if (call.path === '/api/rpc/workspace/exerciseHistory')
+      return json({ json: { revision: 7, sessions: [historicalSession], nextCursor: null } });
+    if (call.path === '/api/rpc/workspace/details')
+      return json({ json: { revision: 7, recipes: [], plan: [], sessions: [historicalSession], templates: [] } });
+    if (call.path === '/api/rpc/workspace/prefill')
+      return json({ json: { revision: 7, sessions: [] } });
+  });
+  render(<QueryClientProvider client={runtime.queryClient}>
+    <TrainingPanel settings={bootstrap(7).settings} selectedDate={plannedSession.date}
+      onDateChange={() => {}} mutate={async () => true} busy={false} notify={() => {}}
+      onRefresh={() => {}} onOpenAgent={() => {}} />
+  </QueryClientProvider>);
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole('tab', { name: 'Progress' }));
+  expect(await screen.findByText('213 completed')).toBeVisible();
+  expect(screen.getByText(/Latest logged weight/)).toHaveTextContent('Dec 1');
+  await user.click(await screen.findByRole('button', { name: 'Jan 2' }));
+  expect(await screen.findByRole('dialog', { name: 'Workout details' })).toBeVisible();
+  expect(calls.some((call) => call.path === '/api/rpc/workspace/details' &&
+    JSON.stringify(call.body).includes(historicalSession.id))).toBe(true);
+});
+
+test('weekly groceries collect every aggregate page and check before copy or download', async () => {
+  mockHttp((call) => {
+    if (call.path !== '/api/rpc/workspace/groceries') return;
+    const input = call.body?.json as { cursor?: unknown };
+    const key = input.cursor ? 'zucchini' : 'oats';
+    return json({ json: {
+      revision: 7, items: [{ key, name: key, quantity: input.cursor ? 3 : 2,
+        unit: 'cup', aisle: input.cursor ? 'Produce' : 'Pantry', notes: [] }],
+      checks: { [`2026-10-19|${key}`]: true },
+      nextCursor: input.cursor ? null : { revision: 7, key: 'oats' },
+    } });
+  });
+  const groceries = await groceryWeek('2026-10-19', new AbortController().signal);
+  expect(groceries.items.map((item) => item.name)).toEqual(['oats', 'zucchini']);
+  expect(groceries.checks).toEqual({ '2026-10-19|oats': true, '2026-10-19|zucchini': true });
+  expect(groceries.nextCursor).toBeNull();
+});
+
+test('a full export above the former browser cap can be uploaded, previewed, and imported without losing records', async () => {
+  const full = createInitialState();
+  full.recipes = Array.from({ length: 600 }, (_, index) => ({
+    ...savedRecipe, id: `export-recipe-${index}`,
+    description: 'd'.repeat(1600), storage: 's'.repeat(2000), variation: 'v'.repeat(1600),
+  }));
+  const calls = mockHttp((call) => {
+    if (call.path === '/api/rpc/workspace/export') return json({ json: { revision: 7, state: full } });
+    if (call.path === '/api/rpc/workspace/previewImport') return json({ json: {
+      revision: 0, canImport: true,
+      summary: { recipes: full.recipes.length, bytes: JSON.stringify(full).length },
+    } });
+    if (call.path === '/api/rpc/workspace/import') return json({ json: { revision: 1 } });
+    if (call.path === '/api/rpc/ai/connection') return json({ json: {
+      available: false, connected: false, enabled: false, state: 'unavailable', model: null, models: [],
+    } });
+  });
+  render(<QueryClientProvider client={runtime.queryClient}>
+    <Settings settings={full.settings} preview={false} disabled={false} busy={false}
+      accountEmail="synthetic@corner.test" notify={() => {}} readState={async () => {}}
+      mutate={async () => true} />
+  </QueryClientProvider>);
+  await userEvent.setup().click(screen.getByRole('button', { name: 'Export workspace' }));
+  await waitFor(() => expect(download).toHaveBeenCalledWith(
+    JSON.stringify(full), expect.stringMatching(/^corner-data-.*\.json$/), 'application/json',
+  ));
+  expect(calls.filter((call) => call.path === '/api/rpc/workspace/export')).toHaveLength(1);
+  const exported = vi.mocked(download).mock.calls.at(-1)![0];
+  const file = new File([exported], 'corner-large-export.json', { type: 'application/json' });
+  expect(file.size).toBeGreaterThan(2 * 1024 * 1024);
+  expect(file.size).toBeLessThanOrEqual(MAX_WORKSPACE_TRANSFER_BYTES);
+  // jsdom File lacks the browser's Blob.text implementation.
+  Object.defineProperty(file, 'text', { value: async () => exported });
+  const user = userEvent.setup();
+  await user.upload(screen.getByLabelText('Corner export · JSON'), file);
+  await screen.findByRole('heading', { name: 'Review your import' });
+  await user.type(screen.getByLabelText('Type IMPORT to confirm'), 'IMPORT');
+  await user.click(screen.getByRole('button', { name: 'Import my records' }));
+  await waitFor(() => expect(calls.some((call) => call.path === '/api/rpc/workspace/import')).toBe(true));
+  const imported = calls.find((call) => call.path === '/api/rpc/workspace/import')!;
+  expect(imported.body?.json).toEqual({
+    state: full, expectedRevision: 0, requestId: expect.any(String),
+  });
 });

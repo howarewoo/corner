@@ -100,20 +100,26 @@ export async function baselineStaging(options: StagingBaselineOptions): Promise<
     await ref.query(`CREATE SCHEMA ${quote(referenceSchema)}`);
     await ref.query(`SET LOCAL search_path TO ${quote(referenceSchema)}, pg_catalog`);
     const inventory = await migrationInventory();
-    // Extending schema-only adoption beyond this baseline requires explicit review.
-    need(inventory.length === 1 && inventory[0]!.name === '0000_corner.sql');
+    need(inventory[0]!.name === '0000_corner.sql');
     const history = await migrationHistory(src, sourceSchema, inventory, true);
     need((await migrationHistory(dst, targetSchema, inventory)).length === 0);
-    const baseline = history[0]!;
-    const sql = await readFile(new URL(baseline.name, directory), 'utf8');
-    need(createHash('sha256').update(sql).digest('hex') === baseline.sha256);
-    await ref.query(sql);
+    for (const migration of inventory) {
+      const sql = await readFile(new URL(migration.name, directory), 'utf8');
+      need(createHash('sha256').update(sql).digest('hex') === migration.sha256);
+      await ref.query(sql);
+    }
     const expected = await applicationCatalog(ref, referenceSchema);
     need(expected === (await applicationCatalog(src, sourceSchema)));
     await emptyTables(dst, targetSchema, true);
     await emptyTables(dst, 'neon_auth', true);
     need(expected === (await applicationCatalog(dst, targetSchema)));
-    await recordBaseline(dst, targetSchema, baseline);
+    await recordBaseline(dst, targetSchema, history[0]!);
+    for (const migration of history.slice(1))
+      await dst.query(
+        `INSERT INTO ${quote(targetSchema)}.__drizzle_migrations (hash,created_at) VALUES ($1,$2)`,
+        [migration.sha256, migration.when],
+      );
+    await migrationHistory(dst, targetSchema, inventory, true);
     await dst.query('COMMIT');
   } catch {
     throw refuse();

@@ -20,6 +20,21 @@ import {
 } from '@packages/ui';
 import { num, formatDate, macroNames } from './utils';
 
+export function ResourceStatus({ error, retry, loading = false }: { error?: Error | null; retry: () => void; loading?: boolean }) {
+  return <div aria-live="polite">
+    <p role={error ? 'alert' : 'status'}>{error?.message ?? (loading ? 'Loading your saved data…' : '')}</p>
+    {error && <Button variant="outline" onClick={retry}>Retry</Button>}
+  </div>;
+}
+export function ResourcePaging({ hasPrevious, hasNext, busy, previous, next }: {
+  hasPrevious: boolean; hasNext: boolean; busy: boolean; previous: () => void; next: () => void;
+}) {
+  if (!hasPrevious && !hasNext) return null;
+  return <nav aria-label="Results pages" className="button-row">
+    <Button variant="outline" disabled={busy || !hasPrevious} onClick={previous}>Previous page</Button>
+    <Button variant="outline" disabled={busy || !hasNext} onClick={next}>Next page</Button>
+  </nav>;
+}
 export function IconButton({
   label,
   children,

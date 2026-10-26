@@ -6,7 +6,7 @@ import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
 import { createRequire } from 'node:module';
-import { verifyArtifact, qualifyArtifact } from './release-artifact.mjs';
+import { verifyArtifact, qualifyArtifact, assertQualificationGeneration } from './release-artifact.mjs';
 import { releaseTarget } from './release-target.mjs';
 import { loadCiArtifact } from './ci-artifact.mjs';
 
@@ -125,7 +125,10 @@ export function rollbackEligible(target, current, qualification, runtimeDigest) 
     qualification.passed === true &&
       qualification.candidateDigest === current.candidateDigest &&
       qualification.previousDigest === target.candidateDigest &&
-      qualification.bootstrap === false,
+      qualification.bootstrap === false &&
+      qualification.recovery === 'compatible' &&
+      qualification.generation === 'relational-v1' &&
+      qualification.previousGeneration === 'relational-v1',
     'Rollback target is not compatible with CURRENT schema and written data',
   );
 }
@@ -353,6 +356,8 @@ export async function plan({
     reference = target.payload;
     candidate = await github.artifact(reference, join(work, 'candidate'));
     const current = await github.artifact(schemaReference, join(work, 'current'));
+    need(candidate.generation === 'relational-v1' && current.generation === 'relational-v1',
+      'Rollback target is not compatible with CURRENT storage generation; forward repair required');
     qualification = await qualify({
       candidate: current.directory,
       previous: candidate.directory,
@@ -418,6 +423,7 @@ export async function plan({
         qualification.bootstrap === bootstrap,
       'Release qualification mismatch',
     );
+    assertQualificationGeneration(qualification, candidate, previous);
     await assertForwardSource(github, baseline?.payload, sourceSha);
   }
   const payload = {
@@ -557,18 +563,24 @@ export async function validateLiveRollback(
   current,
   load = (path) => import(pathToFileURL(path).href),
 ) {
-  const { createDatabase, inspectImport } = await load(
-    join(target.directory, target.manifest.migrationEntry),
-  );
-  need(
-    typeof createDatabase === 'function' && typeof inspectImport === 'function',
-    'Target lacks packaged persisted-data validator',
-  );
-  const database = createDatabase(
-    need(process.env.DATABASE_URL_UNPOOLED, 'Protected unpooled database connection required'),
-  );
+  let database;
   let connection;
+  const refused = () => new ReleaseError(
+    'Rollback blocked by CURRENT production schema/data validation (private details withheld)',
+  );
   try {
+    const { createDatabase, storageGeneration, validatePersistedRecords } = await load(
+      join(target.directory, target.manifest.migrationEntry),
+    );
+    need(
+      typeof createDatabase === 'function' &&
+        storageGeneration === 'relational-v1' &&
+        typeof validatePersistedRecords === 'function',
+      'Target lacks packaged persisted-data validator',
+    );
+    database = createDatabase(
+      need(process.env.DATABASE_URL_UNPOOLED, 'Protected unpooled database connection required'),
+    );
     connection = await database.connect();
     await connection.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
     const { migrationHistory, currentSchema } = await load(
@@ -578,39 +590,25 @@ export async function validateLiveRollback(
       typeof migrationHistory === 'function' && typeof currentSchema === 'function',
       'CURRENT artifact lacks native migration history validation',
     );
-    await migrationHistory(
-      connection,
-      await currentSchema(connection),
-      current.manifest.migrations,
-      true,
-    );
-    let after = null;
-    for (;;) {
-      const rows = (
-        await connection.query(
-          'SELECT user_id, data FROM workspace_state WHERE ($1::text IS NULL OR user_id > $1) ORDER BY user_id LIMIT 100',
-          [after],
-        )
-      ).rows;
-      for (const row of rows) {
-        const raw = JSON.parse(row.data);
-        need(
-          isDeepStrictEqual(inspectImport(raw).state, raw),
-          'Rollback target cannot preserve CURRENT persisted workspace data',
-        );
-      }
-      if (rows.length < 100) break;
-      after = rows.at(-1).user_id;
-    }
+    const schema = await currentSchema(connection);
+    await migrationHistory(connection, schema, current.manifest.migrations, true);
+    await validatePersistedRecords(connection, schema);
     await connection.query('COMMIT');
   } catch {
-    if (connection) await connection.query('ROLLBACK');
-    throw new ReleaseError(
-      'Rollback blocked by CURRENT production schema/data validation (private details withheld)',
-    );
+    if (connection) {
+      try { await connection.query('ROLLBACK'); } catch { /* Keep private details withheld. */ }
+    }
+    throw refused();
   } finally {
-    connection?.release();
-    await database.end();
+    try {
+      connection?.release();
+    } catch {
+      throw refused();
+    } finally {
+      if (database) {
+        try { await database.end(); } catch { throw refused(); }
+      }
+    }
   }
 }
 export async function promote({
@@ -731,6 +729,12 @@ export async function promote({
       candidate.manifest.configurationSha256 === p.configurationSha256,
     'Approved candidate changed',
   );
+  if (!p.rollback) {
+    const serving = baseline
+      ? await github.artifact(baseline.payload, join(work, 'serving-generation'))
+      : undefined;
+    assertQualificationGeneration(p.qualification, candidate, serving);
+  }
   const toolVersion = createRequire(new URL('../apps/server/package.json', import.meta.url))(
     'wrangler/package.json',
   ).version;
@@ -816,6 +820,8 @@ export async function promote({
       schemaState?.payload ?? baseline.payload,
       join(work, 'current'),
     );
+    need(candidate.generation === 'relational-v1' && current.generation === 'relational-v1',
+      'Rollback target is not compatible with CURRENT storage generation; forward repair required');
     const qualification = await qualify({
       candidate: current.directory,
       previous: candidate.directory,

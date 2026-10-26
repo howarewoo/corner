@@ -26,7 +26,11 @@ import {
   TrendingUp,
   X,
 } from 'lucide-react';
-import type { AppState } from '@packages/workspace/types';
+import type { AppState, Settings } from '@packages/workspace/types';
+import type { ExerciseChoices, ExerciseHistoryPage } from '@packages/api/workspace-data';
+import { rpc, useResource, readResource, sessionLifetime } from '../rpc';
+import { calendarPage, requireRevision, useRecordPage, useCursorResource } from '../features/workspace/resources';
+import { ResourceStatus, ResourcePaging } from '../features/workspace/workspace-ui';
 import type { WorkspaceMutationInput } from '@packages/api/schemas';
 import type {
   LoadType,
@@ -94,7 +98,8 @@ import ExercisePicker, { ExerciseReference } from './exercise-picker';
 import './training.css';
 
 type Props = {
-  state: AppState;
+  state?: AppState;
+  settings: Settings;
   selectedDate: string;
   onDateChange: (date: string) => void;
   mutate: (mutation: WorkspaceMutationInput['mutation'], success?: string) => Promise<boolean>;
@@ -278,7 +283,7 @@ function SessionEditor({
   onSaveTemplate,
 }: {
   editor: EditorState;
-  history: readonly WorkoutSession[];
+  history?: readonly WorkoutSession[];
   busy: boolean;
   onClose: () => void;
   onSave: (session: WorkoutSession, expectedUpdatedAt: string | null) => Promise<boolean>;
@@ -297,9 +302,21 @@ function SessionEditor({
   const [editedFields, setEditedFields] = useState<Record<string, boolean>>({});
   const [openTargets, setOpenTargets] = useState<Record<string, boolean>>({});
   const templateMode = Boolean(editor.template);
+  const prefillContext = {
+    id: draft.id, date: draft.date,
+    eligible: draft.status === 'planned' || draft.status === 'in_progress',
+    exercises: draft.exercises.map((exercise) => ({
+      id: exercise.id, name: exercise.name, catalogId: exercise.catalogId, loadType: exercise.loadType,
+      needsHistory: exercise.sets.some((set) => set.kind === 'working' && !set.completed),
+    })),
+  };
+  const needsPrefill = !history && !templateMode && prefillContext.eligible && prefillContext.exercises.some((exercise) => exercise.needsHistory);
+  const prefill = useResource('prefill', prefillContext,
+    (signal) => rpc.workspace.prefill({ session: draft }, { signal }), needsPrefill);
+  const prefillHistory = history ?? (prefill.isError ? undefined : prefill.data?.sessions);
   const prefills = useMemo<WorkoutPrefill>(
-    () => (templateMode ? {} : getWorkoutPrefill(draft, history)),
-    [draft, history, templateMode],
+    () => templateMode || !prefillHistory ? {} : getWorkoutPrefill(draft, prefillHistory),
+    [draft, prefillHistory, templateMode],
   );
   const patch = (values: Partial<WorkoutSession>) =>
     setDraft((current) => ({ ...current, ...values }));
@@ -528,6 +545,7 @@ function SessionEditor({
       onClose={onClose}
       wide
     >
+      {needsPrefill && (!prefill.data || prefill.isError) && <ResourceStatus error={prefill.error} loading={prefill.isPending} retry={() => void prefill.refetch()} />}
       <form
         ref={formRef}
         className="workout-editor"
@@ -1506,6 +1524,7 @@ function ReviewCard({
 
 export default function TrainingPanel({
   state,
+  settings,
   selectedDate,
   onDateChange,
   mutate,
@@ -1514,6 +1533,7 @@ export default function TrainingPanel({
   onRefresh,
   onOpenAgent,
 }: Props) {
+  const generation = useRef(sessionLifetime()).current;
   const [tab, setTab] = useState<'week' | 'progress' | 'coach'>('week');
   const [editor, setEditor] = useState<EditorState | null>(null);
   const [showChooser, setShowChooser] = useState(false);
@@ -1522,50 +1542,73 @@ export default function TrainingPanel({
   const [skipSession, setSkipSession] = useState<WorkoutSession | null>(null);
   const [skipReason, setSkipReason] = useState('');
   const [exerciseName, setExerciseName] = useState('');
-  const training = state.training;
   const days = weekDates(selectedDate);
-  const weekStart = days[0],
-    weekEnd = days[6];
-  const today = dateKey(new Date(), state.settings.timezone);
-  const weekSessions = training.sessions.filter(
-    (session) => session.date >= weekStart && session.date <= weekEnd,
-  );
+  const weekStart = days[0], weekEnd = days[6];
+  const today = dateKey(new Date(), settings.timezone);
+  const calendar = useResource('sessions', { from: weekStart, through: weekEnd },
+    (signal) => calendarPage('sessions', weekStart, weekEnd, signal), !state);
+  const progress = useResource('progress', { from: shiftDate(weekStart, -21), through: weekEnd },
+    (signal) => rpc.workspace.progress({ from: shiftDate(weekStart, -21), through: weekEnd }, { signal }), !state && tab === 'progress');
+  const completedPage = useRecordPage({ resource: 'sessions', order: 'recent', status: 'completed', limit: 12 }, !state && tab === 'progress');
+  const checkInPage = useRecordPage({ resource: 'checkIns', order: 'recent', limit: 3 }, !state && tab === 'progress');
+  const reviewPage = useRecordPage({ resource: 'reviews', order: 'recent', limit: 12 }, !state && tab === 'coach');
+  const requestPage = useRecordPage({ resource: 'trainingRequests', order: 'recent', limit: 20 }, !state && tab === 'coach');
+  const [templateSearch, setTemplateSearch] = useState('');
+  const templatePage = useRecordPage({ resource: 'templates', search: templateSearch, limit: 20 }, !state && (showChooser || manageTemplates));
+  const [exerciseSearch, setExerciseSearch] = useState('');
+  const choices = useCursorResource<ExerciseChoices>('exerciseChoices', { search: exerciseSearch },
+    (cursor, signal) => rpc.workspace.exerciseChoices({ search: exerciseSearch, limit: 100, cursor }, { signal }), !state && tab === 'progress');
+  const weekSessions = state ? state.training.sessions.filter((session) => session.date >= weekStart && session.date <= weekEnd) : (calendar.data?.items ?? []);
   const daySessions = weekSessions.filter((session) => session.date === selectedDate);
-  const stats = trainingStats(training.sessions, weekStart, weekEnd);
-  const completed = training.sessions
-    .filter((session) => session.status === 'completed')
-    .sort((a, b) => b.date.localeCompare(a.date) || b.updatedAt.localeCompare(a.updatedAt));
-  const checkIns = [...training.checkIns].sort((a, b) => b.date.localeCompare(a.date));
-  const latestWeight = checkIns.find((item) => item.bodyWeight !== null);
-  const exerciseNames = useMemo(
-    () =>
-      [
-        ...new Set(
-          completed.flatMap((session) =>
-            session.exercises
-              .filter((exercise) =>
-                exercise.sets.some((set) => set.completed && set.kind === 'working'),
-              )
-              .map((exercise) => exercise.name),
-          ),
-        ),
-      ].sort(),
-    [training.sessions],
-  );
-  const selectedExercise = exerciseNames.includes(exerciseName)
-    ? exerciseName
-    : (exerciseNames[0] ?? '');
-  const history = selectedExercise
-    ? exerciseHistory(training.sessions, selectedExercise).slice(0, 12)
-    : [];
-  const fourWeeks = Array.from({ length: 4 }, (_, index) => {
+  const stats = trainingStats(weekSessions, weekStart, weekEnd);
+  const completed = state ? state.training.sessions.filter((session) => session.status === 'completed')
+    .sort((a, b) => b.date.localeCompare(a.date) || b.updatedAt.localeCompare(a.updatedAt)) : (completedPage.data?.items ?? []);
+  const checkIns = state ? [...state.training.checkIns].sort((a, b) => b.date.localeCompare(a.date)) : (checkInPage.data?.items ?? []);
+  const latestWeight = state ? checkIns.find((item) => item.bodyWeight !== null) : progress.data?.latestWeight;
+  const exerciseNames = state ? [...new Set(completed.flatMap((session) => session.exercises
+    .filter((exercise) => exercise.sets.some((set) => set.completed && set.kind === 'working'))
+    .map((exercise) => exercise.name)))].sort() : (choices.data?.names ?? []);
+  const selectedExercise = exerciseName || exerciseNames[0] || '';
+  const liftHistory = useCursorResource<ExerciseHistoryPage>('exerciseHistory', { name: selectedExercise },
+    (cursor, signal) => rpc.workspace.exerciseHistory({ name: selectedExercise, limit: 12, cursor }, { signal }), !state && tab === 'progress' && Boolean(selectedExercise));
+  const history = selectedExercise ? state ? exerciseHistory(state.training.sessions, selectedExercise).slice(0, 12) : exerciseHistory(liftHistory.data?.sessions ?? [], selectedExercise) : [];
+  const fourWeeks = state ? Array.from({ length: 4 }, (_, index) => {
     const start = shiftDate(weekStart, (index - 3) * 7);
-    return { start, stats: trainingStats(training.sessions, start, shiftDate(start, 6)) };
-  });
+    return { start, stats: trainingStats(state.training.sessions, start, shiftDate(start, 6)) };
+  }) : (progress.data?.weekly ?? []).map((week) => ({ start: week.week, stats: week.stats }));
   const peakSessions = Math.max(1, ...fourWeeks.map((week) => week.stats.sessions));
-  const reviews = [...training.reviews].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  const reviews = state ? [...state.training.reviews].sort((a, b) => b.createdAt.localeCompare(a.createdAt)) : (reviewPage.data?.items ?? []);
+  const templates = state?.training.templates ?? templatePage.data?.items ?? [];
+  const requests = state ? [...state.training.requests].reverse().slice(0, 20) : (requestPage.data?.items ?? []);
+  const reviewIds = [...new Set(reviews.flatMap((review) => review.changes.map((change) => change.session.id)))];
+  const reviewContext = useResource('details', { sessionIds: reviewIds, revision: reviewPage.data?.revision },
+    async (signal) => {
+      const sessions: WorkoutSession[] = [];
+      let revision = reviewPage.data!.revision;
+      for (let index = 0; index < reviewIds.length; index += 25) {
+        const details = await rpc.workspace.details({ sessionIds: reviewIds.slice(index, index + 25) }, { signal });
+        requireRevision(revision, details.revision);
+        sessions.push(...details.sessions);
+      }
+      return { revision, sessions };
+    }, !state && tab === 'coach' && Boolean(reviewPage.data));
+  const reviewSessions = state?.training.sessions ?? reviewContext.data?.sessions ?? [];
+  const reviewReady = Boolean(state || (reviewPage.data && reviewContext.data && reviewPage.data.revision === reviewContext.data.revision && !reviewPage.isError && !reviewContext.isError));
   const openSession = (session: WorkoutSession) =>
     setEditor({ session: structuredClone(session), expectedUpdatedAt: session.updatedAt });
+  const openSessionId = async (id: string) => {
+    if (state) {
+      const session = state.training.sessions.find((item) => item.id === id);
+      if (session) openSession(session);
+      return;
+    }
+    try {
+      const detail = await readResource('details', () => rpc.workspace.details({ sessionIds: [id] }), generation);
+      const session = detail.sessions.find((item) => item.id === id);
+      if (!session) { notify('This workout is no longer saved.', true); return; }
+      openSession(session);
+    } catch (error) { notify(error instanceof Error ? error.message : 'Could not open this workout.', true); }
+  };
   const createBlank = (asTemplate = false) => {
     const now = new Date().toISOString();
     const template: WorkoutTemplate = {
@@ -1573,7 +1616,7 @@ export default function TrainingPanel({
       name: 'New workout',
       kind: 'strength',
       description: '',
-      durationMinutes: state.settings.profile?.sessionMinutes ?? 45,
+      durationMinutes: settings.profile?.sessionMinutes ?? 45,
       exercises: [],
       createdAt: now,
       updatedAt: now,
@@ -1584,7 +1627,7 @@ export default function TrainingPanel({
       name: template.name,
       kind: template.kind,
       status: 'planned',
-      unit: state.settings.profile?.defaultWorkoutUnit ?? 'lb',
+      unit: settings.profile?.defaultWorkoutUnit ?? 'lb',
       exercises: [],
       plannedMinutes: template.durationMinutes,
       durationMinutes: null,
@@ -1600,10 +1643,19 @@ export default function TrainingPanel({
     setShowChooser(false);
     setManageTemplates(false);
   };
-  const chooseTemplate = (template: WorkoutTemplate, edit = false) => {
+  const chooseTemplate = async (selected: WorkoutTemplate, edit = false) => {
+    let template = selected;
+    if (!state) {
+      try {
+        const detail = await readResource('details', () => rpc.workspace.details({ templateIds: [selected.id] }), generation);
+        const saved = detail.templates.find((item) => item.id === selected.id);
+        if (!saved) { notify('This routine is no longer saved.', true); return; }
+        template = saved;
+      } catch (error) { notify(error instanceof Error ? error.message : 'Could not open this routine.', true); return; }
+    }
     setEditor({
       session: createSessionFromTemplate(template, selectedDate, {
-        unit: state.settings.profile?.defaultWorkoutUnit ?? 'lb',
+        unit: settings.profile?.defaultWorkoutUnit ?? 'lb',
       }),
       expectedUpdatedAt: null,
       ...(edit ? { template: structuredClone(template) } : {}),
@@ -1618,6 +1670,16 @@ export default function TrainingPanel({
     );
   const askAbout = (session: WorkoutSession) =>
     onOpenAgent(`Help me adapt ${session.name} on ${session.date}. Workout ID: ${session.id}. `);
+  const activeQueries = tab === 'week' ? [calendar] : tab === 'progress'
+    ? [calendar, progress, completedPage, checkInPage]
+    : [calendar, reviewPage, requestPage, reviewContext];
+  const activeError = activeQueries.find((query) => query.isError)?.error ??
+    (tab === 'coach' && reviewPage.data && reviewContext.data && !reviewReady ? new Error('Your data changed while loading. Please retry.') : null);
+  if (!state && (activeError || activeQueries.some((query) => !query.data)))
+    return <ResourceStatus error={activeError} loading={!activeError} retry={() => {
+      void calendar.refetch(); void progress.refetch(); completedPage.reload(); checkInPage.reload();
+      choices.reload(); reviewPage.reload(); requestPage.reload(); void reviewContext.refetch();
+    }} />;
 
   return (
     <div className="training-surface corner-ui">
@@ -2028,12 +2090,14 @@ export default function TrainingPanel({
                   ))}
                 </div>
               )}
+              {!state && <ResourcePaging {...checkInPage.paging} />}
             </Card>
           </div>
           <Card className="panel training-progress-card training-lift-history">
             <div className="section-heading">
               <h2>Lift history</h2>
-              {exerciseNames.length > 0 && (
+              {!state && <><Input aria-label="Find an exercise in your history" value={exerciseSearch} onChange={(event) => setExerciseSearch(event.target.value)} />{(!choices.data || choices.isError) && <ResourceStatus error={choices.error} loading={choices.isPending} retry={choices.reload} />}<ResourcePaging {...choices.paging} /></>}
+              {(exerciseNames.length > 0 || selectedExercise) && (
                 <FieldLabel className="field">
                   <span className="sr-only">Exercise history</span>
                   <NativeSelect
@@ -2041,6 +2105,7 @@ export default function TrainingPanel({
                     onChange={(event) => setExerciseName(event.target.value)}
                     aria-label="Exercise history"
                   >
+                    {selectedExercise && !exerciseNames.includes(selectedExercise) && <NativeSelectOption value={selectedExercise}>{selectedExercise}</NativeSelectOption>}
                     {exerciseNames.map((name) => (
                       <NativeSelectOption key={name} value={name}>
                         {name}
@@ -2050,7 +2115,8 @@ export default function TrainingPanel({
                 </FieldLabel>
               )}
             </div>
-            {history.length ? (
+            {!state && selectedExercise && (!liftHistory.data || liftHistory.isError) && <ResourceStatus error={liftHistory.error} loading={liftHistory.isPending} retry={liftHistory.reload} />}
+            {(!state && ((!choices.data || choices.isError) || (selectedExercise && (!liftHistory.data || liftHistory.isError)))) ? null : history.length ? (
               <div className="training-history-scroll">
                 <Table>
                   <TableHeader>
@@ -2068,12 +2134,7 @@ export default function TrainingPanel({
                             type="button"
                             variant="link"
                             className="p-0 h-auto font-medium"
-                            onClick={() => {
-                              const session = training.sessions.find(
-                                (item) => item.id === entry.sessionId,
-                              );
-                              if (session) openSession(session);
-                            }}
+                            onClick={() => void openSessionId(entry.sessionId)}
                           >
                             {todayLabel(entry.date, { month: 'short', day: 'numeric' })}
                           </Button>
@@ -2101,11 +2162,12 @@ export default function TrainingPanel({
                 time.
               </EmptyState>
             )}
+            {!state && selectedExercise && <ResourcePaging {...liftHistory.paging} />}
           </Card>
           <Card className="panel training-progress-card training-session-history">
             <div className="section-heading">
               <h2>Recent sessions</h2>
-              <span>{completed.length} completed</span>
+              <span>{state ? completed.length : (progress.data?.completedCount ?? '…')} completed</span>
             </div>
             {completed.length ? (
               completed.slice(0, 12).map((session) => {
@@ -2137,6 +2199,7 @@ export default function TrainingPanel({
                 Completed sessions will appear here when you log your first workout.
               </p>
             )}
+            {!state && <ResourcePaging {...completedPage.paging} />}
           </Card>
         </TabsContent>
 
@@ -2162,7 +2225,7 @@ export default function TrainingPanel({
               Open my agent
             </Button>
           </div>
-          {reviews.length > 0 && (
+          {reviewReady && reviews.length > 0 && (
             <>
               <div className="section-heading">
                 <h2>Saved training reviews</h2>
@@ -2173,7 +2236,7 @@ export default function TrainingPanel({
                   <ReviewCard
                     key={review.id}
                     review={review}
-                    sessions={training.sessions}
+                    sessions={reviewSessions}
                     busy={busy}
                     mutate={mutate}
                   />
@@ -2181,14 +2244,11 @@ export default function TrainingPanel({
               </div>
             </>
           )}
-          {training.requests.length > 0 && (
+          {!state && <ResourcePaging {...reviewPage.paging} />}
+          {requests.length > 0 && (
             <section className="profile-section">
               <h2>Saved coaching notes</h2>
-              {training.requests
-                .slice()
-                .reverse()
-                .slice(0, 20)
-                .map((request) => (
+              {requests.map((request) => (
                   <div key={request.id}>
                     <small>
                       {request.date} · {request.status}
@@ -2207,6 +2267,7 @@ export default function TrainingPanel({
                 ))}
             </section>
           )}
+          {!state && <ResourcePaging {...requestPage.paging} />}
         </TabsContent>
       </Tabs>
 
@@ -2217,7 +2278,8 @@ export default function TrainingPanel({
         >
           <div className="training-template-picker">
             <p className="training-help">Start from a routine, then make this session your own.</p>
-            {training.templates.map((template) => {
+            {!state && <><Input aria-label="Search routines" value={templateSearch} onChange={(event) => setTemplateSearch(event.target.value)} />{(!templatePage.data || templatePage.isError) && <ResourceStatus error={templatePage.error} loading={templatePage.isPending} retry={templatePage.reload} />}<ResourcePaging {...templatePage.paging} /></>}
+            {templates.map((template) => {
               const Icon = kindIcon(template.kind);
               return (
                 <Button
@@ -2260,7 +2322,8 @@ export default function TrainingPanel({
               Routine edits apply when you add future sessions. Existing workouts keep their own
               targets and logs.
             </p>
-            {training.templates.map((template) => (
+            {!state && <><Input aria-label="Search routines" value={templateSearch} onChange={(event) => setTemplateSearch(event.target.value)} />{(!templatePage.data || templatePage.isError) && <ResourceStatus error={templatePage.error} loading={templatePage.isPending} retry={templatePage.reload} />}<ResourcePaging {...templatePage.paging} /></>}
+            {templates.map((template) => (
               <Button
                 variant="secondary"
                 className="training-template-choice"
@@ -2294,7 +2357,7 @@ export default function TrainingPanel({
         <SessionEditor
           key={`${editor.session.id}-${editor.template ? 'template' : 'session'}`}
           editor={editor}
-          history={training.sessions}
+          history={state?.training.sessions}
           busy={busy}
           onClose={() => setEditor(null)}
           onSave={saveSession}

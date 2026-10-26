@@ -1,6 +1,6 @@
 import { weekDates } from '@packages/nutrition/dates';
 import type { Macros } from '@packages/nutrition/types';
-import { targetForStateDate } from './targets.js';
+import { targetForStateDate, type ActivityContext } from './targets.js';
 import type { AppState } from './types.js';
 
 export type MealPlanDaySummary = {
@@ -36,7 +36,10 @@ const average = (value: Macros, dayCount: number): Macros => ({
 });
 
 /** Keep precision through aggregation; formatting is the only rounding step. */
-export function getMealPlanSummary(state: AppState, selectedDate: string): MealPlanSummary {
+export function getMealPlanSummary(
+  state: ActivityContext & Pick<AppState, 'recipes' | 'plan'>,
+  selectedDate: string,
+): MealPlanSummary {
   const dates = weekDates(selectedDate);
   const recipes = new Map(state.recipes.map((recipe) => [recipe.id, recipe]));
   const days: MealPlanDaySummary[] = dates.map((date) => ({
