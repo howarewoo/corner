@@ -145,6 +145,7 @@ export function useResource<T extends Versioned>(
     queryKey: parameters === undefined ? privateKey(family) : [...privateKey(family), parameters],
     queryFn: ({ signal }) => readResource(family, () => operation(signal), generation),
     enabled,
+    refetchOnReconnect: true,
     structuralSharing: (previous, next) => {
       const current = previous as T | undefined;
       const incoming = next as T;

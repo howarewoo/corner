@@ -2,7 +2,7 @@
 import { useRef } from 'react';
 import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { QueryClientProvider, useMutation } from '@tanstack/react-query';
+import { onlineManager, QueryClientProvider, useMutation } from '@tanstack/react-query';
 import { expect, test, vi } from 'vitest';
 import { createInitialState } from '@packages/workspace/initial-state';
 import type { Bootstrap, CommandResult, RecordPage } from '@packages/api/workspace-data';
@@ -25,6 +25,52 @@ vi.mock('../features/workspace/utils', async (importOriginal) => {
 
 const bootstrap = (revision: number): Bootstrap => ({
   revision, settings: createInitialState().settings, aiAvailable: false,
+});
+
+test.each(['stale', 'failed'] as const)('reconnect refreshes %s workspace resources but not provider connections', async (initial) => {
+  let revision = 1;
+  let fail = initial === 'failed';
+  const calls = mockHttp((call) => {
+    if (call.path === '/api/rpc/ai/connection') return json({ json: {} });
+    if (call.path === '/api/rpc/workspace/get') {
+      if (fail) throw new TypeError('Network unavailable');
+      return json({ json: bootstrap(revision) });
+    }
+  });
+  const food = vi.fn(async () => {
+    if (fail) throw new TypeError('Network unavailable');
+    return { revision };
+  });
+  function Consumer() {
+    const workspace = runtime.useWorkspace();
+    const resource = runtime.useResource('food', undefined, food);
+    const connection = runtime.useConnection();
+    return <>
+      <output aria-label="Workspace">{workspace.isError ? 'error' : workspace.data?.revision}</output>
+      <output aria-label="Food">{resource.isError ? 'error' : resource.data?.revision}</output>
+      <output aria-label="Connection">{connection.status}</output>
+    </>;
+  }
+  render(<QueryClientProvider client={runtime.queryClient}><Consumer /></QueryClientProvider>);
+  await waitFor(() => {
+    expect(screen.getByLabelText('Workspace')).toHaveTextContent(fail ? 'error' : '1');
+    expect(screen.getByLabelText('Food')).toHaveTextContent(fail ? 'error' : '1');
+    expect(screen.getByLabelText('Connection')).toHaveTextContent('success');
+  });
+  try {
+    act(() => { onlineManager.setOnline(false); });
+    revision = 2;
+    fail = false;
+    act(() => { onlineManager.setOnline(true); });
+    await waitFor(() => {
+      expect(screen.getByLabelText('Workspace')).toHaveTextContent('2');
+      expect(screen.getByLabelText('Food')).toHaveTextContent('2');
+    });
+    expect(food).toHaveBeenCalledTimes(2);
+    expect(calls.filter((call) => call.path === '/api/rpc/ai/connection')).toHaveLength(1);
+  } finally {
+    act(() => { onlineManager.setOnline(true); });
+  }
 });
 
 test.each(['records', 'cursor'] as const)('%s pagination restarts after a write and refreshes without stale cursors', async (kind) => {
