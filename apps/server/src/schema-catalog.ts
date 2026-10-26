@@ -7,6 +7,8 @@ function need(condition: unknown): asserts condition {
 }
 // Deliberately bounded to the application's plain tables, built-in types and btree indexes.
 // Migration metadata is validated separately, never treated as application schema.
+// Foreign/check constraints are compared in full below; only their native FK
+// enforcement triggers are admitted. User triggers remain unsupported.
 // A table scope leaves local Auth/bookkeeping intact; unsupported schema-level objects still refuse.
 export async function applicationCatalog(
   client: PoolClient,
@@ -22,10 +24,11 @@ export async function applicationCatalog(
     EXISTS (SELECT 1 FROM pg_type t JOIN pg_namespace n ON n.oid=t.typnamespace WHERE n.nspname=$1 AND NOT
       (t.typtype='c' AND EXISTS (SELECT 1 FROM pg_class c WHERE c.oid=t.typrelid AND c.relkind='r') OR
        t.typelem<>0 AND EXISTS (SELECT 1 FROM pg_type b JOIN pg_class c ON c.oid=b.typrelid WHERE b.oid=t.typelem AND b.typtype='c' AND c.relkind='r'))) OR
-    EXISTS (SELECT 1 FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=$1 AND ($3::text[] IS NULL OR c.relname=ANY($3::text[]))) OR
+    EXISTS (SELECT 1 FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=$1 AND ($3::text[] IS NULL OR c.relname=ANY($3::text[])) AND NOT
+      (t.tgisinternal AND t.tgenabled='O' AND EXISTS (SELECT 1 FROM pg_constraint fk WHERE fk.oid=t.tgconstraint AND fk.contype='f'))) OR
     EXISTS (SELECT 1 FROM pg_rewrite r JOIN pg_class c ON c.oid=r.ev_class JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=$1) OR
     EXISTS (SELECT 1 FROM pg_policy p JOIN pg_class c ON c.oid=p.polrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=$1) OR
-    EXISTS (SELECT 1 FROM pg_constraint c JOIN pg_namespace n ON n.oid=c.connamespace WHERE n.nspname=$1 AND c.contype NOT IN ('p','u','n') AND ($3::text[] IS NULL OR c.conrelid IN (SELECT oid FROM pg_class WHERE relnamespace=n.oid AND relname=ANY($3::text[])))) OR
+    EXISTS (SELECT 1 FROM pg_constraint c JOIN pg_namespace n ON n.oid=c.connamespace WHERE n.nspname=$1 AND c.contype NOT IN ('p','u','n','f','c') AND ($3::text[] IS NULL OR c.conrelid IN (SELECT oid FROM pg_class WHERE relnamespace=n.oid AND relname=ANY($3::text[])))) OR
     EXISTS (SELECT 1 FROM pg_attribute a JOIN pg_class c ON c.oid=a.attrelid JOIN pg_namespace n ON n.oid=c.relnamespace JOIN pg_type t ON t.oid=a.atttypid JOIN pg_namespace tn ON tn.oid=t.typnamespace
       WHERE n.nspname=$1 AND c.relkind='r' AND a.attnum>0 AND (a.attisdropped OR a.attidentity<>'' OR a.attgenerated<>'' OR a.atthasmissing OR a.attacl IS NOT NULL OR tn.nspname<>'pg_catalog' OR EXISTS (SELECT 1 FROM pg_collation co JOIN pg_namespace cn ON cn.oid=co.collnamespace WHERE co.oid=a.attcollation AND cn.nspname<>'pg_catalog'))) OR
     EXISTS (SELECT 1 FROM pg_inherits i JOIN pg_class c ON c.oid=i.inhrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=$1) OR

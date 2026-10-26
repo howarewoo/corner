@@ -13,7 +13,9 @@ import {
 } from '@packages/ui';
 import type { Mutate, View } from '../workspace/types';
 import { download, formatDate, num } from '../workspace/utils';
-import { DateControls, Empty } from '../workspace/workspace-ui';
+import { DateControls, Empty, ResourceStatus } from '../workspace/workspace-ui';
+import { useResource } from '../../rpc';
+import { groceryWeek } from '../workspace/resources';
 
 export default function Groceries({
   state,
@@ -24,7 +26,7 @@ export default function Groceries({
   mutate,
   copyText,
 }: {
-  state: AppState;
+  state?: AppState;
   selectedDate: string;
   setSelectedDate: (date: string) => void;
   disabled: boolean;
@@ -33,7 +35,9 @@ export default function Groceries({
   copyText: (text: string, success?: string) => Promise<void>;
 }) {
   const weekStart = mondayOf(selectedDate);
-  const groceries = useMemo(() => groceryList(state, weekStart), [state, weekStart]);
+  const query = useResource('groceries', { weekStart }, (signal) => groceryWeek(weekStart, signal), !state);
+  const groceries = useMemo(() => state ? groceryList(state, weekStart) : (query.data?.items ?? []), [state, weekStart, query.data]);
+  const groceryChecks = state?.groceryChecks ?? query.data?.checks ?? {};
   const groceryGroups = useMemo(() => {
     const groups: Record<string, typeof groceries> = {};
     groceries.forEach((item) => {
@@ -42,9 +46,10 @@ export default function Groceries({
     return Object.entries(groups).sort(([a], [b]) => a.localeCompare(b));
   }, [groceries]);
   const checkedGroceries = groceries.filter(
-    (item) => state.groceryChecks[`${weekStart}|${item.key}`],
+    (item) => groceryChecks[`${weekStart}|${item.key}`],
   ).length;
-  const groceryText = `CORNER · WEEKLY GROCERY LIST\n${formatDate(weekStart, { month: 'long', day: 'numeric', year: 'numeric' })}\n\n${groceryGroups.map(([aisle, items]) => `${aisle.toUpperCase()}\n${items.map((item) => `${state.groceryChecks[`${weekStart}|${item.key}`] ? '[x]' : '[ ]'} ${item.name} — ${num(item.quantity, 2)} ${item.unit}${item.notes.length ? ` (${item.notes.join('; ')})` : ''}`).join('\n')}`).join('\n\n')}\n\nAmounts reflect the recipes and portions in your meal plan. Check your pantry and package sizes before shopping.`;
+  const groceryText = `CORNER · WEEKLY GROCERY LIST\n${formatDate(weekStart, { month: 'long', day: 'numeric', year: 'numeric' })}\n\n${groceryGroups.map(([aisle, items]) => `${aisle.toUpperCase()}\n${items.map((item) => `${groceryChecks[`${weekStart}|${item.key}`] ? '[x]' : '[ ]'} ${item.name} — ${num(item.quantity, 2)} ${item.unit}${item.notes.length ? ` (${item.notes.join('; ')})` : ''}`).join('\n')}`).join('\n\n')}\n\nAmounts reflect the recipes and portions in your meal plan. Check your pantry and package sizes before shopping.`;
+  if (!state && (!query.data || query.isError)) return <ResourceStatus error={query.error} loading={query.isPending} retry={() => void query.refetch()} />;
   return (
     <>
       <WorkspaceHeader
@@ -78,7 +83,7 @@ export default function Groceries({
                   </div>
                   {items.map((item) => {
                     const key = `${weekStart}|${item.key}`,
-                      checked = Boolean(state.groceryChecks[key]);
+                      checked = Boolean(groceryChecks[key]);
                     return (
                       <Label className={`grocery-item ${checked ? 'checked' : ''}`} key={item.key}>
                         <Checkbox

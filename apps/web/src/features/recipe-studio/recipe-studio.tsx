@@ -12,16 +12,19 @@ import {
   Sparkles,
   UtensilsCrossed,
 } from 'lucide-react';
-import type { AppState } from '@packages/workspace/types';
+import type { AppState, Settings } from '@packages/workspace/types';
 import type { Recipe } from '@packages/nutrition/types';
 import { Badge, Button, Card, Input, Textarea, WorkspaceHeader } from '@packages/ui';
 import type { View } from '../workspace/types';
 import { cap } from '../workspace/utils';
-import { Field, MacroLine } from '../workspace/workspace-ui';
+import { Field, MacroLine, ResourceStatus, ResourcePaging } from '../workspace/workspace-ui';
+import { useRecordPage } from '../workspace/resources';
+import { rpc, useResource } from '../../rpc';
 import type { useRecipeStudio } from './use-recipe-studio';
 
 export default function RecipeStudio({
   state,
+  settings,
   aiAvailable,
   disabled,
   studio,
@@ -31,7 +34,8 @@ export default function RecipeStudio({
   saveRecipe,
   copyText,
 }: {
-  state: AppState;
+  state?: AppState;
+  settings: Settings;
   aiAvailable: boolean;
   disabled: boolean;
   studio: ReturnType<typeof useRecipeStudio>;
@@ -56,6 +60,15 @@ export default function RecipeStudio({
     saveRequest,
     generateRecipe,
   } = studio;
+  const page = useRecordPage({ resource: 'recipeRequests', order: 'recent', limit: 20 }, !state);
+  const requests = state ? [...state.requests].reverse() : (page.data?.items ?? []);
+  const recipeIds = [...new Set(requests.flatMap((request) => request.recipeId ? [request.recipeId] : []))];
+  const details = useResource('details', { recipeIds, revision: page.data?.revision },
+    (signal) => rpc.workspace.details({ recipeIds }, { signal }), !state && Boolean(page.data));
+  const recipes = state?.recipes ?? details.data?.recipes ?? [];
+  const drift = !state && page.data && details.data && page.data.revision !== details.data.revision;
+  const historyReady = Boolean(state || (page.data && details.data && !drift && !page.isError && !details.isError));
+  const reloadHistory = () => { page.reload(); void details.refetch(); };
 
   return (
     <>
@@ -226,11 +239,11 @@ export default function RecipeStudio({
             <div className="studio-preferences">
               <span>
                 <ShoppingBasket size={16} />
-                {state.settings.profile?.groceryPreferences || 'Add your grocery preferences'}
+                {settings.profile?.groceryPreferences || 'Add your grocery preferences'}
               </span>
               <span>
                 <UtensilsCrossed size={16} />
-                {state.settings.profile?.dietaryPreferences || 'Add your food preferences'}
+                {settings.profile?.dietaryPreferences || 'Add your food preferences'}
               </span>
               <Button variant="link" size="default" onClick={() => navigate('settings')}>
                 Edit profile <ArrowRight size={15} />
@@ -240,13 +253,10 @@ export default function RecipeStudio({
           <div className="request-list">
             <div className="section-heading">
               <h2>Recipe requests</h2>
-              <span>{state.requests.length}</span>
+              <span>{requests.length}{!state ? ' on this page' : ''}</span>
             </div>
-            {state.requests.length ? (
-              state.requests
-                .slice()
-                .reverse()
-                .map((request) => (
+            {!historyReady ? <ResourceStatus error={page.error ?? details.error ?? (drift ? new Error('Your data changed while loading. Please retry.') : null)} loading={!page.isError && !details.isError} retry={reloadHistory} /> : requests.length ? (
+              requests.map((request) => (
                   <div className="request-item" key={request.id}>
                     <Badge variant="secondary" className={`request-status ${request.status}`}>
                       {request.status === 'fulfilled' ? <Check size={12} /> : <Clock3 size={12} />}
@@ -259,12 +269,12 @@ export default function RecipeStudio({
                     </p>
                     {request.status === 'fulfilled' &&
                     request.recipeId &&
-                    state.recipes.find((r) => r.id === request.recipeId) ? (
+                    recipes.find((r) => r.id === request.recipeId) ? (
                       <Button
                         variant="link"
                         size="default"
                         onClick={() =>
-                          openRecipe(state.recipes.find((r) => r.id === request.recipeId)!)
+                          openRecipe(recipes.find((r) => r.id === request.recipeId)!)
                         }
                       >
                         View recipe <ArrowRight size={13} />
@@ -285,6 +295,7 @@ export default function RecipeStudio({
                 Your saved ideas will appear here. Keep a running list for your next meal prep.
               </p>
             )}
+            {!state && <ResourcePaging {...page.paging} />}
           </div>
         </aside>
       </div>

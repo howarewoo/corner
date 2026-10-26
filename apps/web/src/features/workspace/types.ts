@@ -1,4 +1,4 @@
-import type { AppState } from '@packages/workspace/types';
+import type { AppState, Settings } from '@packages/workspace/types';
 import type { FoodEntry, MealSlot, Recipe } from '@packages/nutrition/types';
 import type { WorkspaceMutationInput } from '@packages/api/schemas';
 
@@ -20,7 +20,8 @@ export type Overlay =
   | null;
 
 export type CornerAppProps = {
-  initialState: AppState;
+  initialState?: AppState;
+  initialSettings?: Settings;
   preview: boolean;
   displayName: string;
   initialRevision?: number;

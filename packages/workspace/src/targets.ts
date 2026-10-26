@@ -2,6 +2,11 @@ import { DateSchema } from '@packages/nutrition/schemas';
 import type { Macros } from '@packages/nutrition/types';
 import type { AppState, Settings } from './types.js';
 
+export type ActivityContext = {
+  settings: Settings;
+  training: Pick<AppState['training'], 'sessions' | 'scheduledDates'>;
+};
+
 export function activityForDate(settings: Settings, date: string): string {
   DateSchema.parse(date);
   return settings.schedule[String(new Date(`${date}T12:00:00Z`).getUTCDay())] || 'Recovery';
@@ -14,7 +19,7 @@ export function targetForDate(settings: Settings, date: string): Macros {
 }
 
 /** Explicit workout dates take precedence over the recurring schedule. */
-export function activityForStateDate(state: AppState, date: string): string {
+export function activityForStateDate(state: ActivityContext, date: string): string {
   DateSchema.parse(date);
   const sessions = state.training?.sessions.filter((session) => session.date === date) ?? [];
   if (!sessions.length && !state.training?.scheduledDates.includes(date))
@@ -30,7 +35,7 @@ export function activityForStateDate(state: AppState, date: string): string {
   return activities.join(' + ') || 'Recovery';
 }
 
-export function targetForStateDate(state: AppState, date: string): Macros {
+export function targetForStateDate(state: ActivityContext, date: string): Macros {
   const explicit =
     state.training?.scheduledDates.includes(date) ||
     state.training?.sessions.some((session) => session.date === date);

@@ -81,6 +81,7 @@ async function scenario(t, overrides = {}) {
     },
   };
   const candidate = {
+    generation: 'relational-v1',
     directory: work,
     digest,
     manifest: {
@@ -98,7 +99,8 @@ async function scenario(t, overrides = {}) {
     work,
     environment: environment(),
     loadArtifact: async () => candidate,
-    qualify: async () => ({ passed: true, candidateDigest: digest, previousDigest: null }),
+    qualify: async () => ({ passed: true, candidateDigest: digest, previousDigest: null,
+      generation: 'relational-v1', previousGeneration: null, recovery: 'bootstrap' }),
     verify: async () => ({ digest }),
     cf: async (path) => {
       if (path.endsWith('/deployments/latest')) return null;
@@ -280,7 +282,8 @@ test('interrupted B schema attempt preserves A as C compatibility baseline', asy
     assert.equal(candidate, f.candidate.directory);
     assert.equal(previous, f.serving.directory);
     assert.equal(bootstrap, false);
-    return { passed: true, candidateDigest: digest, previousDigest: f.serving.digest };
+    return { passed: true, candidateDigest: digest, previousDigest: f.serving.digest,
+      generation: 'relational-v1', previousGeneration: 'relational-v1', recovery: 'compatible' };
   };
   await assert.rejects(deployPreview(f.options), /migration failed/);
   assert.equal(qualified, true);
@@ -331,6 +334,9 @@ test('live drift from serving ledger is rejected initially and after qualificati
       passed: true,
       candidateDigest: digest,
       previousDigest: f.serving.digest,
+      generation: 'relational-v1',
+      previousGeneration: 'relational-v1',
+      recovery: 'compatible',
     });
     await assert.rejects(deployPreview(f.options), /Live Preview deployment differs/);
     assert.deepEqual(f.effects, []);

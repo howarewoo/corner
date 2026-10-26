@@ -13,7 +13,10 @@ import { ApiError, json, readJson, requireSameOrigin } from './http.js';
 import { connectionDTO } from './ai-routes.js';
 import { AgentError, type PlanningAgent } from './planning-agent.js';
 import { SubscriptionError, type SubscriptionProvider } from './subscription.js';
-import { isEmptyWorkspace, type WorkspaceSnapshot, type WorkspaceStore } from './store.js';
+import type { WorkspaceStore } from './store.js';
+import { recordDetails, recordPage } from './workspace-queries.js';
+import { groceries } from './grocery-queries.js';
+import { exerciseChoices, exerciseHistoryPage, prefillHistory, progress } from './training-queries.js';
 
 export type RPCServices = {
   config: Config;
@@ -111,12 +114,6 @@ export function createRPCHandler({ config, auth, store, aiAvailable, ai }: RPCSe
       throw new ApiError(503, 'AI_NOT_CONFIGURED', 'AI is not configured for this installation.');
     return ai;
   }
-  async function stateResponse(owner: Principal, snapshot?: WorkspaceSnapshot) {
-    return {
-      ...(snapshot ?? (await store.read(owner.userId, owner.name))),
-      aiAvailable: Boolean(await aiAvailable?.(owner)),
-    };
-  }
   async function available(owner: Principal) {
     const status = connectionDTO(await services().provider.status(owner.userId));
     if (!status.available)
@@ -136,37 +133,38 @@ export function createRPCHandler({ config, auth, store, aiAvailable, ai }: RPCSe
       }),
     },
     workspace: {
-      get: api.workspace.get.handler(({ context }) => stateResponse(principal(context))),
-      mutate: api.workspace.mutate.handler(async ({ input, context }) => {
+      get: api.workspace.get.handler(async ({ context }) => {
+        const owner = principal(context);
+        return { ...await store.bootstrap(owner.userId, owner.name), aiAvailable: Boolean(await aiAvailable?.(owner)) };
+      }),
+      foodWindow: api.workspace.foodWindow.handler(({ input, context }) =>
+        store.foodWindow(principal(context).userId, input)),
+      page: api.workspace.page.handler(({ input, context }) =>
+        recordPage(store.db, principal(context).userId, input)),
+      details: api.workspace.details.handler(({ input, context }) =>
+        recordDetails(store.db, principal(context).userId, input)),
+      groceries: api.workspace.groceries.handler(({ input, context }) =>
+        groceries(store.db, principal(context).userId, input)),
+      progress: api.workspace.progress.handler(({ input, context }) =>
+        progress(store.db, principal(context).userId, input)),
+      exerciseHistory: api.workspace.exerciseHistory.handler(({ input, context }) =>
+        exerciseHistoryPage(store.db, principal(context).userId, input)),
+      exerciseChoices: api.workspace.exerciseChoices.handler(({ input, context }) =>
+        exerciseChoices(store.db, principal(context).userId, input)),
+      prefill: api.workspace.prefill.handler(({ input, context }) =>
+        prefillHistory(store.db, principal(context).userId, input)),
+      export: api.workspace.export.handler(({ context }) => {
+        const owner = principal(context);
+        return store.exportSnapshot(owner.userId, owner.name);
+      }),
+      mutate: api.workspace.mutate.handler(({ input, context }) => {
         const raw = mutationInputSchema.parse(input);
-        const owner = principal(context);
-        return stateResponse(
-          owner,
-          await store.mutate(owner.userId, raw.requestId, raw.mutation, raw.expectedRevision),
-        );
+        return store.mutate(principal(context).userId, raw.requestId, raw.mutation, raw.expectedRevision);
       }),
-      previewImport: api.workspace.previewImport.handler(async ({ input, context }) => {
-        const owner = principal(context);
-        const inspected = store.inspectImport(input.state);
-        const current = await store.read(owner.userId, owner.name);
-        return {
-          summary: { ...inspected.counts, bytes: inspected.bytes },
-          canImport: isEmptyWorkspace(current.state),
-          revision: current.revision,
-        };
-      }),
-      import: api.workspace.import.handler(async ({ input, context }) => {
-        const owner = principal(context);
-        return stateResponse(
-          owner,
-          await store.replaceImport(
-            owner.userId,
-            input.requestId,
-            input.state,
-            input.expectedRevision,
-          ),
-        );
-      }),
+      previewImport: api.workspace.previewImport.handler(({ input, context }) =>
+        store.importPreview(principal(context).userId, input.state)),
+      import: api.workspace.import.handler(({ input, context }) =>
+        store.replaceImport(principal(context).userId, input.requestId, input.state, input.expectedRevision)),
     },
     ai: {
       connection: api.ai.connection.handler(async ({ context }) => {
@@ -236,13 +234,8 @@ export function createRPCHandler({ config, auth, store, aiAvailable, ai }: RPCSe
       cancel: api.agent.cancel.handler(async ({ input, context }) => ({
         run: await services().agent.cancel(principal(context).userId, input.id),
       })),
-      apply: api.agent.apply.handler(async ({ input, context }) => {
-        const owner = principal(context);
-        return {
-          ...(await services().agent.apply(owner.userId, input.id, input.requestId)),
-          aiAvailable: connectionDTO(await services().provider.status(owner.userId)).available,
-        };
-      }),
+      apply: api.agent.apply.handler(({ input, context }) =>
+        services().agent.apply(principal(context).userId, input.id, input.requestId)),
     },
   });
   const handler = new StandardRPCHandler(router, {

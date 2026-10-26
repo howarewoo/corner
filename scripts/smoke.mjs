@@ -189,7 +189,8 @@ async function run(mode, port) {
     assert(cookie);
     const workspace = (await (await rpc('workspace/get', undefined, { Cookie: cookie })).json())
       .json;
-    assert.equal(workspace.state.settings.name, 'HTTP test');
+    assert.equal(workspace.settings.name, 'HTTP test');
+    assert.equal(Object.hasOwn(workspace, 'state'), false);
     const native = createORPCClient(
       new RPCLink({
         url: listener + '/api/rpc',

@@ -6,7 +6,7 @@ export default defineConfig({
   out: './migrations',
   schemaFilter: ['public'],
   tablesFilter: [
-    'workspace_state',
+    'workspace_*',
     'mutation_receipts',
     'corner_ai_runs',
     'corner_subscription_meta',

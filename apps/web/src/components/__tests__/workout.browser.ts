@@ -69,7 +69,7 @@ test('workout completion persists recorded results and leaves unrecorded sets in
   await expect(
     page.getByLabel('Synthetic squat set 2 completed', { exact: true }),
   ).not.toBeChecked();
-  const saved = (await account.api.workspace.get()).state.training.sessions.find(
+  const saved = (await account.api.workspace.details({ sessionIds: [session.id] })).sessions.find(
     (item) => item.id === session.id,
   )!;
   expect(saved.status).toBe('completed');

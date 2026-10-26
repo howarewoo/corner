@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import type { Pool } from 'pg';
 import { createDatabase } from '../database.js';
@@ -26,19 +25,13 @@ async function fixture() {
     const source = pools[0]!;
     const target = pools[1]!;
     await migrate(source);
-    const sql = await readFile(
-      new URL('../../migrations/0000_corner.sql', import.meta.url),
-      'utf8',
-    );
-    await target.query(sql);
-    await target.query(
-      'CREATE TABLE __drizzle_migrations (id SERIAL PRIMARY KEY, hash TEXT NOT NULL, created_at BIGINT)',
-    );
+    await migrate(target);
+    await target.query('DELETE FROM __drizzle_migrations');
     // Source data must neither be copied nor inspected by the operation.
     await source.query(
-      "INSERT INTO workspace_state VALUES ('private-owner','private-workspace',9,'private-time')",
+      "INSERT INTO corner_subscription_meta VALUES ('private-key','private-value')",
     );
-    const before = (await source.query('SELECT * FROM workspace_state')).rows;
+    const before = (await source.query('SELECT * FROM corner_subscription_meta')).rows;
     const history = (await source.query('SELECT * FROM __drizzle_migrations ORDER BY id')).rows;
     return {
       source,
@@ -61,7 +54,7 @@ async function fixture() {
         }
       },
       async unchanged() {
-        assert.deepEqual((await source.query('SELECT * FROM workspace_state')).rows, before);
+        assert.deepEqual((await source.query('SELECT * FROM corner_subscription_meta')).rows, before);
         assert.deepEqual(
           (await source.query('SELECT * FROM __drizzle_migrations ORDER BY id')).rows,
           history,
@@ -98,7 +91,7 @@ test('bootstrap smoke: schema-only staging baselines once, ordinary migrate succ
       (await f.source.query('SELECT hash,created_at FROM __drizzle_migrations')).rows,
     );
     assert.equal(
-      (await f.target.query('SELECT count(*)::int AS count FROM workspace_state')).rows[0].count,
+      (await f.target.query('SELECT count(*)::int AS count FROM workspace_metadata')).rows[0].count,
       0,
     );
     await assert.rejects(baselineStaging(f.options), { message: 'STAGING_BASELINE_REFUSED' });
@@ -118,11 +111,14 @@ test('bootstrap smoke: schema-only staging baselines once, ordinary migrate succ
 
 test('schema drift and unsupported objects refuse atomically without ledger writes', async () => {
   for (const sql of [
-    'ALTER TABLE workspace_state ALTER COLUMN version SET DEFAULT 7',
+    'ALTER TABLE workspace_metadata ALTER COLUMN revision SET DEFAULT 7',
     'DROP INDEX mutation_receipts_user_revision',
     'CREATE VIEW unexpected_view AS SELECT 1 AS value',
-    'ALTER TABLE workspace_state ENABLE ROW LEVEL SECURITY',
-    'ALTER TABLE workspace_state ADD CONSTRAINT unexpected_check CHECK (version >= 0)',
+    'ALTER TABLE workspace_metadata ENABLE ROW LEVEL SECURITY',
+    'ALTER TABLE workspace_metadata ADD CONSTRAINT unexpected_check CHECK (revision >= 0)',
+    'ALTER TABLE workspace_food_entries DROP CONSTRAINT workspace_food_entries_user_id_workspace_metadata_user_id_fk',
+    'ALTER TABLE workspace_food_entries DROP CONSTRAINT workspace_food_entries_servings; ALTER TABLE workspace_food_entries ADD CONSTRAINT workspace_food_entries_servings CHECK (servings > 0)',
+    'ALTER TABLE workspace_planned_meals DISABLE TRIGGER ALL',
     "CREATE TYPE unexpected_enum AS ENUM ('value')",
     'ALTER TABLE __drizzle_migrations ADD COLUMN unexpected TEXT',
     'ALTER TABLE __drizzle_migrations SET UNLOGGED',
@@ -174,7 +170,7 @@ test('nonempty application tables, missing history, and edited source checksums 
       if (change === 'source-ledger-shape')
         await f.source.query('ALTER TABLE __drizzle_migrations ADD COLUMN unexpected TEXT');
       if (change === 'source-drift')
-        await f.source.query('ALTER TABLE workspace_state ALTER COLUMN version SET DEFAULT 7');
+        await f.source.query('ALTER TABLE workspace_metadata ALTER COLUMN revision SET DEFAULT 7');
       if (change === 'default-grants')
         await f.source.query(
           `ALTER DEFAULT PRIVILEGES IN SCHEMA "${f.schemas[0]}" GRANT SELECT ON TABLES TO PUBLIC`,
@@ -214,7 +210,7 @@ test('schema drift with an absent target ledger does not create migration metada
   const f = await fixture();
   try {
     await f.target.query('DROP TABLE __drizzle_migrations');
-    await f.target.query('ALTER TABLE workspace_state ALTER COLUMN version SET DEFAULT 7');
+    await f.target.query('ALTER TABLE workspace_metadata ALTER COLUMN revision SET DEFAULT 7');
     await assert.rejects(baselineStaging(f.options), { message: 'STAGING_BASELINE_REFUSED' });
     assert.equal(
       (await f.target.query("SELECT to_regclass('__drizzle_migrations') AS name")).rows[0].name,

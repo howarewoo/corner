@@ -16,10 +16,12 @@ import {
 import MealPlannerSummary, { PlannerDayMacros } from '../../components/meal-planner-summary';
 import type { Mutate, Notify, Confirmation, Overlay, View } from '../workspace/types';
 import { activityIcon, activityLabel, cap, formatDate, newId, num } from '../workspace/utils';
-import { DateControls } from '../workspace/workspace-ui';
+import { DateControls, ResourceStatus } from '../workspace/workspace-ui';
+import { nutritionWindow } from '../workspace/resources';
+import { readResource, useResource, sessionLifetime } from '../../rpc';
 
 export default function MealPlanner({
-  state,
+  state: previewState,
   selectedDate,
   setSelectedDate,
   disabled,
@@ -31,7 +33,7 @@ export default function MealPlanner({
   openRecipe,
   openAgent,
 }: {
-  state: AppState;
+  state?: AppState;
   selectedDate: string;
   setSelectedDate: (date: string) => void;
   disabled: boolean;
@@ -43,6 +45,11 @@ export default function MealPlanner({
   openRecipe: (recipe: Recipe) => void;
   openAgent: (prompt?: string) => void;
 }) {
+  const dates = weekDates(mondayOf(selectedDate));
+  const query = useResource('nutrition', { from: dates[0], through: dates[6] },
+    (signal) => nutritionWindow(dates[0]!, dates[6]!, signal), !previewState);
+  const state = previewState ?? query.data;
+  if (!state || (!previewState && query.isError)) return <ResourceStatus error={query.error} loading={query.isPending} retry={() => void query.refetch()} />;
   const targetsSet =
     state.settings.setup?.nutritionTargetsSet ??
     (state.settings.training.calories > 0 && state.settings.rest.calories > 0);
@@ -51,34 +58,33 @@ export default function MealPlanner({
   const days = weekDates(weekStart);
   const weekPlan = state.plan.filter((entry) => days.includes(entry.date));
   const copyWeek = async () => {
-    const previousDays = weekDates(shiftDate(weekStart, -7));
-    const previous = state.plan.filter((entry) => previousDays.includes(entry.date));
-    if (!previous.length) {
-      notify('There are no meals in the previous week to copy.');
-      return;
+    try {
+      const previousDays = weekDates(shiftDate(weekStart, -7));
+      const source = previewState ?? await readResource('nutrition', () =>
+        nutritionWindow(previousDays[0]!, days[6]!, new AbortController().signal), sessionLifetime());
+      const previous = source.plan.filter((entry) => previousDays.includes(entry.date));
+      if (!previous.length) {
+        notify('There are no meals in the previous week to copy.');
+        return;
+      }
+      const mutation: Parameters<Mutate>[0] = {
+        type: 'plan.week',
+        data: { weekStart, entries: previous.map((entry) => ({
+          ...entry, id: newId(), date: shiftDate(entry.date, 7),
+        })), replace: true },
+      };
+      if (source.plan.some((entry) => days.includes(entry.date))) {
+        setConfirmation({
+          title: 'Replace this week’s plan?',
+          description: 'Replace this week’s plan with the previous week? Your food log will stay as it is.',
+          confirm: () => mutate(mutation, 'Previous week copied'),
+        });
+        return;
+      }
+      await mutate(mutation, 'Previous week copied');
+    } catch (error) {
+      notify(error instanceof Error ? error.message : 'Could not load the previous week.', true);
     }
-    const mutation: Parameters<Mutate>[0] = {
-      type: 'plan.week',
-      data: {
-        weekStart,
-        entries: previous.map((entry) => ({
-          ...entry,
-          id: newId(),
-          date: shiftDate(entry.date, 7),
-        })),
-        replace: true,
-      },
-    };
-    if (weekPlan.length) {
-      setConfirmation({
-        title: 'Replace this week’s plan?',
-        description:
-          'Replace this week’s plan with the previous week? Your food log will stay as it is.',
-        confirm: () => mutate(mutation, 'Previous week copied'),
-      });
-      return;
-    }
-    await mutate(mutation, 'Previous week copied');
   };
   return (
     <>
@@ -117,7 +123,7 @@ export default function MealPlanner({
           Copy previous week
         </Button>
       </div>
-      {!state.recipes.length && (
+      {previewState && !previewState.recipes.length && (
         <div className="onboarding-nudge">
           <div>
             <h3>Your first recipe starts the plan.</h3>

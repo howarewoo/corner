@@ -4,6 +4,7 @@ import { ArrowUpFromLine, Loader2 } from 'lucide-react';
 import { Alert, Button, Field, FieldLabel, Input } from '@packages/ui';
 import { errorMessage } from './api';
 import { rpc, scoped, writeWorkspace, sessionLifetime } from './rpc';
+import { MAX_WORKSPACE_TRANSFER_BYTES } from '@packages/api/workspace-data';
 
 export default function ImportWorkspace({
   onImported,
@@ -49,8 +50,8 @@ export default function ImportWorkspace({
     setBusy(true);
     setFileName(file.name);
     try {
-      if (file.size > 2 * 1024 * 1024)
-        throw new Error('Choose a Corner JSON export smaller than 2 MB.');
+      if (file.size > MAX_WORKSPACE_TRANSFER_BYTES)
+        throw new Error('Choose a Corner JSON export no larger than 32 MiB.');
       const parsed = JSON.parse(await file.text());
       const state = parsed?.state ?? parsed;
       if (selection.current !== sequence || generation !== sessionLifetime()) return;

@@ -17,7 +17,8 @@ import {
   WorkspaceHeader,
 } from '@packages/ui';
 import type { Mutate, Overlay, View } from '../workspace/types';
-import { Empty, MacroLine } from '../workspace/workspace-ui';
+import { Empty, MacroLine, ResourceStatus, ResourcePaging } from '../workspace/workspace-ui';
+import { useRecordPage } from '../workspace/resources';
 
 export function useRecipeFilters() {
   const [search, setSearch] = useState('');
@@ -35,7 +36,7 @@ export default function RecipeCollection({
   mutate,
   filters,
 }: {
-  state: AppState;
+  state?: AppState;
   disabled: boolean;
   navigate: (view: View) => void;
   setOverlay: (overlay: Overlay) => void;
@@ -44,14 +45,15 @@ export default function RecipeCollection({
   filters: ReturnType<typeof useRecipeFilters>;
 }) {
   const { search, setSearch, category, setCategory, favoritesOnly, setFavoritesOnly } = filters;
-  const filteredRecipes = state.recipes.filter(
+  const page = useRecordPage({ resource: 'recipes', search, category: category === 'all' ? undefined : category as Recipe['category'], favorite: favoritesOnly || undefined, limit: 24 }, !state);
+  const filteredRecipes = state ? state.recipes.filter(
     (recipe) =>
       (!favoritesOnly || recipe.favorite) &&
       (category === 'all' || recipe.category === category) &&
       `${recipe.name} ${recipe.tags.join(' ')} ${recipe.ingredients.map((i) => i.name).join(' ')}`
         .toLowerCase()
         .includes(search.toLowerCase()),
-  );
+  ) : (page.data?.items ?? []);
   return (
     <>
       <WorkspaceHeader
@@ -112,11 +114,11 @@ export default function RecipeCollection({
       </div>
       <div className="collection-meta">
         <span>
-          {filteredRecipes.length} {filteredRecipes.length === 1 ? 'recipe' : 'recipes'}
+          {filteredRecipes.length} {filteredRecipes.length === 1 ? 'recipe' : 'recipes'}{!state ? ' on this page' : ''}
         </span>
         <span>Nutrition is approximate, per serving</span>
       </div>
-      {filteredRecipes.length ? (
+      {!state && (!page.data || page.isError) ? <ResourceStatus error={page.error} loading={page.isPending} retry={page.reload} /> : filteredRecipes.length ? (
         <div className="recipe-grid">
           {filteredRecipes.map((recipe) => (
             <Card key={recipe.id} className="recipe-card">
@@ -199,6 +201,7 @@ export default function RecipeCollection({
           </Empty>
         </Card>
       )}
+      {!state && <ResourcePaging {...page.paging} />}
     </>
   );
 }

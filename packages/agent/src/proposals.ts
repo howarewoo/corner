@@ -10,9 +10,10 @@ import {
   WorkoutSessionSchema,
   WorkoutTemplateSchema,
   hasRecordedData,
+  prepareTrainingCommand,
 } from '@packages/training/workouts';
 import { getCatalogExercise } from '@packages/training/exercise-catalog';
-import { applyMutation } from '@packages/workspace/mutations';
+import { MutationSchema } from '@packages/workspace/mutations';
 import type { AppState, Mutation } from '@packages/workspace/types';
 
 const id = z
@@ -75,10 +76,15 @@ export type AgentRun = {
   error?: string;
 };
 
+/** Only existing rows addressed by the proposal, plus its live recipe references. */
+export type ProposalDependencies = Pick<AppState, 'settings' | 'recipes' | 'plan'> & {
+  training: Pick<AppState['training'], 'sessions' | 'templates'>;
+};
+
 /** Convert a proposal to the same validated domain operations used by the UI.
  * Only planning operations are permitted; intake and completed work are never generated. */
 export function proposalMutations(
-  state: AppState,
+  state: ProposalDependencies,
   raw: unknown,
   now = new Date().toISOString(),
 ): { result: AgentResult; mutations: Mutation[] } {
@@ -194,8 +200,21 @@ export function proposalMutations(
       }
     }
   }
-  // Domain validation also checks recipe references and concurrent workout versions.
-  mutations.reduce((next, mutation) => applyMutation(next, mutation), structuredClone(state));
+  const availableRecipes = new Set(state.recipes.map((recipe) => recipe.id));
+  for (const mutation of mutations) {
+    const parsed = MutationSchema.parse(mutation);
+    if (parsed.type === 'recipe.save') availableRecipes.add(parsed.data.id);
+    if (parsed.type === 'plan.save' && !availableRecipes.has(parsed.data.recipeId))
+      throw new Error('That recipe is no longer available. Refresh and choose a recipe.');
+    if (
+      parsed.type === 'training.session.save' ||
+      parsed.type === 'training.session.delete' ||
+      parsed.type === 'training.template.save'
+    ) prepareTrainingCommand(parsed, {
+      sessions: state.training.sessions, templates: state.training.templates,
+      requests: [], reviews: [], scheduledDates: [],
+    });
+  }
   return { result, mutations };
 }
 

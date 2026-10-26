@@ -4,17 +4,18 @@ import type { Pool } from 'pg';
 import { testDatabase, closeTestDatabase, createTestAuth, neonTestConfig } from './helpers.ts';
 import { WorkspaceStore } from '../src/store.js';
 import { createQueries } from '../src/queries.js';
-import { PlanningAgent, buildContext, type InferenceProvider } from '../src/planning-agent.js';
+import { recordPage } from '../src/workspace-queries.js';
+import { PlanningAgent, type InferenceProvider } from '../src/planning-agent.js';
+import { planningContext } from '../src/planning-context.js';
 import { proposalMutations, type AgentResult, type AgentRun } from '@packages/agent/proposals';
 import { createInitialState } from '@packages/workspace/initial-state';
-import type { AppState } from '@packages/workspace/types';
 import type { Recipe } from '@packages/nutrition/types';
 
 const at = '2026-10-22T12:00:00.000Z';
 const date = '2026-10-22';
 const dateMs = Date.parse('2026-10-20T12:00:00.000Z');
-/** What PlanningAgent.apply resolves: the workspace snapshot plus the run state. */
-type ApplyResult = { state: AppState; revision: number; run: AgentRun };
+/** Apply returns only the committed revision and run bookkeeping. */
+type ApplyResult = { revision: number; run: AgentRun };
 function recipe(id = 'recipe-one'): Recipe {
   return {
     id,
@@ -96,17 +97,19 @@ test('a completed proposal is private and changes nothing until Apply; applying 
     assert.equal(run.status, 'running');
     await agent.settled(run.id);
     assert.equal((await agent.get('alice', run.id)).status, 'completed');
-    assert.equal((await store.read('alice')).state.recipes.length, 0);
+    assert.equal((await recordPage(createQueries(db), 'alice', { resource: 'recipes', limit: 100 })).items.length, 0);
     await assert.rejects(async () => await agent.get('bob', run.id), /not found/);
     assert.equal((await agent.list('bob')).length, 0);
     const saved = await agent.apply('alice', run.id, 'apply-one');
-    assert.equal(saved.state.recipes.length, 1);
-    assert.equal(saved.state.plan.length, 1);
-    assert.equal(saved.state.logs.length, 0);
-    assert.equal(saved.state.training.sessions.length, 0);
+    assert.equal('state' in saved, false);
+    const snapshot = await store.exportSnapshot('alice');
+    assert.equal(snapshot.state.recipes.length, 1);
+    assert.equal(snapshot.state.plan.length, 1);
+    assert.equal(snapshot.state.logs.length, 0);
+    assert.equal(snapshot.state.training.sessions.length, 0);
     assert.equal(saved.run.status, 'applied');
     assert.equal((await agent.apply('alice', run.id, 'apply-two')).revision, saved.revision);
-    assert.equal((await store.read('bob')).state.recipes.length, 0);
+    assert.equal((await recordPage(createQueries(db), 'bob', { resource: 'recipes', limit: 100 })).items.length, 0);
     assert.equal(calls, 1);
   } finally {
     await agent.close();
@@ -169,8 +172,8 @@ test('a workspace edit makes a prior proposal stale without partially applying i
       async () => await agent.apply('alice', run.id, 'apply-one'),
       /workspace changed/,
     );
-    assert.equal((await store.read('alice')).state.recipes.length, 0);
-    assert.equal((await store.read('alice')).state.groceryChecks['oats|g'], true);
+    assert.equal((await recordPage(createQueries(db), 'alice', { resource: 'recipes', limit: 100 })).items.length, 0);
+    assert.equal((await store.exportSnapshot('alice')).state.groceryChecks['oats|g'], true);
   } finally {
     await agent.close();
     await closeTestDatabase(db);
@@ -180,8 +183,8 @@ test('a workspace edit makes a prior proposal stale without partially applying i
 test('a concurrent Apply that commits first makes the other Apply replay instead of reporting stale', async () => {
   const { db, store, agent } = await fixture(async () => completed(proposal()));
   // Test determinism parks one call inside the public WorkspaceStore surface.
-  const parkedStore = store as unknown as { read: WorkspaceStore['read'] };
-  const originalRead = store.read.bind(store);
+  const parkedStore = store as unknown as { bootstrap: WorkspaceStore['bootstrap'] };
+  const originalRead = store.bootstrap.bind(store);
   try {
     const run = await agent.start('alice', {
       requestId: 'request-one',
@@ -189,7 +192,7 @@ test('a concurrent Apply that commits first makes the other Apply replay instead
       referenceDate: date,
     });
     await agent.settled(run.id);
-    // Park the first Apply's workspace snapshot read after its completed-run read
+    // Park the first Apply's revision read after its completed-run read
     // so the other Apply commits state, receipt and run status during the stall.
     let enteredStall: (() => void) | undefined;
     const entered = new Promise<void>((enter) => {
@@ -200,7 +203,7 @@ test('a concurrent Apply that commits first makes the other Apply replay instead
       releaseStall = release;
     });
     let stalledOnce = false;
-    parkedStore.read = (...args: Parameters<WorkspaceStore['read']>) => {
+    parkedStore.bootstrap = (...args: Parameters<WorkspaceStore['bootstrap']>) => {
       if (!stalledOnce) {
         stalledOnce = true;
         enteredStall?.();
@@ -217,16 +220,16 @@ test('a concurrent Apply that commits first makes the other Apply replay instead
       const saved = await first;
       assert.equal(saved.revision, second.revision);
       assert.equal(saved.revision, run.baseRevision + 1);
-      assert.deepEqual(saved.state, second.state);
+      assert.deepEqual(saved, second);
       assert.equal(saved.run.status, 'applied');
       assert.equal(saved.run.id, run.id);
-      assert.equal((await store.read('alice')).state.recipes.length, 1);
-      assert.equal((await store.read('alice')).state.plan.length, 1);
-      assert.equal((await store.read('alice')).state.logs.length, 0);
+      assert.equal((await recordPage(createQueries(db), 'alice', { resource: 'recipes', limit: 100 })).items.length, 1);
+      assert.equal((await store.exportSnapshot('alice')).state.plan.length, 1);
+      assert.equal((await store.foodWindow('alice', { from: date, through: date })).entries.length, 0);
     } finally {
       // Release and settle the parked continuation so teardown never races it.
       releaseStall?.();
-      parkedStore.read = originalRead;
+      parkedStore.bootstrap = originalRead;
       await first?.catch(() => {
         /* rejection already reported above or by the test run */
       });
@@ -283,10 +286,10 @@ test('duplicated applies racing past one revision read share one receipt and bot
       const saved = await first;
       assert.equal(saved.revision, second.revision);
       assert.equal(saved.revision, run.baseRevision + 1);
-      assert.deepEqual(saved.state, second.state);
+      assert.deepEqual(saved, second);
       assert.equal(saved.run.status, 'applied');
-      assert.equal((await store.read('alice')).state.recipes.length, 1);
-      assert.equal((await store.read('alice')).state.plan.length, 1);
+      assert.equal((await recordPage(createQueries(db), 'alice', { resource: 'recipes', limit: 100 })).items.length, 1);
+      assert.equal((await store.exportSnapshot('alice')).state.plan.length, 1);
     } finally {
       // Release and settle the parked commit so teardown never races it.
       releaseStall?.();
@@ -436,7 +439,7 @@ test('food estimation can ask for details and never writes a food log', async ()
     assert.equal((result.estimate as any).status, 'needs_details');
     await agent.estimateFood('alice', input);
     assert.equal(calls, 1);
-    assert.equal((await store.read('alice')).state.logs.length, 0);
+    assert.equal((await store.foodWindow('alice', { from: date, through: date })).entries.length, 0);
   } finally {
     await agent.close();
     await closeTestDatabase(db);
@@ -445,7 +448,7 @@ test('food estimation can ask for details and never writes a food log', async ()
 
 test('recipe generation returns a draft tied to the requesting account and stays unsaved', async () => {
   const { id, color, source, favorite, createdAt, ...draft } = recipe();
-  const { db, store, agent } = await fixture(async (user, input) => {
+  const { db, agent } = await fixture(async (user, input) => {
     assert.equal(user, 'alice');
     assert.ok(input.instructions.includes('ONE serving'));
     return completed(draft);
@@ -460,7 +463,7 @@ test('recipe generation returns a draft tied to the requesting account and stays
     });
     assert.equal((result.recipe as Recipe).source, 'ai');
     assert.equal(result.draft, true);
-    assert.equal((await store.read('alice')).state.recipes.length, 0);
+    assert.equal((await recordPage(createQueries(db), 'alice', { resource: 'recipes', limit: 100 })).items.length, 0);
   } finally {
     await agent.close();
     await closeTestDatabase(db);
@@ -490,7 +493,7 @@ test('cancelled runs cannot complete later and another owner cannot cancel them'
   }
 });
 
-test('tool reads use the account snapshot and unsupported functions cannot execute', async () => {
+test('tool reads use bounded account context and unsupported functions cannot execute', async () => {
   let calls = 0;
   const { db, store, agent } = await fixture(async (_user, input) => {
     calls++;
@@ -536,11 +539,32 @@ test('tool reads use the account snapshot and unsupported functions cannot execu
   }
 });
 
-test('context records incomplete days honestly and includes no fabricated intake', () => {
-  const state = createInitialState('Casey');
-  const context = buildContext(state, date);
-  assert.deepEqual(context.recentHistory.nutrition, []);
-  assert.match(context.recentHistory.note, /not zero intake/);
-  assert.equal(context.settings.name, 'Casey');
-  assert.equal(JSON.stringify(context).includes('Adam'), false);
+test('context records incomplete days honestly with bounded owner-scoped dependencies', async () => {
+  const { db, store, agent } = await fixture(async () => completed(proposal()));
+  try {
+    const state = createInitialState('Casey');
+    state.recipes = Array.from({ length: 65 }, (_, index) => recipe(`context-${index}`));
+    state.logs = [{
+      id: 'old-intake', name: 'Old private intake', date: '2025-01-01', slot: 'lunch',
+      servings: 1, nutrition: { calories: 100, protein: 1, carbs: 2, fat: 3 }, createdAt: at,
+    }];
+    await store.replaceImport('alice', 'context-import-alice', state, 0);
+    const other = createInitialState('BOB_ONLY_PRIVATE_NAME');
+    other.recipes = [recipe('bob-only-recipe')];
+    await store.replaceImport('bob', 'context-import-bob', other, 0);
+    const { context, revision } = await planningContext(createQueries(db), 'alice', date);
+    assert.equal(revision, 1);
+    assert.deepEqual(context.recentHistory.nutrition, []);
+    assert.match(context.recentHistory.note, /not zero intake/);
+    assert.equal(context.settings.name, 'Casey');
+    assert.equal(context.recipes.length, 60);
+    assert.equal(context.recipes[0].id, 'context-0');
+    assert.equal(context.recipes[59].id, 'context-59');
+    assert.equal(JSON.stringify(context).includes('bob-only-recipe'), false);
+    assert.equal(JSON.stringify(context).includes('BOB_ONLY_PRIVATE_NAME'), false);
+    assert.equal(JSON.stringify(context).includes('Old private intake'), false);
+  } finally {
+    await agent.close();
+    await closeTestDatabase(db);
+  }
 });

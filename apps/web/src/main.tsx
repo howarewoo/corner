@@ -80,7 +80,7 @@ function App() {
           handleFocus(visible);
           if (visible)
             void queryClient.invalidateQueries(
-              { queryKey: privateKey('workspace') },
+              { predicate: (query) => query.queryKey[1] === sessionLifetime() && !['session', 'connection'].includes(String(query.queryKey[0])) },
               { cancelRefetch: false },
             );
         };
@@ -179,7 +179,7 @@ function App() {
   return (
     <CornerApp
       key={`${user.id}:${lifetime}`}
-      initialState={workspace.state}
+      initialSettings={workspace.settings}
       initialRevision={workspace.revision}
       preview={false}
       displayName={user.name}
