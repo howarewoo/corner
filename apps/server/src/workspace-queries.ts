@@ -36,6 +36,10 @@ export async function recordPage(db: Database, userId: string, raw: RecordPageIn
     if (input.from && input.through && 'date' in table)
       filters.push(sql`${table.date} between ${input.from} and ${input.through}`);
     if (input.status && 'status' in table) filters.push(sql`${table.status} = ${input.status}`);
+    if (input.resource === 'templates' && input.search) {
+      const pattern = '%' + input.search.replace(/[\\%_]/g, '\\$&') + '%';
+      filters.push(sql`${tables.workoutTemplates.name} ilike ${pattern}`);
+    }
     if (input.resource === 'recipes') {
       if (input.category) filters.push(sql`${tables.recipes.category} = ${input.category}`);
       if (input.favorite !== undefined) filters.push(sql`${tables.recipes.favorite} = ${input.favorite}`);

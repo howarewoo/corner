@@ -19,11 +19,12 @@ export const sessionLifetime = () => lifetime;
 const lifetimeListeners = new Set<() => void>();
 let observedRevision = 0;
 const revisionListeners = new Set<() => void>();
-function useObservedRevision() {
+export const workspaceRevision = () => observedRevision;
+export function useObservedRevision() {
   return useSyncExternalStore((listener) => {
     revisionListeners.add(listener);
     return () => revisionListeners.delete(listener);
-  }, () => observedRevision);
+  }, workspaceRevision);
 }
 export function useSessionLifetime() {
   return useSyncExternalStore((listener) => {

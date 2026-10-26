@@ -5,10 +5,10 @@ import userEvent from '@testing-library/user-event';
 import { QueryClientProvider, useMutation } from '@tanstack/react-query';
 import { expect, test, vi } from 'vitest';
 import { createInitialState } from '@packages/workspace/initial-state';
-import type { Bootstrap, CommandResult } from '@packages/api/workspace-data';
+import type { Bootstrap, CommandResult, RecordPage } from '@packages/api/workspace-data';
 import type { FoodEntry, Recipe } from '@packages/nutrition/types';
 import * as runtime from '../rpc';
-import { foodDay, groceryWeek, nutritionWindow } from '../features/workspace/resources';
+import { foodDay, groceryWeek, nutritionWindow, useCursorResource, useRecordPage } from '../features/workspace/resources';
 import { json, mockHttp } from './http';
 import { LiveToday } from '../features/today/today';
 import RecipePicker from '../features/meal-planner/recipe-picker';
@@ -25,6 +25,50 @@ vi.mock('../features/workspace/utils', async (importOriginal) => {
 
 const bootstrap = (revision: number): Bootstrap => ({
   revision, settings: createInitialState().settings, aiAvailable: false,
+});
+
+test.each(['records', 'cursor'] as const)('%s pagination restarts after a write and refreshes without stale cursors', async (kind) => {
+  let revision = 1;
+  const requests: Array<{ revision: number; cursor?: { revision: number } }> = [];
+  mockHttp((call) => {
+    if (call.path !== '/api/rpc/workspace/page') return;
+    const input = call.body?.json as { cursor?: { revision: number } };
+    requests.push({ revision, cursor: input.cursor });
+    if (input.cursor && input.cursor.revision !== revision)
+      return json({ json: { defined: true, code: 'CORNER_ERROR', status: 409,
+        message: 'Refresh this list.', data: { code: 'CURSOR_INVALIDATED' } } }, 409);
+    return json({ json: { resource: 'recipes', revision, items: [{ ...savedRecipe, name: `Page ${input.cursor ? 2 : 1} revision ${revision}` }],
+      loggedPlanIds: [], nextCursor: input.cursor ? null : { revision, position: 1, id: 'next' } } });
+  });
+  function Consumer() {
+    const records = useRecordPage({ resource: 'recipes', limit: 1 }, kind === 'records');
+    const cursor = useCursorResource<RecordPage<'recipes'>>('recipes', { limit: 1 },
+      (next, signal) => runtime.rpc.workspace.page({ resource: 'recipes', limit: 1, cursor: next }, { signal }) as Promise<RecordPage<'recipes'>>, kind === 'cursor');
+    const query = kind === 'records' ? records : cursor;
+    return <>
+      <output>{query.isError ? 'Pagination error' : query.data?.items.map((item) => item.name).join(',')}</output>
+      <button disabled={!query.paging.hasNext} onClick={query.paging.next}>Next</button>
+      <button onClick={query.reload}>Refresh</button>
+    </>;
+  }
+  render(<QueryClientProvider client={runtime.queryClient}><Consumer /></QueryClientProvider>);
+  const user = userEvent.setup();
+  await screen.findByText('Page 1 revision 1');
+  await user.click(screen.getByRole('button', { name: 'Next' }));
+  await screen.findByText('Page 2 revision 1');
+  await act(async () => {
+    await runtime.writeWorkspace(async () => ({ revision: ++revision }), runtime.sessionLifetime(), ['recipes']);
+  });
+  await screen.findByText('Page 1 revision 2');
+  expect(requests.filter((request) => request.revision === 2).every((request) => !request.cursor)).toBe(true);
+  await user.click(screen.getByRole('button', { name: 'Next' }));
+  await screen.findByText('Page 2 revision 2');
+  const beforeRefresh = requests.length;
+  await user.click(screen.getByRole('button', { name: 'Refresh' }));
+  await screen.findByText('Page 1 revision 2');
+  await waitFor(() => expect(requests.length).toBeGreaterThan(beforeRefresh));
+  expect(requests.slice(beforeRefresh).every((request) => !request.cursor)).toBe(true);
+  expect(screen.queryByText('Pagination error')).not.toBeInTheDocument();
 });
 
 test('revision-only writes preserve bootstrap settings and an older refresh cannot roll back the workspace', async () => {

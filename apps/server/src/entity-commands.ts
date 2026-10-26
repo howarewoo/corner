@@ -60,7 +60,9 @@ export async function executeEntityCommand(connection: Transaction, userId: stri
     case 'grocery.check':
       if (mutation.data.checked) await connection.insert(tables.groceryChecks).values({
         user_id: userId, key: mutation.data.key, position: allocatePosition(),
-      }).onConflictDoNothing();
+      }).onConflictDoUpdate({
+        target: [tables.groceryChecks.user_id, tables.groceryChecks.key], set: { checked: true },
+      });
       else await connection.delete(tables.groceryChecks)
         .where(and(eq(tables.groceryChecks.user_id, userId), eq(tables.groceryChecks.key, mutation.data.key)));
       break;

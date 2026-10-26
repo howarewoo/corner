@@ -219,6 +219,11 @@ test('nested IDs keep session/exercise scope, optional values and ordering round
   }];
   await store.replaceImport('alice', 'scoped-id-import', state, 0);
   assert.deepEqual((await store.exportSnapshot('alice')).state, state);
+  await store.mutate('alice', 'check-imported-false', {
+    type: 'grocery.check', data: { key: 'unchecked|g', checked: true },
+  });
+  assert.deepEqual((await store.exportSnapshot('alice')).state.groceryChecks,
+    { 'unchecked|g': true, 'checked|g': true });
   await store.mutate('alice', 'edit-source-template', {
     type: 'training.template.save',
     data: { ...state.training.templates[0], name: 'Changed routine', exercises: [{ ...state.training.templates[0].exercises[0], targetLoad: { weight: 99, unit: 'kg' } }] },
@@ -232,6 +237,33 @@ test('nested IDs keep session/exercise scope, optional values and ordering round
     (user_id,id,session_id,position,name,load_type,target_sets,rep_min,rep_max,target_rir,rest_seconds,notes)
     VALUES ('bob','foreign','first',0,'Press','total',1,6,10,null,90,'')`),
     (error: unknown) => Boolean(error && typeof error === 'object' && 'code' in error && error.code === '23503'));
+});
+
+test('routine search filters before pagination and treats wildcard characters literally', async () => {
+  const state = createInitialState();
+  const { sets: _sets, ...exercise } = workout().exercises[0];
+  state.training.templates = ['Unrelated routine', 'Strength 100%_\\ routine', 'Other strength routine'].map((name, index) => ({
+    id: `routine-${index}`, name, kind: 'strength', description: '', durationMinutes: 40,
+    exercises: [exercise], createdAt: stamp, updatedAt: stamp,
+  }));
+  await store.replaceImport('alice', 'routine-search-import', state, 0);
+  const first = await recordPage(store.db, 'alice', { resource: 'templates', limit: 1 });
+  assert.ok(first.resource === 'templates');
+  assert.deepEqual(first.items.map((item) => item.id), ['routine-0']);
+  const match = await recordPage(store.db, 'alice', { resource: 'templates', search: 'STRENGTH', limit: 1 });
+  assert.ok(match.resource === 'templates');
+  assert.equal(match.items[0].id, 'routine-1');
+  assert.ok(match.nextCursor);
+  const next = await recordPage(store.db, 'alice', {
+    resource: 'templates', search: 'STRENGTH', limit: 1, cursor: match.nextCursor,
+  });
+  assert.ok(next.resource === 'templates');
+  assert.deepEqual(next.items.map((item) => item.id), ['routine-2']);
+  const literal = await recordPage(store.db, 'alice', { resource: 'templates', search: '%_\\', limit: 1 });
+  assert.ok(literal.resource === 'templates');
+  assert.deepEqual(literal.items.map((item) => item.id), ['routine-1']);
+  assert.equal(literal.nextCursor, null);
+  assert.deepEqual((await recordPage(store.db, 'bob', { resource: 'templates', search: 'strength' })).items, []);
 });
 
 test('workout versions retain millisecond precision, zero-valued actuals and completed permanence', async () => {
