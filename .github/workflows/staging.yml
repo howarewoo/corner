@@ -20,14 +20,41 @@ permissions:
   contents: read
 
 jobs:
-  deploy:
+  dispatch:
     if: >-
-      github.ref == 'refs/heads/staging' &&
-      (github.event_name == 'workflow_dispatch' ||
-      (github.event.workflow_run.event == 'push' &&
+      github.event_name == 'workflow_run' &&
+      github.event.workflow_run.event == 'push' &&
       github.event.workflow_run.head_branch == 'staging' &&
       github.event.workflow_run.head_repository.full_name == github.repository &&
-      github.event.workflow_run.conclusion == 'success'))
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      # workflow_run uses the default branch ref. Dispatch staging explicitly so
+      # its environment stays staging-only even while main is the default.
+      - name: Deploy the current successful staging candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          CI_RUN_ID: ${{ github.event.workflow_run.id }}
+          CI_SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          current_sha=$(gh api "repos/$GH_REPO/git/ref/heads/staging" --jq '.object.sha')
+          if [ "$current_sha" != "$CI_SOURCE_SHA" ]; then
+            echo "Skipping superseded staging CI candidate."
+            exit 0
+          fi
+          gh workflow run staging.yml --ref staging \
+            --raw-field run_id="$CI_RUN_ID" \
+            --raw-field source_sha="$CI_SOURCE_SHA"
+
+  deploy:
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/staging'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     environment: staging
@@ -56,7 +83,7 @@ jobs:
       - name: Check out the merged staging source only
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          ref: ${{ github.sha }}
           persist-credentials: false
       - name: Set up pnpm
         uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
@@ -70,8 +97,8 @@ jobs:
       - name: Qualify, migrate, and deploy the isolated native staging Preview
         run: node scripts/staging-preview.mjs
         env:
-          PREVIEW_RUN_ID: ${{ github.event.workflow_run.id || inputs.run_id }}
-          PREVIEW_SOURCE_SHA: ${{ github.event.workflow_run.head_sha || inputs.source_sha }}
+          PREVIEW_RUN_ID: ${{ inputs.run_id }}
+          PREVIEW_SOURCE_SHA: ${{ inputs.source_sha }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
           CORNER_WORKER_SECRETS_JSON: ${{ secrets.CORNER_WORKER_SECRETS_JSON }}
