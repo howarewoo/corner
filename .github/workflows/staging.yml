@@ -10,11 +10,15 @@ on:
       run_id:
         description: Exact successful current push-to-staging CI run ID
         type: string
-        required: true
+        required: false
       source_sha:
         description: Exact current staging source SHA
         type: string
-        required: true
+        required: false
+      completion_deployment_id:
+        description: Exact current deployed Preview receipt to verify without migrating or uploading; leave candidate inputs empty
+        type: string
+        required: false
 
 permissions:
   contents: read
@@ -99,6 +103,7 @@ jobs:
         env:
           PREVIEW_RUN_ID: ${{ inputs.run_id }}
           PREVIEW_SOURCE_SHA: ${{ inputs.source_sha }}
+          PREVIEW_COMPLETION_DEPLOYMENT_ID: ${{ inputs.completion_deployment_id }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
           CORNER_WORKER_SECRETS_JSON: ${{ secrets.CORNER_WORKER_SECRETS_JSON }}
