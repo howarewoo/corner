@@ -1077,6 +1077,7 @@
   line-height: 1.22;
   letter-spacing: -1.3px;
 }
+:root[data-corner-theme] .ui-workspace-header-title:focus,
 .ui-workspace-header-title:focus {
   outline: none;
 }
