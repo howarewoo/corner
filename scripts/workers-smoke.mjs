@@ -313,7 +313,9 @@ try {
         signal: AbortSignal.timeout(20_000),
       });
       assert.equal(previousWrite.status, 200, await previousWrite.clone().text());
-      const response = await worker.fetch(new URL('/api/rpc/workspace/get', origin), {
+      // Document-generation get includes state; relational get is bootstrap-only.
+      const snapshotProcedure = previousArtifact.generation === 'document-v1' ? 'get' : 'export';
+      const response = await worker.fetch(new URL(`/api/rpc/workspace/${snapshotProcedure}`, origin), {
         method: 'POST',
         headers: { Origin: origin, 'Content-Type': 'application/json', Cookie: priorCookie },
         body: '{}',
@@ -427,7 +429,7 @@ try {
       const updatedSnapshot = (await updatedPrior.json()).json;
       assert.equal(updatedSnapshot.revision, priorState.revision + 1);
       assert.equal(updatedSnapshot.state.settings.name, 'Converted and updated on relational-v1');
-      assert.deepEqual(updatedSnapshot.state.foodLog, priorState.state.foodLog);
+      assert.deepEqual(updatedSnapshot.state.logs, priorState.state.logs);
     }
   }
   const health = await call('/api/health');
