@@ -71,7 +71,7 @@ interface ArchiveRow {
   updated_at: string;
 }
 
-function parseArchiveRow(row: ArchiveRow) {
+async function parseArchiveRow(client: PoolClient, row: ArchiveRow) {
   if (
     typeof row.user_id !== 'string' ||
     !row.user_id ||
@@ -98,6 +98,20 @@ function parseArchiveRow(row: ArchiveRow) {
     throw new Error('Invalid legacy workspace JSON.');
   }
   const { state } = inspectImport(parsed);
+  // Date.parse can normalize impossible dates that the destination timestamp type rejects.
+  const timestamps = [
+    ...state.recipes.map((entry) => entry.createdAt),
+    ...state.logs.map((entry) => entry.createdAt),
+    ...state.requests.map((entry) => entry.createdAt),
+    ...state.training.templates.flatMap((entry) => [entry.createdAt, entry.updatedAt]),
+    ...state.training.sessions.flatMap((entry) => [entry.createdAt, entry.updatedAt]),
+    ...state.training.requests.map((entry) => entry.createdAt),
+    ...state.training.reviews.map((entry) => entry.createdAt),
+  ];
+  await client.query(
+    'SELECT value::timestamp(3) with time zone FROM unnest($1::text[]) AS timestamps(value)',
+    [timestamps],
+  );
   return { userId: row.user_id, state, version };
 }
 
@@ -443,7 +457,7 @@ async function preflightArchiveBatch(
       )
     ).rows;
     if (!rows.length) return;
-    for (const row of rows) parseArchiveRow(row);
+    for (const row of rows) await parseArchiveRow(client, row);
     if (rows.length < 100) return;
     after = rows.at(-1)!.user_id;
   }
@@ -490,7 +504,7 @@ async function stageLegacyWorkspaces(
           )
         ).rows;
         if (!rows.length) break;
-        for (const row of rows) parseArchiveRow(row);
+        for (const row of rows) await parseArchiveRow(client, row);
         if (rows.length < 100) break;
         after = rows.at(-1)!.user_id;
       }
@@ -611,7 +625,7 @@ async function importArchivedWorkspaces(
         skippedImportedOwners++;
         continue;
       }
-      const { userId, state, version } = parseArchiveRow(row);
+      const { userId, state, version } = await parseArchiveRow(client, row);
       await db.transaction(async (tx) => {
         await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${userId}, 0))`);
         const currentArchive = (

@@ -642,6 +642,70 @@ test('preflight refuses invalid live or unimported archived rows before native 0
   });
 });
 
+test('preflight refuses SQL-unrepresentable timestamps without staging or advancing native history', async () => {
+  const fields: Array<
+    [
+      string,
+      (state: AppState) => { createdAt: string; updatedAt?: string },
+      'createdAt' | 'updatedAt',
+    ]
+  > = [
+    ['recipe request', (state) => state.requests[0], 'createdAt'],
+    ['recipe', (state) => state.recipes[0], 'createdAt'],
+    ['food entry', (state) => state.logs[0], 'createdAt'],
+    ['template creation', (state) => state.training.templates[0], 'createdAt'],
+    ['template update', (state) => state.training.templates[0], 'updatedAt'],
+    ['session creation', (state) => state.training.sessions[0], 'createdAt'],
+    ['session update', (state) => state.training.sessions[0], 'updatedAt'],
+    ['training request', (state) => state.training.requests[0], 'createdAt'],
+    ['training review', (state) => state.training.reviews[0], 'createdAt'],
+  ];
+  await fixture(async (database, schema) => {
+    const beforeHistory = (await database.query('SELECT * FROM __drizzle_migrations ORDER BY id'))
+      .rows;
+    for (const [name, record, field] of fields) {
+      const state = populatedWorkspace();
+      record(state)[field] =
+        name.startsWith('recipe') || name === 'food entry'
+          ? '2026-02-30T12:00:00Z'
+          : '0000-01-01T12:00:00Z';
+      await database.query(
+        `INSERT INTO workspace_state(user_id,data,version,updated_at) VALUES ('owner',$1,5,$2)
+         ON CONFLICT (user_id) DO UPDATE SET data=excluded.data`,
+        [JSON.stringify(state), stamp],
+      );
+      const beforeRows = (await database.query('SELECT * FROM workspace_state')).rows;
+      await assert.rejects(
+        preservingDocumentCutover(database, 'op-invalid-timestamp'),
+        { code: '22008' },
+        name,
+      );
+      assert.deepEqual(
+        (await database.query('SELECT * FROM workspace_state')).rows,
+        beforeRows,
+        name,
+      );
+      assert.deepEqual(
+        (await database.query('SELECT * FROM __drizzle_migrations ORDER BY id')).rows,
+        beforeHistory,
+        name,
+      );
+      assert.equal(
+        (
+          await database.query('SELECT 1 FROM pg_namespace WHERE nspname=$1', [
+            cutoverRecoverySchema(schema),
+          ])
+        ).rowCount,
+        0,
+        name,
+      );
+      const inspection = await inspectDocumentCutover(database);
+      assert.equal(inspection.phase, 'untouched', name);
+      assert.equal(inspection.legacyFenced, false, name);
+    }
+  });
+});
+
 test('late legacy writer queued behind Phase 1 lock is blocked by CHECK(false) fence between Phase 1 and Phase 2', async () => {
   await fixture(async (database) => {
     const initial = JSON.stringify(createInitialState('Existing Owner'));
