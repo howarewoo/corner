@@ -19,7 +19,6 @@ import {
   publicChecks,
   maintenanceChecks,
   validateLiveRollback,
-  validateCutoverCandidate,
 } from '../release.mjs';
 import { loadCiArtifact } from '../ci-artifact.mjs';
 import { releaseTarget } from '../release-target.mjs';
@@ -1577,8 +1576,6 @@ function cutoverFixture({
   f.options.checkMaintenance = async () => {
     f.effects.push('maintenance-checked');
   };
-  const origWrite = writeFile;
-  let validatedCalls = 0;
   f.setDbPhase = (next) => {
     currentDbPhase = next;
   };
@@ -1586,7 +1583,6 @@ function cutoverFixture({
     liveVersion = next;
   };
   f.getLiveVersion = () => liveVersion;
-  f.getValidatedCalls = () => validatedCalls;
   const migrationFile = join(work, source, manifest.migrationEntry);
   return {
     ...f,
@@ -1594,7 +1590,7 @@ function cutoverFixture({
     operationId,
     setupMigratorFile: async (customCode) => {
       await mkdir(dirname(migrationFile), { recursive: true });
-      await origWrite(
+      await writeFile(
         migrationFile,
         customCode ??
           `export const storageGeneration = 'relational-v1';
@@ -2016,4 +2012,49 @@ test('maintenanceChecks verifies 503, X-Corner-Version, Retry-After, no-store, a
     maintenanceChecks(config.origin, versionId, fetcher),
     /version identity mismatch/,
   );
+});
+
+test('completed receipt resume closes on failed probes and refuses unknown live drift', async () => {
+  for (const drift of [false, true]) {
+    const f = cutoverFixture();
+    await f.setupMigratorFile();
+    const record = f.github.record;
+    f.github.record = async (payload, state) => {
+      if (payload.phase === 'maintenance-complete') throw new Error('lost closure');
+      return record(payload, state);
+    };
+    await assert.rejects(promote(f.options), /lost closure/);
+    f.github.record = record;
+    const before = f.effects.filter((effect) => effect.startsWith('deploy:')).length;
+    const unknown = '77777777-7777-4777-8777-777777777777';
+    f.options.checkPublic = async () => {
+      if (drift) f.setLiveVersion(unknown);
+      throw new Error('security probe failed');
+    };
+    await assert.rejects(
+      resume({ ...f.options, operationId: f.operationId }),
+      drift ? /restoring the pinned maintenance Worker also failed/ : /security probe failed/,
+    );
+    assert.equal(f.getLiveVersion(), drift ? unknown : maintenanceVersionId);
+    assert.equal(
+      f.effects.filter((effect) => effect.startsWith('deploy:')).length,
+      before + (drift ? 0 : 1),
+    );
+  }
+});
+
+test('candidate traffic switch refuses drift introduced during converted-record validation', async () => {
+  const f = cutoverFixture();
+  await f.setupMigratorFile();
+  const execute = f.options.execute;
+  const unknown = '77777777-7777-4777-8777-777777777777';
+  f.options.execute = (binary, args) => {
+    const result = execute(binary, args);
+    if (args.includes('--inspect-cutover') && f.effects.includes('preserving-cutover'))
+      f.setLiveVersion(unknown);
+    return result;
+  };
+  await assert.rejects(promote(f.options), /Live Worker drifted before pinned traffic transition/);
+  assert.equal(f.getLiveVersion(), unknown);
+  assert(!f.effects.includes('deploy:candidate'));
 });

@@ -360,7 +360,7 @@ export async function qualifyArtifact({
             join(previous, prior.manifest.migrationEntry),
           ]
         : []),
-      ...(preserving ? ['--preserving-cutover', 'qualification-cutover-operation'] : []),
+      ...(preserving ? ['--preserving'] : []),
     ],
     { cwd: root, env: process.env, stdio: 'inherit' },
   );

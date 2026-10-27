@@ -892,7 +892,8 @@ async function executePreservingCutover({
     need(version && expectedVersionIds.includes(version), message);
     return version;
   };
-  const deployExactVersion = async (versionId, cfgArgs = common) => {
+  const deployExactVersion = async (versionId, cfgArgs = common, expected = [maintenanceVersionId]) => {
+    await assertSingleLiveVersion(expected, 'Live Worker drifted before pinned traffic transition');
     wrangler(['versions', 'deploy', `${versionId}@100%`, ...cfgArgs, '--yes']);
     await assertSingleLiveVersion(
       [versionId],
@@ -974,7 +975,7 @@ async function executePreservingCutover({
         liveVersion === originalVersionId && dbState.phase === 'untouched',
         'Cannot enter maintenance from an unexpected live version or mutated database without active maintenance',
       );
-      await deployExactVersion(maintenanceVersionId, maintenanceCommon);
+      await deployExactVersion(maintenanceVersionId, maintenanceCommon, [originalVersionId]);
     }
     await checkMaintenance(p.origin, maintenanceVersionId);
     if (currentPhase === 'maintenance-uploaded') {
@@ -1085,36 +1086,37 @@ async function executePreservingCutover({
   };
   const latestBaseline = await github.baseline();
   assertBaseline(currentBaselineId, latestBaseline?.id);
-  if (
-    latestBaseline?.payload.phase === 'complete' &&
-    latestBaseline.payload.planId === String(planRecord.id) &&
-    latestBaseline.payload.candidateDigest === p.candidateDigest &&
-    latestBaseline.payload.versionId === candidateVersionId
-  ) {
-    await reverify();
-    await assertSingleLiveVersion(
-      [candidateVersionId],
-      'Cloudflare traffic does not match approved Worker',
-    );
-    await checkPublic(p.origin, candidateVersionId);
-    if (currentPhase !== 'maintenance-complete') {
-      await github.record(
-        { ...baseMaintenancePayload(), phase: 'maintenance-complete' },
-        'success',
-      );
-    }
-    return latestBaseline;
-  }
-  const deployed =
-    latestBaseline &&
-    latestBaseline.payload.planId === String(planRecord.id) &&
-    latestBaseline.payload.candidateDigest === p.candidateDigest &&
-    latestBaseline.payload.versionId === candidateVersionId &&
-    ['deployed', 'public-passed'].includes(latestBaseline.payload.phase)
-      ? latestBaseline
-      : await github.record(receipt);
   let publicVerified = false;
   try {
+    if (
+      latestBaseline?.payload.phase === 'complete' &&
+      latestBaseline.payload.planId === String(planRecord.id) &&
+      latestBaseline.payload.candidateDigest === p.candidateDigest &&
+      latestBaseline.payload.versionId === candidateVersionId
+    ) {
+      await reverify();
+      await assertSingleLiveVersion(
+        [candidateVersionId],
+        'Cloudflare traffic does not match approved Worker',
+      );
+      await checkPublic(p.origin, candidateVersionId);
+      publicVerified = true;
+      if (currentPhase !== 'maintenance-complete') {
+        await github.record(
+          { ...baseMaintenancePayload(), phase: 'maintenance-complete' },
+          'success',
+        );
+      }
+      return latestBaseline;
+    }
+    const deployed =
+      latestBaseline &&
+      latestBaseline.payload.planId === String(planRecord.id) &&
+      latestBaseline.payload.candidateDigest === p.candidateDigest &&
+      latestBaseline.payload.versionId === candidateVersionId &&
+      ['deployed', 'public-passed'].includes(latestBaseline.payload.phase)
+        ? latestBaseline
+        : await github.record(receipt);
     return await runDeployment(
       github,
       deployed,
@@ -1140,7 +1142,7 @@ async function executePreservingCutover({
   } catch (error) {
     if (!publicVerified) {
       try {
-        await deployExactVersion(maintenanceVersionId, maintenanceCommon);
+        await deployExactVersion(maintenanceVersionId, maintenanceCommon, [candidateVersionId, maintenanceVersionId]);
         await checkMaintenance(p.origin, maintenanceVersionId);
         await github.record(
           { ...baseMaintenancePayload(), phase: 'cutover-validated' },
