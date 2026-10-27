@@ -98,8 +98,8 @@ test('local seeding recovers lost signup/import acknowledgements and never overw
     const empty = records.find((row) => row.fixture === 'empty');
     assert.notEqual(demo.user_id, empty.user_id);
     assert.equal(demo.complete, false);
-    assert.equal((await store.read(empty.user_id)).state.recipes.length, 0);
-    const populated = await store.read(demo.user_id);
+    assert.equal((await store.exportSnapshot(empty.user_id)).state.recipes.length, 0);
+    const populated = await store.exportSnapshot(demo.user_id);
     assert.equal(populated.state.plan[0].recipeId, populated.state.recipes[0].id);
     assert.equal(populated.state.training.sessions[0].status, 'completed');
     assert.equal(populated.state.training.sessions[0].exercises[0].sets[0].completed, true);
@@ -109,13 +109,13 @@ test('local seeding recovers lost signup/import acknowledgements and never overw
       data: { id: 'local-oats', favorite: false },
     });
     await local.seedLocalUsers({ ...input, now: new Date('2026-10-25T12:00:00Z') });
-    assert.equal((await store.read(demo.user_id)).state.recipes[0].favorite, false);
-    assert.equal((await store.read(demo.user_id)).revision, 2);
+    assert.equal((await store.exportSnapshot(demo.user_id)).state.recipes[0].favorite, false);
+    assert.equal((await store.bootstrap(demo.user_id)).revision, 2);
     // Completion is durable beyond the store's bounded idempotency-receipt retention.
     await database.query('DELETE FROM mutation_receipts');
     await local.seedLocalUsers({ ...input, now: new Date('2026-11-01T12:00:00Z') });
-    assert.equal((await store.read(demo.user_id)).state.recipes[0].favorite, false);
-    assert.equal((await store.read(demo.user_id)).revision, 2);
+    assert.equal((await store.exportSnapshot(demo.user_id)).state.recipes[0].favorite, false);
+    assert.equal((await store.bootstrap(demo.user_id)).revision, 2);
     assert.equal(
       (await database.query('SELECT count(*)::int AS count FROM "user"')).rows[0].count,
       2,

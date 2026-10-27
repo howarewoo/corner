@@ -98,6 +98,37 @@ function upsert<T extends { id: string }>(items: T[], item: T): T[] {
     ? items.map((value) => (value.id === item.id ? item : value))
     : [...items, item];
 }
+
+/** Validate only the live dependencies of one food record; historical links may outlive sources. */
+export function validateFoodEntry(
+  entry: z.infer<typeof FoodEntrySchema>,
+  dependencies: {
+    existing?: z.infer<typeof FoodEntrySchema>;
+    recipeExists: boolean;
+    planned?: z.infer<typeof PlanEntrySchema>;
+    alreadyLogged: boolean;
+  },
+): void {
+  const { existing, planned, recipeExists, alreadyLogged } = dependencies;
+  if (entry.recipeId && entry.recipeId !== existing?.recipeId && !recipeExists)
+    throw new Error('That recipe is no longer available. Refresh and choose a recipe.');
+  if (entry.planEntryId) {
+    if (!planned && entry.planEntryId !== existing?.planEntryId)
+      throw new Error('That planned meal is no longer available.');
+    const keepsHistoricalLink =
+      existing &&
+      existing.planEntryId === entry.planEntryId &&
+      existing.recipeId === entry.recipeId &&
+      existing.date === entry.date;
+    if (
+      planned && !keepsHistoricalLink &&
+      (planned.date !== entry.date || (entry.recipeId && planned.recipeId !== entry.recipeId))
+    )
+      throw new Error('The logged meal must match the planned date and recipe.');
+  }
+  if (entry.planEntryId && alreadyLogged)
+    throw new Error('That planned meal has already been logged. Edit its logged portion if needed.');
+}
 export function applyMutation(previous: AppState, input: Mutation): AppState {
   const parsed = MutationSchema.safeParse(input);
   if (!parsed.success)
@@ -162,31 +193,14 @@ export function applyMutation(previous: AppState, input: Mutation): AppState {
     }
     case 'log.save': {
       const entry = mutation.data;
-      const existing = next.logs.find((value) => value.id === entry.id);
-      if (entry.recipeId && entry.recipeId !== existing?.recipeId) requireRecipe(entry.recipeId);
-      if (entry.planEntryId) {
-        const planned = next.plan.find((value) => value.id === entry.planEntryId);
-        if (!planned && entry.planEntryId !== existing?.planEntryId)
-          throw new Error('That planned meal is no longer available.');
-        const keepsHistoricalLink =
-          existing &&
-          existing.planEntryId === entry.planEntryId &&
-          existing.recipeId === entry.recipeId &&
-          existing.date === entry.date;
-        if (
-          planned &&
-          !keepsHistoricalLink &&
-          (planned.date !== entry.date || (entry.recipeId && planned.recipeId !== entry.recipeId))
-        )
-          throw new Error('The logged meal must match the planned date and recipe.');
-      }
-      if (
-        entry.planEntryId &&
-        next.logs.some((value) => value.planEntryId === entry.planEntryId && value.id !== entry.id)
-      )
-        throw new Error(
-          'That planned meal has already been logged. Edit its logged portion if needed.',
-        );
+      validateFoodEntry(entry, {
+        existing: next.logs.find((value) => value.id === entry.id),
+        recipeExists: !entry.recipeId || next.recipes.some((recipe) => recipe.id === entry.recipeId),
+        planned: next.plan.find((value) => value.id === entry.planEntryId),
+        alreadyLogged: next.logs.some(
+          (value) => value.planEntryId === entry.planEntryId && value.id !== entry.id,
+        ),
+      });
       next.logs = upsert(next.logs, entry);
       break;
     }

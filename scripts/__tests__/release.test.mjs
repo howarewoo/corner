@@ -44,6 +44,9 @@ const report = {
   candidateDigest,
   previousDigest,
   bootstrap: false,
+  generation: 'relational-v1',
+  previousGeneration: 'relational-v1',
+  recovery: 'compatible',
   passed: true,
 };
 const receipt = {
@@ -146,6 +149,7 @@ function fixture(overrides = {}) {
       throw new Error(`Unexpected API ${path}`);
     },
     artifact: async (reference) => ({
+      generation: 'relational-v1',
       directory: join(work, reference.sourceSha),
       manifest: { ...manifest, sourceSha: reference.sourceSha },
       digest: reference.sourceSha === source ? candidateDigest : previousDigest,
@@ -244,6 +248,13 @@ test('configuration excludes secrets and binds explicit public settings plus ope
     () => validateConfiguration(configuration.replace('corner.example.com', 'corner.workers.dev')),
     /custom-domain/,
   );
+  assert.throws(
+    () =>
+      validateConfiguration(
+        JSON.stringify({ ...JSON.parse(configuration), NEON_AUTH_REQUIRE_EMAIL_VERIFICATION: 'false' }),
+      ),
+    /Release requires/,
+  );
 });
 test('production rejects native Worker hosts and the obsolete staging release environment', () => {
   for (const origin of [
@@ -277,6 +288,10 @@ test('receipt and rollback require real qualified identities and CURRENT compati
     { ...report, previousDigest: candidateDigest },
     { ...report, bootstrap: true },
     { ...report, passed: false },
+    { ...report, recovery: 'forward-only', previousGeneration: 'document-v1' },
+    { ...report, recovery: undefined },
+    { ...report, previousGeneration: 'document-v1' },
+    { ...report, generation: 'document-v1' },
   ])
     assert.throws(
       () => rollbackEligible(receipt, current, qualification, config.digest),
@@ -501,7 +516,7 @@ test('automatic production independently downloads and verifies real archives fo
       prevId: '00000000-0000-0000-0000-000000000000',
       version: '7',
       dialect: 'postgresql',
-      tables: {},
+      tables: { 'public.workspace_metadata': {} },
     }),
     'wrangler.json': JSON.stringify({
       ...packagedConfig,
@@ -551,6 +566,8 @@ test('automatic production independently downloads and verifies real archives fo
       candidateDigest: verified.digest,
       bootstrap: true,
       previousDigest: null,
+      previousGeneration: null,
+      recovery: 'bootstrap',
     }),
   );
   const zip = join(directory, 'release.zip');
@@ -805,15 +822,14 @@ test('public checks require actual deployed version, not merely a 200 response',
       : Response.json({ ok: true }, { headers: { 'X-Corner-Version': oldVersion } });
   await assert.rejects(publicChecks(config.origin, versionId, fetcher), /version identity/);
 });
-test('live rollback validates actual stored documents read-only without logging or reversing SQL', async () => {
+test('live rollback validates relational records read-only and withholds private failures without reversing SQL', async () => {
   const statements = [];
   let released = false,
     ended = false;
   const connection = {
     query: async (sql) => {
       statements.push(sql);
-      if (sql.startsWith('SELECT user_id'))
-        return { rows: [{ user_id: 'owner', data: JSON.stringify({ saved: 'private' }) }] };
+      if (sql.startsWith('SELECT user_id')) throw new Error('Unexpected document scan.');
       return { rows: [] };
     },
     release: () => {
@@ -829,7 +845,12 @@ test('live rollback validates actual stored documents read-only without logging 
         ended = true;
       },
     }),
-    inspectImport: (raw) => ({ state: { ...raw, defaulted: true } }),
+    storageGeneration: 'relational-v1',
+    validatePersistedRecords: async (client, schema) => {
+      assert.equal(client, connection);
+      assert.equal(schema, 'public');
+      throw new Error('private incompatible record content');
+    },
   });
   await assert.rejects(
     validateLiveRollback({ directory: work, manifest }, { directory: work, manifest }, load),
@@ -846,7 +867,7 @@ test('bootstrap validates all required bindings before any production mutation',
   Object.assign(f.payload, {
     bootstrap: true,
     baselineId: null,
-    qualification: { ...report, bootstrap: true, previousDigest: null },
+    qualification: { ...report, bootstrap: true, previousDigest: null, previousGeneration: null, recovery: 'bootstrap' },
   });
   const before = process.env.CORNER_WORKER_SECRETS_JSON;
   delete process.env.CORNER_WORKER_SECRETS_JSON;
@@ -864,7 +885,7 @@ test('first bootstrap recovers from transient public failure without migrating o
   Object.assign(f.payload, {
     bootstrap: true,
     baselineId: null,
-    qualification: { ...report, bootstrap: true, previousDigest: null },
+    qualification: { ...report, bootstrap: true, previousDigest: null, previousGeneration: null, recovery: 'bootstrap' },
   });
   const before = {
     database: process.env.DATABASE_URL,
@@ -1024,7 +1045,10 @@ test('explicit adoption pins the existing Worker before migration and again befo
           bootstrap: true,
           provisionedVersionId: oldVersion,
           baselineId: null,
-          qualification: { ...report, bootstrap: true, previousDigest: null },
+          qualification: {
+            ...report, bootstrap: true, previousDigest: null,
+            previousGeneration: null, recovery: 'bootstrap',
+          },
         });
         f.options.cf = async (path) => {
           if (path.endsWith('/settings')) return { bindings: [] };
@@ -1151,7 +1175,8 @@ test('explicit rollback completes only after live data validation and public che
       `
       export const currentSchema = async () => 'public';
       export const migrationHistory = async () => {};
-      export const inspectImport = raw => ({ state: raw });
+      export const storageGeneration = 'relational-v1';
+      export const validatePersistedRecords = async () => {};
       export const createDatabase = () => ({
         connect: async () => ({
           query: async () => ({ rows: [{ user_id: 'owner', data: '{"saved":true}' }] }),

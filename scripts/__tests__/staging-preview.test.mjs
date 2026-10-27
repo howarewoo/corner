@@ -5,7 +5,14 @@ import { writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createRequire } from 'node:module';
-import { deployPreview, previewConfiguration, previewCredentials } from '../staging-preview.mjs';
+import {
+  deployPreview,
+  completePreview,
+  verifyPreviewPublic,
+  previewConfiguration,
+  previewCredentials,
+} from '../staging-preview.mjs';
+import { publicChecks, PublicCheckError } from '../release.mjs';
 
 const sourceSha = 'a'.repeat(40);
 const digest = 'b'.repeat(64);
@@ -22,7 +29,7 @@ function environment() {
     CORNER_STAGING_BINDINGS_REVISION: 'test-1',
     CORNER_STAGING_CONFIG_JSON: JSON.stringify({
       CORNER_ORIGIN: origin,
-      NEON_AUTH_REQUIRE_EMAIL_VERIFICATION: 'true',
+      NEON_AUTH_REQUIRE_EMAIL_VERIFICATION: 'false',
     }),
     CORNER_WORKER_SECRETS_JSON: JSON.stringify(secrets),
     DATABASE_URL: secrets.DATABASE_URL,
@@ -32,14 +39,17 @@ function environment() {
   };
 }
 
-test('Preview rejects production origins, extra runtime bindings, and disabled verification', () => {
+test('Preview rejects production origins, extra runtime bindings, and enabled or invalid verification', () => {
   const env = environment();
   for (const configuration of [
-    { CORNER_ORIGIN: 'https://corner.example.com', NEON_AUTH_REQUIRE_EMAIL_VERIFICATION: 'true' },
-    { CORNER_ORIGIN: origin, NEON_AUTH_REQUIRE_EMAIL_VERIFICATION: 'false' },
+    { CORNER_ORIGIN: 'https://corner.example.com', NEON_AUTH_REQUIRE_EMAIL_VERIFICATION: 'false' },
+    { CORNER_ORIGIN: origin },
+    { CORNER_ORIGIN: origin, NEON_AUTH_REQUIRE_EMAIL_VERIFICATION: 'true' },
+    { CORNER_ORIGIN: origin, NEON_AUTH_REQUIRE_EMAIL_VERIFICATION: false },
+    { CORNER_ORIGIN: origin, NEON_AUTH_REQUIRE_EMAIL_VERIFICATION: '0' },
     {
       CORNER_ORIGIN: origin,
-      NEON_AUTH_REQUIRE_EMAIL_VERIFICATION: 'true',
+      NEON_AUTH_REQUIRE_EMAIL_VERIFICATION: 'false',
       DATABASE_URL: 'private',
     },
   ])
@@ -81,6 +91,7 @@ async function scenario(t, overrides = {}) {
     },
   };
   const candidate = {
+    generation: 'relational-v1',
     directory: work,
     digest,
     manifest: {
@@ -98,7 +109,8 @@ async function scenario(t, overrides = {}) {
     work,
     environment: environment(),
     loadArtifact: async () => candidate,
-    qualify: async () => ({ passed: true, candidateDigest: digest, previousDigest: null }),
+    qualify: async () => ({ passed: true, candidateDigest: digest, previousDigest: null,
+      generation: 'relational-v1', previousGeneration: null, recovery: 'bootstrap' }),
     verify: async () => ({ digest }),
     cf: async (path) => {
       if (path.endsWith('/deployments/latest')) return null;
@@ -280,7 +292,8 @@ test('interrupted B schema attempt preserves A as C compatibility baseline', asy
     assert.equal(candidate, f.candidate.directory);
     assert.equal(previous, f.serving.directory);
     assert.equal(bootstrap, false);
-    return { passed: true, candidateDigest: digest, previousDigest: f.serving.digest };
+    return { passed: true, candidateDigest: digest, previousDigest: f.serving.digest,
+      generation: 'relational-v1', previousGeneration: 'relational-v1', recovery: 'compatible' };
   };
   await assert.rejects(deployPreview(f.options), /migration failed/);
   assert.equal(qualified, true);
@@ -331,6 +344,9 @@ test('live drift from serving ledger is rejected initially and after qualificati
       passed: true,
       candidateDigest: digest,
       previousDigest: f.serving.digest,
+      generation: 'relational-v1',
+      previousGeneration: 'relational-v1',
+      recovery: 'compatible',
     });
     await assert.rejects(deployPreview(f.options), /Live Preview deployment differs/);
     assert.deepEqual(f.effects, []);
@@ -358,5 +374,136 @@ test('Preview rejects pre-Drizzle schema and serving history before any effects'
         : [];
     await assert.rejects(deployPreview(f.options));
     assert.deepEqual(f.effects, []);
+  }
+});
+
+test('Preview readiness waits for the exact version and never retries a security failure', async () => {
+  let healthy = false;
+  let waits = 0;
+  const check = async (url, version, _fetcher, access) =>
+    publicChecks(url, version, async (request) => {
+      if (new URL(request).pathname === '/api/health')
+        return Response.json({ ok: true }, { headers: { 'X-Corner-Version': healthy ? version : 'old' } });
+      return Response.json({ code: 'ORIGIN_NOT_ALLOWED' }, { status: 403 });
+    }, access);
+  // The first stale health response must wait; the subsequent RPC-shaped mismatch must fail closed.
+  await assert.rejects(
+    verifyPreviewPublic(origin, 'current', {}, check, async () => { waits++; healthy = true; }),
+    (error) => error instanceof PublicCheckError && !error.retryable,
+  );
+  assert.equal(waits, 1);
+});
+
+test('a Preview that never serves its recorded version exhausts the readiness bound', async () => {
+  let waits = 0;
+  await assert.rejects(
+    verifyPreviewPublic(origin, 'current', {}, async (url, version) =>
+      publicChecks(url, version, async () =>
+        Response.json({ ok: true }, { headers: { 'X-Corner-Version': 'old' } })),
+    async () => { waits++; assert.ok(waits <= 11); }),
+    (error) => error instanceof PublicCheckError && error.retryable,
+  );
+  assert.equal(waits, 11);
+});
+
+async function completionScenario(t) {
+  const f = await scenario(t);
+  const config = previewConfiguration(f.options.environment.CORNER_STAGING_CONFIG_JSON, f.options.environment);
+  const p = {
+    format: 4,
+    kind: 'corner-staging-preview',
+    workerName: 'corner',
+    previewName: 'staging',
+    sourceSha,
+    runId: '1',
+    artifactId: '2',
+    candidateDigest: digest,
+    origin,
+    runtimeConfigurationDigest: config.digest,
+    bindingsRevision: config.bindingsRevision,
+    deploymentId: 'recorded-live',
+    versionId: 'recorded-live',
+    phase: 'deployed',
+    qualification: { passed: true, candidateDigest: digest, sourceSha, generation: 'relational-v1' },
+  };
+  const current = { id: 9, payload: p };
+  const schema = { id: 8, payload: { ...p, phase: 'schema-attempted' } };
+  const statuses = [];
+  f.options.github.all = async (path) =>
+    structuredClone(path.includes('environment=staging-schema&') ? [schema] : [current]);
+  f.options.github.api = async (path, options) => {
+    if (path === 'git/ref/heads/staging') return { object: { sha: sourceSha } };
+    if (path === 'deployments' && options?.method === 'POST') {
+      const value = JSON.parse(options.body);
+      f.effects.push(value.payload.phase);
+      return { id: 10, payload: value.payload };
+    }
+    if (/^deployments\/\d+\/statuses$/.test(path)) {
+      statuses.push({ id: Number(path.split('/')[1]), state: JSON.parse(options.body).state });
+      return {};
+    }
+    throw new Error(`Unexpected completion request ${path}`);
+  };
+  const live = {
+    id: p.deploymentId,
+    env: {
+      ...Object.fromEntries(Object.entries(config.value).map(([name, text]) => [name, { type: 'plain_text', text }])),
+      CF_VERSION_METADATA: { type: 'version_metadata' },
+      ...Object.fromEntries(
+        ['DATABASE_URL', 'NEON_AUTH_BASE_URL', 'BETTER_AUTH_SECRET', 'CORNER_TOKEN_ENCRYPTION_KEY']
+          .map((name) => [name, { type: 'secret_text' }]),
+      ),
+    },
+  };
+  f.options.cf = async (path) =>
+    path.endsWith('/deployments/latest') ? live : { deployments: [] };
+  delete f.options.environment.CORNER_WORKER_SECRETS_JSON;
+  delete f.options.environment.DATABASE_URL;
+  delete f.options.environment.DATABASE_URL_UNPOOLED;
+  return { ...f, current, schema, live, statuses };
+}
+
+test('pinned completion verifies the serving Preview without migration, upload, or private database keys', async (t) => {
+  const f = await completionScenario(t);
+  const completed = await completePreview({ ...f.options, deploymentId: '9' });
+  assert.equal(completed.payload.deploymentId, f.live.id);
+  assert.equal(completed.payload.phase, 'complete');
+  assert.deepEqual(f.effects, ['public', 'complete']);
+  assert.deepEqual(f.statuses, [
+    { id: 8, state: 'success' },
+    { id: 10, state: 'success' },
+    { id: 9, state: 'inactive' },
+  ]);
+});
+
+test('completion refuses a wrong pin, changed configuration, schema advance, artifact drift, or live drift', async (t) => {
+  for (const change of ['pin', 'configuration', 'schema', 'artifact', 'live']) {
+    const f = await completionScenario(t);
+    if (change === 'configuration') f.current.payload.runtimeConfigurationDigest = 'c'.repeat(64);
+    if (change === 'schema') f.schema.payload.candidateDigest = 'c'.repeat(64);
+    if (change === 'artifact') f.options.verify = async () => ({ digest: 'c'.repeat(64) });
+    if (change === 'live') f.live.id = 'unrecorded';
+    await assert.rejects(completePreview({ ...f.options, deploymentId: change === 'pin' ? '7' : '9' }));
+    assert.deepEqual(f.effects, []);
+    assert.deepEqual(f.statuses, []);
+  }
+});
+
+test('a failing security probe keeps the Preview incomplete and marks its receipt failed', async (t) => {
+  const f = await completionScenario(t);
+  f.options.checkPublic = async () => { throw new PublicCheckError('Public cross-origin authentication boundary failed'); };
+  f.options.wait = async () => assert.fail('Security failures must not be retried');
+  await assert.rejects(completePreview({ ...f.options, deploymentId: '9' }), /cross-origin/);
+  assert.deepEqual(f.effects, []);
+  assert.deepEqual(f.statuses, [{ id: 9, state: 'failure' }]);
+});
+
+test('schema or serving journal changes during public validation prevent a completed receipt', async (t) => {
+  for (const target of ['schema', 'current']) {
+    const f = await completionScenario(t);
+    f.options.checkPublic = async () => { f[target].id++; };
+    await assert.rejects(completePreview({ ...f.options, deploymentId: '9' }), /journal changed/);
+    assert.deepEqual(f.effects, []);
+    assert.equal(f.statuses.some((value) => value.state === 'success'), false);
   }
 });

@@ -9,6 +9,7 @@ import type { AppState } from '@packages/workspace/types';
 import type { Recipe } from '@packages/nutrition/types';
 import { ApiError } from '../src/http.ts';
 import { inspectImport, WorkspaceStore } from '../src/store.ts';
+import { MAX_WORKSPACE_TRANSFER_BYTES } from '@packages/api/workspace-data';
 
 let database: Pool;
 let store: WorkspaceStore;
@@ -42,7 +43,7 @@ const code = (expected: string) => (error: unknown) =>
   error instanceof ApiError && error.code === expected;
 
 test('new workspaces contain no personal sample plan, targets, or completed history', async () => {
-  const current = await store.read('user-a', 'Alex');
+  const current = await store.exportSnapshot('user-a', 'Alex');
   assert.equal(current.revision, 0);
   assert.equal(current.state.settings.name, 'Alex');
   assert.equal(current.state.settings.timezone, 'UTC');
@@ -57,7 +58,7 @@ test('mutations and receipts are isolated by owner and transport retries do not 
   const mutation = { type: 'recipe.save' as const, data: recipe() };
   const first = await store.mutate('user-a', 'mutation-1234', mutation);
   assert.equal(first.revision, 1);
-  assert.equal((await store.read('user-b')).state.recipes.length, 0);
+  assert.equal((await store.exportSnapshot('user-b')).state.recipes.length, 0);
   const replay = await store.mutate('user-a', 'mutation-1234', mutation);
   assert.deepEqual(replay, first);
   assert.equal(
@@ -68,8 +69,9 @@ test('mutations and receipts are isolated by owner and transport retries do not 
     ...mutation,
     data: recipe('recipe-b'),
   });
-  assert.equal(own.state.recipes[0].id, 'recipe-b');
-  assert.equal((await store.read('user-a')).state.recipes[0].id, 'recipe-a');
+  assert.deepEqual(own, { revision: 1 });
+  assert.equal((await store.exportSnapshot('user-b')).state.recipes[0].id, 'recipe-b');
+  assert.equal((await store.exportSnapshot('user-a')).state.recipes[0].id, 'recipe-a');
   await assert.rejects(
     async () =>
       await store.mutate('user-a', 'mutation-1234', {
@@ -115,10 +117,10 @@ test('explicit revision conflicts and invalid batch members leave the whole tran
     code('INVALID_INPUT'),
   );
   assert.deepEqual(
-    (await store.read('user-a')).state.recipes.map((value) => value.id),
+    (await store.exportSnapshot('user-a')).state.recipes.map((value) => value.id),
     ['recipe-a'],
   );
-  assert.equal((await store.read('user-a')).revision, 1);
+  assert.equal((await store.bootstrap('user-a')).revision, 1);
   assert.equal(
     (await database.query('SELECT COUNT(*) AS n FROM mutation_receipts', [])).rows[0]?.n,
     1,
@@ -142,8 +144,10 @@ test('explicit revision conflicts and invalid batch members leave the whole tran
     1,
   );
   assert.equal(saved.revision, 2);
-  assert.equal(saved.state.logs.length, 0);
-  assert.equal(saved.state.plan.length, 1);
+  assert.deepEqual(saved, { revision: 2 });
+  const snapshot = await store.exportSnapshot('user-a');
+  assert.equal(snapshot.state.logs.length, 0);
+  assert.equal(snapshot.state.plan.length, 1);
 });
 
 test('batch completion bookkeeping commits or rolls back with the state and is safe on replay', async () => {
@@ -158,7 +162,7 @@ test('batch completion bookkeeping commits or rolls back with the state and is s
     }),
     /bookkeeping failure/,
   );
-  assert.equal((await store.read('user-a')).revision, 0);
+  assert.equal((await store.bootstrap('user-a')).revision, 0);
   assert.equal(
     (await database.query('SELECT COUNT(*) AS n FROM mutation_receipts', [])).rows[0]?.n,
     0,
@@ -217,7 +221,7 @@ test('import is owner-bound, revision checked, empty-account only, and idempoten
   const saved = await store.replaceImport('user-a', 'import-12345', imported, 0);
   assert.equal(saved.revision, 1);
   assert.deepEqual(await store.replaceImport('user-a', 'import-12345', imported, 0), saved);
-  assert.equal((await store.read('user-b')).state.recipes.length, 0);
+  assert.equal((await store.exportSnapshot('user-b')).state.recipes.length, 0);
   await assert.rejects(
     async () => await store.replaceImport('user-a', 'another-import', imported, 1),
     code('WORKSPACE_NOT_EMPTY'),
@@ -228,20 +232,20 @@ test('import is owner-bound, revision checked, empty-account only, and idempoten
   );
   const forged = { ...imported, userId: 'user-a' };
   assert.throws(() => inspectImport(forged));
-  assert.equal((await store.read('user-a')).state.settings.name, 'Imported owner');
+  assert.equal((await store.bootstrap('user-a')).settings.name, 'Imported owner');
 });
 
-test('collection and byte limits reject unbounded workspaces before saving', async () => {
+test('import transfer limits reject oversized payloads before saving', async () => {
   const state = createInitialState();
-  state.recipes = Array.from({ length: 501 }, (_, i) => recipe(`r-${i}`));
+  state.recipes = Array.from({ length: 10001 }, (_, i) => recipe(`r-${i}`));
   assert.throws(() => inspectImport(state));
   const oversized = {
     ...createInitialState(),
-    settings: { ...state.settings, name: 'x'.repeat(1_800_001) },
+    settings: { ...state.settings, name: 'x'.repeat(MAX_WORKSPACE_TRANSFER_BYTES + 1) },
   };
   assert.throws(() => inspectImport(oversized), code('STATE_TOO_LARGE'));
   assert.equal(
-    (await database.query('SELECT COUNT(*) AS n FROM workspace_state', [])).rows[0]?.n,
+    (await database.query('SELECT COUNT(*) AS n FROM workspace_metadata', [])).rows[0]?.n,
     0,
   );
 });
@@ -254,7 +258,7 @@ test('concurrent first writes and duplicate retries serialize without losing own
     }),
   );
   await Promise.all(requests);
-  const saved = await store.read('concurrent-owner');
+  const saved = await store.exportSnapshot('concurrent-owner');
   assert.equal(saved.revision, 8);
   assert.deepEqual(
     saved.state.groceryChecks,
@@ -289,5 +293,5 @@ test('concurrent first writes and duplicate retries serialize without losing own
     ).length,
     1,
   );
-  assert.equal((await store.read('retry-owner')).revision, 2);
+  assert.equal((await store.bootstrap('retry-owner')).revision, 2);
 });

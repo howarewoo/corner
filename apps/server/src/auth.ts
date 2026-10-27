@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { contract } from '@packages/api/contract';
+import { RPC_PREFIX } from '@packages/api/protocol';
 import type { Config } from './config.js';
 import { ApiError } from './http.js';
 
@@ -38,20 +40,25 @@ const endpoints: Record<string, string> = {
   '/email-otp/send-verification-otp': 'POST',
   '/email-otp/verify-email': 'POST',
 };
-const unavailable = () =>
-  new ApiError(
-    503,
-    'ACCOUNT_SERVICE_UNAVAILABLE',
-    'The account service is temporarily unavailable. Try again later.',
-  );
+class AccountServiceUnavailable extends ApiError {
+  constructor(
+    readonly category: 'network' | 'timeout' | 'upstream_status' | 'invalid_json' | 'invalid_session',
+    readonly upstreamStatus: number | null = null,
+  ) {
+    super(503, 'ACCOUNT_SERVICE_UNAVAILABLE', 'The account service is temporarily unavailable. Try again later.');
+  }
+}
+const procedures = new Map<string, string>(Object.entries(contract).flatMap(([group, entries]) =>
+  Object.keys(entries).map((name) => [`${RPC_PREFIX}/${group}/${name}`, `${group}.${name}`] as const)));
 const cookieNames = [
   'neon-auth.session_token',
   'neon-auth.session_data',
   'neon-auth.dont_remember',
 ];
 /** Same-origin, uncached managed sessions. No browser-supplied identity is authoritative. */
-export function createAuth(config: Config, fetcher: typeof fetch = fetch): CornerAuth {
+export function createAuth(config: Config, fetcher: typeof fetch = fetch, servingVersion?: string): CornerAuth {
   const cookies = new WeakMap<Request, string[]>();
+  const failureIds = new WeakMap<Request, string>();
   const secure = new URL(config.origin).protocol === 'https:';
   function outboundCookies(request: Request): string {
     return (request.headers.get('cookie') ?? '')
@@ -95,34 +102,38 @@ export function createAuth(config: Config, fetcher: typeof fetch = fetch): Corne
     if (cookie) headers.set('Cookie', cookie);
     if (body !== undefined) headers.set('Content-Type', 'application/json');
     let response: Response;
+    const timeout = AbortSignal.timeout(15_000);
     try {
       response = await fetcher(`${config.neonAuthBaseUrl}${path}`, {
         method: body === undefined ? 'GET' : 'POST',
         headers,
         body,
         redirect: 'manual',
-        signal: AbortSignal.timeout(15_000),
+        signal: timeout,
       });
     } catch {
-      throw unavailable();
+      throw new AccountServiceUnavailable(timeout.aborted ? 'timeout' : 'network');
     }
-    if (response.status >= 500) throw unavailable();
+    if (response.status >= 500) throw new AccountServiceUnavailable('upstream_status', response.status);
     const received = response.headers.getSetCookie().map(localCookie);
     if (received.length) cookies.set(request, [...(cookies.get(request) ?? []), ...received]);
     return response;
   }
   function withCookies(request: Request, response: Response): Response {
     const pending = cookies.get(request);
-    if (pending?.length) {
+    const failureId = failureIds.get(request);
+    if (pending?.length || failureId) {
       // Fetch/redirect responses may have immutable headers.
       response = new Response(response.body, {
         status: response.status,
         statusText: response.statusText,
         headers: response.headers,
       });
-      for (const cookie of pending) response.headers.append('Set-Cookie', cookie);
+      for (const cookie of pending ?? []) response.headers.append('Set-Cookie', cookie);
+      if (failureId) response.headers.set('X-Corner-Request-Id', failureId);
     }
     cookies.delete(request);
+    failureIds.delete(request);
     return response;
   }
   return {
@@ -153,7 +164,7 @@ export function createAuth(config: Config, fetcher: typeof fetch = fetch): Corne
       try {
         data = text ? JSON.parse(text) : {};
       } catch {
-        throw unavailable();
+        throw new AccountServiceUnavailable('invalid_json', response.status);
       }
       if (data && typeof data === 'object' && !Array.isArray(data)) {
         const { token: _token, ...rest } = data as Record<string, unknown>;
@@ -169,22 +180,49 @@ export function createAuth(config: Config, fetcher: typeof fetch = fetch): Corne
     },
     async principal(request) {
       if (!outboundCookies(request)) return null;
-      const response = await upstream(request, '/get-session?disableCookieCache=true');
-      if (response.status === 401) return null;
-      if (!response.ok) throw unavailable();
-      let data: unknown;
+      const started = performance.now();
       try {
-        data = await response.json();
-      } catch {
-        throw unavailable();
+        const response = await upstream(request, '/get-session?disableCookieCache=true');
+        if (response.status === 401) return null;
+        if (!response.ok) throw new AccountServiceUnavailable('upstream_status', response.status);
+        let data: unknown;
+        try {
+          data = await response.json();
+        } catch (error) {
+          throw new AccountServiceUnavailable(
+            error instanceof SyntaxError ? 'invalid_json'
+              : error instanceof DOMException && error.name === 'TimeoutError' ? 'timeout' : 'network',
+            response.status,
+          );
+        }
+        if (data === null) return null;
+        const parsed = sessionSchema.safeParse(data);
+        if (!parsed.success) throw new AccountServiceUnavailable('invalid_session', response.status);
+        const { user, session } = parsed.data;
+        if (session.userId !== user.id || Date.parse(session.expiresAt) <= Date.now()) return null;
+        if (config.neonAuthRequireEmailVerification && !user.emailVerified) return null;
+        return { userId: user.id, name: user.name, email: user.email, sessionId: session.id };
+      } catch (error) {
+        if (error instanceof AccountServiceUnavailable) {
+          const requestId = crypto.randomUUID();
+          failureIds.set(request, requestId);
+          // Only allowlisted procedure names and typed failure metadata leave this boundary.
+          console.warn(JSON.stringify({
+            event: 'ACCOUNT_SESSION_LOOKUP_FAILED',
+            timestamp: new Date().toISOString(),
+            service: 'managed-auth',
+            severity: 'warn',
+            deployment: config.deployment,
+            requestId,
+            procedure: procedures.get(new URL(request.url).pathname) ?? null,
+            servingVersion: servingVersion ?? null,
+            category: error.category,
+            upstreamStatus: error.upstreamStatus,
+            durationMs: Math.round(performance.now() - started),
+          }));
+        }
+        throw error;
       }
-      if (data === null) return null;
-      const parsed = sessionSchema.safeParse(data);
-      if (!parsed.success) throw unavailable();
-      const { user, session } = parsed.data;
-      if (session.userId !== user.id || Date.parse(session.expiresAt) <= Date.now()) return null;
-      if (config.neonAuthRequireEmailVerification && !user.emailVerified) return null;
-      return { userId: user.id, name: user.name, email: user.email, sessionId: session.id };
     },
     withCookies,
   };

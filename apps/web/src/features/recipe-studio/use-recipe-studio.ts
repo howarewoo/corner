@@ -2,21 +2,21 @@
 
 import { useRef, useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
-import type { AppState } from '@packages/workspace/types';
+import type { Settings } from '@packages/workspace/types';
 import type { Recipe, RecipeRequest } from '@packages/nutrition/types';
 import type { Mutate, Notify } from '../workspace/types';
 import { rpc, scoped, errorCode, sessionLifetime } from '../../rpc';
 import { newId } from '../workspace/utils';
 
 export function useRecipeStudio({
-  initialState,
-  state,
+  initialSettings,
+  settings,
   aiAvailable,
   mutate,
   notify,
 }: {
-  initialState: AppState;
-  state: AppState;
+  initialSettings: Settings;
+  settings: Settings;
   aiAvailable: boolean;
   mutate: Mutate;
   notify: Notify;
@@ -24,13 +24,13 @@ export function useRecipeStudio({
   const generation = useRef(sessionLifetime()).current;
   const [studioPrompt, setStudioPrompt] = useState('');
   const [studioCalories, setStudioCalories] = useState(
-    initialState.settings.training.calories > 0
-      ? Math.round(initialState.settings.training.calories / 4)
+    initialSettings.training.calories > 0
+      ? Math.round(initialSettings.training.calories / 4)
       : 500,
   );
   const [studioProtein, setStudioProtein] = useState(
-    initialState.settings.training.protein > 0
-      ? Math.round(initialState.settings.training.protein / 4)
+    initialSettings.training.protein > 0
+      ? Math.round(initialSettings.training.protein / 4)
       : 25,
   );
   const [studioMinutes, setStudioMinutes] = useState(25);
@@ -44,7 +44,7 @@ export function useRecipeStudio({
   const generationIntent = useRef<{ signature: string; requestId: string } | null>(null);
 
   const studioBrief = (request?: RecipeRequest) =>
-    `Recipe idea: ${request?.prompt || studioPrompt}\n\nPreferences: about ${request?.calories || studioCalories} calories, ${request?.protein || studioProtein} g protein per serving, ready in ${request?.maxMinutes || studioMinutes} minutes.\nDietary preferences: ${state.settings.profile?.dietaryPreferences || 'Not specified'}\nGroceries: ${state.settings.profile?.groceryPreferences || 'Not specified'}\nGoals: ${state.settings.profile?.goals || 'Not specified'}`;
+    `Recipe idea: ${request?.prompt || studioPrompt}\n\nPreferences: about ${request?.calories || studioCalories} calories, ${request?.protein || studioProtein} g protein per serving, ready in ${request?.maxMinutes || studioMinutes} minutes.\nDietary preferences: ${settings.profile?.dietaryPreferences || 'Not specified'}\nGroceries: ${settings.profile?.groceryPreferences || 'Not specified'}\nGoals: ${settings.profile?.goals || 'Not specified'}`;
   const saveRequest = async () => {
     if (!studioPrompt.trim()) {
       notify('Describe the recipe you want first.', true);

@@ -3,6 +3,7 @@
 import { useMemo, useState } from 'react';
 import { getMealPlanSummary } from '@packages/workspace/meal-plan-summary';
 import type { AppState } from '@packages/workspace/types';
+import type { ActivityContext } from '@packages/workspace/targets';
 import type { Macros } from '@packages/nutrition/types';
 import { Card, ToggleGroup, ToggleGroupItem } from '@packages/ui';
 import './meal-planner-summary.css';
@@ -27,7 +28,7 @@ export default function MealPlannerSummary({
   state,
   weekStart,
 }: {
-  state: AppState;
+  state: ActivityContext & Pick<AppState, 'recipes' | 'plan'>;
   weekStart: string;
 }) {
   const [mode, setMode] = useState<'weekly' | 'daily'>('weekly');

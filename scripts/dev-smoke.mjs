@@ -379,7 +379,7 @@ try {
     'The session cookie must authenticate proxied workspace requests.',
   );
   assert.ok(
-    json(state, 'Workspace state').json.state?.settings?.name === 'Development test',
+    json(state, 'Workspace bootstrap').json.settings?.name === 'Development test',
     'The session must own the disposable workspace.',
   );
   assert.equal(

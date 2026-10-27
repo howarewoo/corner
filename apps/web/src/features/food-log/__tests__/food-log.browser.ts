@@ -1,4 +1,5 @@
 import { test, expect, signIn } from '../../../__tests__/browser';
+import { dateKey } from '@packages/nutrition/dates';
 
 test('manual food entries persist their servings and nutrition after reload without AI', async ({
   page,
@@ -18,7 +19,8 @@ test('manual food entries persist their servings and nutrition after reload with
   await expect(dialog).not.toBeVisible();
   await page.reload();
   await expect(page.getByRole('heading', { name: 'Synthetic oats' })).toBeVisible();
-  const saved = (await account.api.workspace.get()).state.logs;
+  const date = dateKey(new Date(), (await account.api.workspace.get()).settings.timezone);
+  const saved = (await account.api.workspace.foodWindow({ from: date, through: date, limit: 200 })).entries;
   expect(saved).toHaveLength(1);
   expect(saved[0]).toMatchObject({
     name: 'Synthetic oats',

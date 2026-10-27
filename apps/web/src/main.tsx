@@ -5,7 +5,7 @@ import { Loader2 } from 'lucide-react';
 import CornerApp from '@/components/corner-app';
 import { Button, Alert, Toaster, createToastManager } from '@packages/ui';
 import AccountAccess, { readAccountRoute } from './account-access';
-import { authPost, errorMessage } from './api';
+import { authPost, errorMessage, RequestError } from './api';
 import { focusManager, QueryClientProvider, useQuery } from '@tanstack/react-query';
 import {
   clearPrivateState,
@@ -34,6 +34,20 @@ function Brand() {
 }
 
 const accountToasts = createToastManager();
+
+async function loadSession() {
+  const session = await scoped(() => rpc.account.session());
+  if (!session.user)
+    throw new RequestError(
+      'Sign-in did not create a Corner session. Allow cookies for this site and try again. If this continues, ask the person who manages Corner to check the account settings.',
+      401,
+      'SESSION_NOT_ESTABLISHED',
+    );
+  // Retire private data only after the server confirms the new session. A failed
+  // handoff must leave the account form mounted so it can explain the failure.
+  clearPrivateState();
+  queryClient.setQueryData(privateKey('session'), session);
+}
 
 function ConnectionNotice() {
   const location = useLocation();
@@ -80,7 +94,7 @@ function App() {
           handleFocus(visible);
           if (visible)
             void queryClient.invalidateQueries(
-              { queryKey: privateKey('workspace') },
+              { predicate: (query) => query.queryKey[1] === sessionLifetime() && !['session', 'connection'].includes(String(query.queryKey[0])) },
               { cancelRefetch: false },
             );
         };
@@ -109,14 +123,10 @@ function App() {
     queryClient.setQueryData(privateKey('session'), { user: null });
   }, []);
   const load = useCallback(async () => {
-    clearPrivateState();
     const generation = sessionLifetime();
     setError('');
     try {
-      await queryClient.fetchQuery({
-        queryKey: privateKey('session'),
-        queryFn: () => scoped(() => rpc.account.session()),
-      });
+      await loadSession();
     } catch (failure) {
       if (generation === sessionLifetime()) setError(errorMessage(failure));
     }
@@ -155,7 +165,7 @@ function App() {
         </p>
       </main>
     );
-  if (!user) return <AccountAccess onSignedIn={load} />;
+  if (!user) return <AccountAccess onSignedIn={loadSession} />;
   if (!workspace)
     return (
       <main className="standalone-loading corner-ui">
@@ -179,7 +189,7 @@ function App() {
   return (
     <CornerApp
       key={`${user.id}:${lifetime}`}
-      initialState={workspace.state}
+      initialSettings={workspace.settings}
       initialRevision={workspace.revision}
       preview={false}
       displayName={user.name}
@@ -199,7 +209,7 @@ function AccountEntryPoint() {
       <AccountAccess
         initialRoute={route}
         onSignedIn={async () => {
-          clearPrivateState();
+          await loadSession();
           await navigate('/', { replace: true });
         }}
       />

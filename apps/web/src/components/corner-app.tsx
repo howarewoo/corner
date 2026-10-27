@@ -55,6 +55,7 @@ export default function CornerApp(props: CornerAppProps) {
 }
 function CornerWorkspace({
   initialState,
+  initialSettings,
   preview,
   displayName,
   initialRevision = 0,
@@ -73,12 +74,13 @@ function CornerWorkspace({
   const location = useLocation();
   const [agentPrompt, setAgentPrompt] = useState('');
   const [selectedDate, setSelectedDate] = useState(() =>
-    dateKey(new Date(), initialState.settings.timezone),
+    dateKey(new Date(), (initialSettings ?? initialState!.settings).timezone),
   );
   const [overlay, setOverlay] = useState<Overlay>(null);
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
   const {
     state,
+    settings,
     revision,
     busy,
     disabled,
@@ -88,10 +90,10 @@ function CornerWorkspace({
     readState,
     mutate,
     copyText,
-  } = useWorkspaceState({ initialState, initialRevision, preview });
+  } = useWorkspaceState({ initialState, initialSettings, initialRevision, preview });
   // These hooks stay mounted with the workspace so drafts and filters survive navigation.
   const recipeFilters = useRecipeFilters();
-  const studio = useRecipeStudio({ initialState, state, aiAvailable, mutate, notify });
+  const studio = useRecipeStudio({ initialSettings: initialSettings ?? initialState!.settings, settings, aiAvailable, mutate, notify });
   useEffect(() => {
     if (isNutritionView(view)) setLastNutritionView(view);
     setOverlay(null);
@@ -106,7 +108,7 @@ function CornerWorkspace({
     setAgentPrompt(prompt);
     navigate('agent');
   };
-  const firstName = (state.settings.name || displayName || 'you').split(' ')[0];
+  const firstName = (settings.name || displayName || 'you').split(' ')[0];
   const openRecipe = (recipe: Recipe) => setOverlay({ kind: 'recipe', recipe });
   const saveRecipe = async (recipe: Recipe) => {
     if (await mutate({ type: 'recipe.save', data: recipe }, 'Recipe saved to your collection')) {
@@ -155,10 +157,10 @@ function CornerWorkspace({
           groups={sidebarGroups}
           theme={theme}
           profile={{
-            name: state.settings.name || displayName || 'Your workspace',
+            name: settings.name || displayName || 'Your workspace',
             initial: firstName.charAt(0).toUpperCase(),
             icon: <Settings2 size={16} />,
-            label: `Open settings for ${state.settings.name || displayName || 'Your workspace'}`,
+            label: `Open settings for ${settings.name || displayName || 'Your workspace'}`,
             selected: view === 'settings',
             href: viewPaths.settings,
             onSelect: () => navigate('settings'),
@@ -191,8 +193,8 @@ function CornerWorkspace({
                       variant="ghost"
                       size="icon"
                       className="rounded-full p-0"
-                      aria-label={`Open settings for ${state.settings.name || displayName || 'Your workspace'}`}
-                      title={`Open settings for ${state.settings.name || displayName || 'Your workspace'}`}
+                      aria-label={`Open settings for ${settings.name || displayName || 'Your workspace'}`}
+                      title={`Open settings for ${settings.name || displayName || 'Your workspace'}`}
                       nativeButton={false}
                       role="link"
                       render={<Link to={viewPaths.settings} />}
@@ -246,6 +248,7 @@ function CornerWorkspace({
               {view === 'workouts' && (
                 <TrainingPanel
                   state={state}
+                  settings={settings}
                   selectedDate={selectedDate}
                   onDateChange={setSelectedDate}
                   mutate={mutate}
@@ -316,6 +319,7 @@ function CornerWorkspace({
               {view === 'studio' && (
                 <RecipeStudio
                   state={state}
+                  settings={settings}
                   aiAvailable={aiAvailable}
                   disabled={disabled}
                   studio={studio}
@@ -330,7 +334,7 @@ function CornerWorkspace({
               {view === 'settings' && (
                 <Settings
                   state={state}
-                  revision={revision}
+                  settings={settings}
                   disabled={disabled}
                   busy={busy}
                   preview={preview}

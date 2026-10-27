@@ -52,4 +52,3 @@ export type Mutation =
       data: any;
     }
   | TrainingMutation;
-export type StateResponse = { state: AppState; revision: number; aiAvailable: boolean };

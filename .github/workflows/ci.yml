@@ -49,6 +49,10 @@ jobs:
       - name: Install workspace dependencies
         run: pnpm install --frozen-lockfile
 
+      # Azure mirror trickle downloads bypass APT timeouts: actions/runner-images#14823.
+      - name: Use the standard Ubuntu archive mirror
+        run: sudo sed -i '/azure\.archive\.ubuntu\.com/d' /etc/apt/apt-mirrors.txt
+
       - name: Install browser engines and Linux dependencies
         run: pnpm --filter web exec playwright install --with-deps chromium webkit
 

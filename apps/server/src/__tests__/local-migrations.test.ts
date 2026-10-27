@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { readFile } from 'node:fs/promises';
 import { getMigrations } from 'better-auth/db/migration';
 import { testDatabase, closeTestDatabase } from '../../tests/helpers.ts';
 import { initializeLocalDatabase, localAuthOptions } from '../../scripts/local-services.mjs';
@@ -10,6 +11,14 @@ const instance = 'e'.repeat(32);
 async function fixture(emptyLedger = false) {
   const database = await testDatabase();
   try {
+    // Recreate the immutable legacy schema only inside this owned disposable fixture.
+    const tables = (await database.query(
+      'SELECT tablename FROM pg_tables WHERE schemaname=current_schema()',
+    )).rows;
+    for (const { tablename } of tables)
+      await database.query(`DROP TABLE "${tablename.replaceAll('"', '""')}" CASCADE`);
+    await database.query(await readFile(new URL('../../migrations/0000_corner.sql', import.meta.url), 'utf8'));
+    await database.query('CREATE TABLE __drizzle_migrations (id SERIAL PRIMARY KEY, hash TEXT NOT NULL, created_at BIGINT)');
     await database.query('CREATE TABLE corner_local_identity (instance TEXT PRIMARY KEY)');
     await database.query('INSERT INTO corner_local_identity VALUES ($1)', [instance]);
     await initializeLocalDatabase(database, instance);
@@ -71,19 +80,29 @@ async function fixture(emptyLedger = false) {
   }
 }
 
-test('owned local baseline adoption preserves saved workspaces, credentials, accounts, seed state and audit metadata', async () => {
+test('owned local baseline refuses retained workspaces without recording history or changing private records', async () => {
   const f = await fixture(true);
   try {
-    await Promise.all([
-      migrateLocalDatabase(f.database, instance),
-      migrateLocalDatabase(f.database, instance),
-    ]);
+    await assert.rejects(migrateLocalDatabase(f.database, instance), /workspace records prevent/);
     assert.deepEqual(
       (await f.database.query('SELECT hash,created_at FROM __drizzle_migrations')).rows,
-      f.history,
+      [],
     );
-    await migrateLocalDatabase(f.database, instance);
     assert.deepEqual(await f.snapshot(), f.before);
+  } finally {
+    await closeTestDatabase(f.database);
+  }
+});
+
+test('empty legacy local workspace adopts the baseline and applies the complete relational inventory', async () => {
+  const f = await fixture();
+  try {
+    await f.database.query('DELETE FROM workspace_state');
+    await migrateLocalDatabase(f.database, instance);
+    await migrateLocalDatabase(f.database, instance);
+    assert.equal((await f.database.query("SELECT to_regclass('workspace_state') AS name")).rows[0].name, null);
+    assert.ok((await f.database.query("SELECT to_regclass('workspace_metadata') AS name")).rows[0].name);
+    assert.equal((await f.database.query('SELECT encrypted FROM corner_subscription_accounts')).rows[0].encrypted, 'retained encrypted local credential');
   } finally {
     await closeTestDatabase(f.database);
   }

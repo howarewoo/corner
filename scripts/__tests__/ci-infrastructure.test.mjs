@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { githubClient, pages } from '../github.mjs';
-import { configure, protectionBody } from '../ci-configure.mjs';
+import { configure, protectionBody, stagingDeploymentRuleset } from '../ci-configure.mjs';
 
 const repository = 'owner/corner';
 const sourceSha = 'a'.repeat(40);
@@ -48,6 +48,7 @@ function configurationFixture({
   movedBranch = false,
   corruptReadback,
   current = null,
+  existingRulesets = [],
 } = {}) {
   const writes = [];
   const repo = {
@@ -62,6 +63,7 @@ function configurationFixture({
   );
   const environments = new Map();
   const policies = new Map();
+  const rulesets = new Map(existingRulesets.map((value) => [value.id, structuredClone(value)]));
   let policyId = 1;
   const refs = new Map();
   const api = async (path, options = {}) => {
@@ -94,6 +96,13 @@ function configurationFixture({
           observed[key] = { enabled: body[key] };
         protections.set(protection[1], observed);
         return observed;
+      }
+      const ruleset = path.match(/^\/rulesets(?:\/(\d+))?$/);
+      if (ruleset) {
+        const id = ruleset[1] ? Number(ruleset[1]) : 101;
+        const value = { ...body, id, source_type: 'Repository' };
+        rulesets.set(id, value);
+        return value;
       }
       const environment = path.match(/^\/environments\/([^/]+)$/);
       if (environment) {
@@ -182,13 +191,16 @@ function configurationFixture({
       if (writes.length && corruptReadback && value) corruptReadback(value);
       return value;
     }
+    if (path.startsWith('/rulesets?')) return [...rulesets.values()];
+    const ruleset = path.match(/^\/rulesets\/(\d+)$/);
+    if (ruleset) return structuredClone(rulesets.get(Number(ruleset[1])));
     const environment = path.match(/^\/environments\/([^/]+)$/);
     if (environment) return environments.get(environment[1]) ?? null;
     const policy = path.match(/^\/environments\/([^/]+)\/deployment-branch-policies\?/);
     if (policy) return { branch_policies: policies.get(policy[1]) ?? [] };
     throw new Error(`Unexpected fixture API ${path}`);
   };
-  return { api, writes, protections, environments, policies, repo };
+  return { api, writes, protections, environments, policies, rulesets, repo };
 }
 
 test('both exact current branch revisions require successful full CI before any effects', async () => {
@@ -458,5 +470,65 @@ test('environment read-back independently rejects reviewer gates, wait timers, b
       fixture.writes.some((value) => value.path === ''),
       false,
     );
+  }
+});
+
+test('main requires an actual successful staging deployment without gating staging on itself', async () => {
+  const fixture = configurationFixture();
+  await configure({ api: fixture.api, apply: true });
+  const rule = [...fixture.rulesets.values()][0];
+  assert.equal(rule.enforcement, 'active');
+  assert.deepEqual(rule.conditions.ref_name, { include: ['refs/heads/main'], exclude: [] });
+  assert.deepEqual(rule.bypass_actors, []);
+  assert.deepEqual(rule.rules, [{
+    type: 'required_deployments',
+    parameters: { required_deployment_environments: ['staging'] },
+  }]);
+  assert.deepEqual(fixture.protections.get('staging').required_status_checks.checks, [
+    { context: fullContext, app_id: 1 },
+  ]);
+});
+
+test('reapplying deployment protection preserves unrelated rules and updates its existing identity', async () => {
+  const existing = {
+    ...stagingDeploymentRuleset(),
+    id: 77,
+    source_type: 'Repository',
+    rules: [
+      { type: 'required_signatures' },
+      { type: 'required_deployments', parameters: { required_deployment_environments: ['review'] } },
+    ],
+  };
+  const fixture = configurationFixture({ existingRulesets: [existing] });
+  await configure({ api: fixture.api, apply: true });
+  assert.equal(fixture.rulesets.size, 1);
+  assert.deepEqual(fixture.rulesets.get(77).rules, [
+    { type: 'required_signatures' },
+    { type: 'required_deployments', parameters: { required_deployment_environments: ['review', 'staging'] } },
+  ]);
+});
+
+test('conflicting deployment-rule targets block all configuration effects', async () => {
+  const existing = { ...stagingDeploymentRuleset(), id: 77, source_type: 'Repository' };
+  existing.conditions.ref_name.include = ['refs/heads/staging'];
+  const fixture = configurationFixture({ existingRulesets: [existing] });
+  await assert.rejects(configure({ api: fixture.api, apply: true }), /conflicting targets/);
+  assert.deepEqual(fixture.writes, []);
+});
+
+test('a disabled or bypassable staging-deployment gate fails read-back before changing the default branch', async () => {
+  for (const mutate of [
+    (value) => { value.enforcement = 'disabled'; },
+    (value) => { value.bypass_actors = [{ actor_id: 1, actor_type: 'RepositoryRole', bypass_mode: 'always' }]; },
+    (value) => { value.rules[0].parameters.required_deployment_environments = []; },
+  ]) {
+    const fixture = configurationFixture();
+    const api = async (path, options = {}) => {
+      const value = await fixture.api(path, options);
+      if (!options.method && /^\/rulesets\/\d+$/.test(path) && fixture.writes.length) mutate(value);
+      return value;
+    };
+    await assert.rejects(configure({ api, apply: true }), /ruleset read-back failed/);
+    assert.equal(fixture.writes.some((value) => value.path === ''), false);
   }
 });
