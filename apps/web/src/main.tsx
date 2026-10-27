@@ -169,6 +169,20 @@ function App() {
         </p>
       </main>
     );
+  // A failed lookup says nothing about whether the server session still exists.
+  if (!user && session.isError)
+    return (
+      <main className="standalone-loading corner-ui">
+        <Brand />
+        <h1>Your account could not be loaded.</h1>
+        <Alert variant="destructive">{session.error.message}</Alert>
+        <div className="button-row">
+          <Button disabled={session.isFetching} onClick={() => void session.refetch()}>
+            {session.isFetching ? 'Trying again…' : 'Retry'}
+          </Button>
+        </div>
+      </main>
+    );
   if (!user) return <AccountAccess onSignedIn={loadSession} />;
   if (!workspace)
     return (
