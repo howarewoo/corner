@@ -9,6 +9,44 @@ const environmentBranches = {
   staging: 'staging',
   production: 'main',
 };
+const stagingRulesetName = 'Require staging deployment before main';
+
+export function stagingDeploymentRuleset(current) {
+  const conditions = { ref_name: { include: ['refs/heads/main'], exclude: [] } };
+  if (current && (current.target !== 'branch' || !isDeepStrictEqual(current.conditions, conditions)))
+    throw new Error('The staging deployment ruleset has conflicting targets; resolve it explicitly.');
+  const deploymentRules = (current?.rules ?? []).filter((rule) => rule.type === 'required_deployments');
+  if (deploymentRules.length > 1)
+    throw new Error('The staging deployment ruleset has ambiguous deployment requirements.');
+  const environments = deploymentRules[0]?.parameters?.required_deployment_environments ?? [];
+  if (!Array.isArray(environments) || environments.some((name) => typeof name !== 'string'))
+    throw new Error('The staging deployment ruleset has invalid environments.');
+  return {
+    name: stagingRulesetName,
+    target: 'branch',
+    enforcement: 'active',
+    bypass_actors: [],
+    conditions,
+    rules: [
+      ...(current?.rules ?? []).filter((rule) => rule.type !== 'required_deployments'),
+      {
+        type: 'required_deployments',
+        parameters: { required_deployment_environments: [...new Set([...environments, 'staging'])] },
+      },
+    ],
+  };
+}
+
+function verifyDeploymentRuleset(observed, expected) {
+  if (
+    !observed ||
+    !isDeepStrictEqual(
+      Object.fromEntries(Object.keys(expected).map((key) => [key, observed[key]])),
+      expected,
+    )
+  )
+    throw new Error('Main staging-deployment ruleset read-back failed.');
+}
 
 export function protectionBody(current, required, appId, organization) {
   const existing =
@@ -159,6 +197,13 @@ export async function configure({ api, apply = false }) {
       protection: protectionBody(current, fullContext, suite.app.id, organization),
     });
   }
+  const rulesets = (await pages(api, '/rulesets')).filter(
+    (ruleset) => ruleset.name === stagingRulesetName,
+  );
+  if (rulesets.length > 1 || rulesets.some((ruleset) => ruleset.source_type !== 'Repository'))
+    throw new Error('Cannot uniquely identify the repository staging-deployment ruleset.');
+  const existingRuleset = rulesets[0] ? await api(`/rulesets/${rulesets[0].id}`) : null;
+  const requiredDeployment = stagingDeploymentRuleset(existingRuleset);
   const mutations = branchPlans.map((value) => ({
     path: `/branches/${value.branch}/protection`,
     method: 'PUT',
@@ -199,10 +244,16 @@ export async function configure({ api, apply = false }) {
         body: { name: branch, type: 'branch' },
       });
   }
+  mutations.push({
+    path: existingRuleset ? `/rulesets/${existingRuleset.id}` : '/rulesets',
+    method: existingRuleset ? 'PUT' : 'POST',
+    body: requiredDeployment,
+  });
   const repositorySettings = { default_branch: 'staging', delete_branch_on_merge: false };
   const plan = {
     branches: branchPlans,
     requiredContext: fullContext,
+    requiredDeployment,
     environments: environmentBranches,
     mutations,
     repositorySettings,
@@ -213,7 +264,14 @@ export async function configure({ api, apply = false }) {
     if ((await api(`/git/ref/heads/${branch}`)).object.sha !== sourceSha)
       throw new Error(`Branch ${branch} moved after CI qualification; rerun configuration.`);
   }
-  for (const { path, ...options } of mutations) await api(path, options);
+  let deploymentRulesetId = existingRuleset?.id;
+  for (const { path, ...options } of mutations) {
+    const result = await api(path, options);
+    if (path === '/rulesets') deploymentRulesetId = result?.id;
+  }
+  if (!Number.isSafeInteger(deploymentRulesetId))
+    throw new Error('The staging-deployment ruleset did not return an exact identity.');
+  verifyDeploymentRuleset(await api(`/rulesets/${deploymentRulesetId}`), requiredDeployment);
   for (const { branch, protection, appId } of branchPlans)
     verifyProtection(
       await api(`/branches/${branch}/protection`),

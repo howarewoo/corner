@@ -10,11 +10,15 @@ on:
       run_id:
         description: Exact successful current push-to-staging CI run ID
         type: string
-        required: true
+        required: false
       source_sha:
         description: Exact current staging source SHA
         type: string
-        required: true
+        required: false
+      completion_deployment_id:
+        description: Exact current deployed Preview receipt to verify without migrating or uploading; leave candidate inputs empty
+        type: string
+        required: false
 
 permissions:
   contents: read
@@ -52,9 +56,9 @@ jobs:
             --raw-field source_sha="$CI_SOURCE_SHA"
 
   deploy:
-    if: >-
-      github.event_name == 'workflow_dispatch' &&
-      github.ref == 'refs/heads/staging'
+    # workflow_run listeners must not publish a skipped-green deployment check.
+    name: ${{ github.event_name == 'workflow_dispatch' && 'Staging deployment' || 'Staging deployment listener' }}
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     environment: staging
@@ -65,6 +69,7 @@ jobs:
       contents: read
       actions: read
       deployments: write
+      statuses: write
     services:
       postgres:
         image: postgres:17
@@ -80,6 +85,13 @@ jobs:
       CORNER_STAGING_BINDINGS_REVISION: ${{ vars.CORNER_STAGING_BINDINGS_REVISION }}
       GH_TOKEN: ${{ github.token }}
     steps:
+      - name: Report pending staging deployment on the promotion PR
+        run: |
+          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" \
+            -f context='Staging deployment' \
+            -f state=pending \
+            -f description='Waiting for verified staging deployment of this commit' \
+            -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
       - name: Check out the merged staging source only
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -95,10 +107,12 @@ jobs:
           cache-dependency-path: pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
       - name: Qualify, migrate, and deploy the isolated native staging Preview
+        id: preview
         run: node scripts/staging-preview.mjs
         env:
           PREVIEW_RUN_ID: ${{ inputs.run_id }}
           PREVIEW_SOURCE_SHA: ${{ inputs.source_sha }}
+          PREVIEW_COMPLETION_DEPLOYMENT_ID: ${{ inputs.completion_deployment_id }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
           CORNER_WORKER_SECRETS_JSON: ${{ secrets.CORNER_WORKER_SECRETS_JSON }}
@@ -106,3 +120,21 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CORNER_STAGING_ACCESS_CLIENT_ID: ${{ secrets.CORNER_STAGING_ACCESS_CLIENT_ID }}
           CORNER_STAGING_ACCESS_CLIENT_SECRET: ${{ secrets.CORNER_STAGING_ACCESS_CLIENT_SECRET }}
+      - name: Report the verified staging deployment result on the promotion PR
+        if: ${{ always() }}
+        env:
+          DEPLOYMENT_JOB_STATUS: ${{ job.status }}
+          VERIFIED_SOURCE_SHA: ${{ steps.preview.outputs.source_sha }}
+        run: |
+          state=failure
+          description='Staging deployment failed or did not verify this commit'
+          if [ "$DEPLOYMENT_JOB_STATUS" = success ] && [ "$VERIFIED_SOURCE_SHA" = "$GITHUB_SHA" ]; then
+            state=success
+            description='Staging deployment and public checks verified for this commit'
+          fi
+          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" \
+            -f context='Staging deployment' \
+            -f state="$state" \
+            -f description="$description" \
+            -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          test "$state" = success

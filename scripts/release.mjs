@@ -16,6 +16,12 @@ const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 const phases = new Set(['deployed', 'public-passed', 'complete']);
 const hash = (value) => createHash('sha256').update(value).digest('hex');
 class ReleaseError extends Error {}
+export class PublicCheckError extends ReleaseError {
+  constructor(message, retryable = false) {
+    super(message);
+    this.retryable = retryable;
+  }
+}
 const need = (value, message) => {
   if (!value) throw new ReleaseError(message);
   return value;
@@ -494,68 +500,84 @@ export async function publicChecks(origin, versionId, fetcher = fetch, access = 
       signal: AbortSignal.timeout(30000),
       headers: { ...accessHeaders, 'Cache-Control': 'no-cache' },
     });
-  const health = await call('/api/health');
-  const crossOrigin = await fetcher(new URL('/api/auth/sign-up/email', origin), {
-    method: 'POST',
-    redirect: 'manual',
-    signal: AbortSignal.timeout(30000),
-    headers: {
-      ...accessHeaders,
-      Origin: 'https://cross-origin.invalid',
-      'Content-Type': 'application/json',
-    },
-    body: '{}',
-  });
-  need(
-    crossOrigin.status === 403 && (await crossOrigin.json()).code === 'ORIGIN_NOT_ALLOWED',
-    'Public cross-origin authentication boundary failed',
-  );
-  need(
-    health.status === 200 &&
-      health.headers.get('X-Corner-Version') === versionId &&
-      (await health.json()).ok === true,
-    'Public health or deployed version identity mismatch',
-  );
-  const protectedResponse = await fetcher(new URL('/api/rpc/workspace/get', origin), {
-    method: 'POST',
-    redirect: 'manual',
-    signal: AbortSignal.timeout(30000),
-    headers: {
-      ...accessHeaders,
-      Origin: origin,
-      'Content-Type': 'application/json',
-      'Cache-Control': 'no-cache',
-    },
-    body: '{}',
-  });
-  const protectedError = (await protectedResponse.json()).json;
-  need(
-    protectedResponse.status === 401 &&
-      protectedError?.defined === true &&
-      protectedError.code === 'SIGN_IN_REQUIRED' &&
-      protectedError.status === 401,
-    'Public anonymous RPC authentication boundary failed',
-  );
-  for (const path of ['/.env', '/assets/not-found.js'])
-    need((await call(path)).status === 404, 'Public private-file or missing-asset boundary failed');
-  for (const path of ['/', '/account/reset-password']) {
-    const response = await call(path);
-    need(
-      response.status === 200 &&
-        /frame-ancestors 'none'/.test(response.headers.get('Content-Security-Policy') ?? ''),
-      'Public origin/deep-link security check failed',
+  const check = (value, message) => {
+    if (!value) throw new PublicCheckError(message);
+  };
+  let health;
+  try {
+    health = await call('/api/health');
+    if (
+      health.status !== 200 ||
+      health.headers.get('X-Corner-Version') !== versionId ||
+      (await health.json()).ok !== true
+    )
+      throw new Error('Health not ready');
+  } catch {
+    throw new PublicCheckError(
+      `Public health or deployed version identity mismatch (HTTP ${health?.status ?? 'unavailable'})`,
+      true,
     );
-    const html = await response.text();
-    const asset = html.match(/src="([^" ]+\.js)"/);
-    need(
-      asset && new URL(asset[1], origin).origin === origin,
-      'Public page lacks same-origin asset',
+  }
+  try {
+    const crossOrigin = await fetcher(new URL('/api/auth/sign-up/email', origin), {
+      method: 'POST',
+      redirect: 'manual',
+      signal: AbortSignal.timeout(30000),
+      headers: {
+        ...accessHeaders,
+        Origin: 'https://cross-origin.invalid',
+        'Content-Type': 'application/json',
+      },
+      body: '{}',
+    });
+    check(
+      crossOrigin.status === 403 && (await crossOrigin.json()).code === 'ORIGIN_NOT_ALLOWED',
+      'Public cross-origin authentication boundary failed',
     );
-    const script = await call(asset[1]);
-    need(
-      script.status === 200 && /immutable/.test(script.headers.get('Cache-Control') ?? ''),
-      'Public immutable asset check failed',
+    const protectedResponse = await fetcher(new URL('/api/rpc/workspace/get', origin), {
+      method: 'POST',
+      redirect: 'manual',
+      signal: AbortSignal.timeout(30000),
+      headers: {
+        ...accessHeaders,
+        Origin: origin,
+        'Content-Type': 'application/json',
+        'Cache-Control': 'no-cache',
+      },
+      body: '{}',
+    });
+    const protectedError = (await protectedResponse.json()).json;
+    check(
+      protectedResponse.status === 401 &&
+        protectedError?.defined === true &&
+        protectedError.code === 'SIGN_IN_REQUIRED' &&
+        protectedError.status === 401,
+      'Public anonymous RPC authentication boundary failed',
     );
+    for (const path of ['/.env', '/assets/not-found.js'])
+      check((await call(path)).status === 404, 'Public private-file or missing-asset boundary failed');
+    for (const path of ['/', '/account/reset-password']) {
+      const response = await call(path);
+      check(
+        response.status === 200 &&
+          /frame-ancestors 'none'/.test(response.headers.get('Content-Security-Policy') ?? ''),
+        'Public origin/deep-link security check failed',
+      );
+      const html = await response.text();
+      const asset = html.match(/src="([^" ]+\.js)"/);
+      check(
+        asset && new URL(asset[1], origin).origin === origin,
+        'Public page lacks same-origin asset',
+      );
+      const script = await call(asset[1]);
+      check(
+        script.status === 200 && /immutable/.test(script.headers.get('Cache-Control') ?? ''),
+        'Public immutable asset check failed',
+      );
+    }
+  } catch (error) {
+    if (error instanceof PublicCheckError) throw error;
+    throw new PublicCheckError('Public request or response failed (private output withheld)');
   }
 }
 export async function validateLiveRollback(

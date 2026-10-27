@@ -6,15 +6,23 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
-import { GitHub, publicChecks } from './release.mjs';
+import { setTimeout as delay } from 'node:timers/promises';
+import { GitHub, publicChecks, PublicCheckError } from './release.mjs';
 import { loadCiArtifact } from './ci-artifact.mjs';
 import { qualifyArtifact, verifyArtifact, assertQualificationGeneration } from './release-artifact.mjs';
 
 const workerName = 'corner';
 const previewName = 'staging';
 const kind = 'corner-staging-preview';
+const secretNames = [
+  'DATABASE_URL',
+  'NEON_AUTH_BASE_URL',
+  'BETTER_AUTH_SECRET',
+  'CORNER_TOKEN_ENCRYPTION_KEY',
+];
+class PreviewError extends Error {}
 const need = (value, message) => {
-  if (!value) throw new Error(message);
+  if (!value) throw new PreviewError(message);
   return value;
 };
 const id = (value) =>
@@ -56,16 +64,10 @@ export function previewCredentials(environment = process.env) {
   const secrets = JSON.parse(
     need(environment.CORNER_WORKER_SECRETS_JSON, 'Protected Preview secrets required'),
   );
-  const names = [
-    'DATABASE_URL',
-    'NEON_AUTH_BASE_URL',
-    'BETTER_AUTH_SECRET',
-    'CORNER_TOKEN_ENCRYPTION_KEY',
-  ];
   need(
     secrets &&
-      Object.keys(secrets).length === names.length &&
-      names.every((name) => typeof secrets[name] === 'string' && secrets[name].length > 0) &&
+      Object.keys(secrets).length === secretNames.length &&
+      secretNames.every((name) => typeof secrets[name] === 'string' && secrets[name].length > 0) &&
       secrets.DATABASE_URL === environment.DATABASE_URL,
     'Invalid Preview secret bindings',
   );
@@ -130,6 +132,18 @@ async function cloudflare(path, { allowMissing = false } = {}) {
   return result.result;
 }
 
+async function setStatus(github, deployment, state) {
+  await github.api(`deployments/${id(deployment.id)}/statuses`, {
+    method: 'POST',
+    body: JSON.stringify({
+      state,
+      auto_inactive: state === 'success',
+      environment_url: deployment.payload.origin,
+      description: `Corner native Preview ${deployment.payload.phase}`,
+    }),
+  });
+}
+
 async function record(github, payload, state = 'in_progress') {
   const deployment = await github.api('deployments', {
     method: 'POST',
@@ -146,16 +160,131 @@ async function record(github, payload, state = 'in_progress') {
     }),
   });
   id(deployment.id);
-  await github.api(`deployments/${deployment.id}/statuses`, {
-    method: 'POST',
-    body: JSON.stringify({
-      state,
-      auto_inactive: false,
-      environment_url: payload.origin,
-      description: `Corner native Preview ${payload.phase}`,
-    }),
-  });
+  await setStatus(github, deployment, state);
   return deployment;
+}
+
+export async function verifyPreviewPublic(
+  origin,
+  versionId,
+  access,
+  checkPublic = publicChecks,
+  wait = delay,
+) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await checkPublic(origin, versionId, undefined, access);
+      return;
+    } catch (error) {
+      if (!(error instanceof PublicCheckError) || !error.retryable || attempt === 11) throw error;
+      await wait(5000);
+    }
+  }
+}
+
+export async function completePreview({
+  github,
+  deploymentId,
+  work,
+  environment = process.env,
+  loadArtifact = loadCiArtifact,
+  verify = verifyArtifact,
+  cf = cloudflare,
+  checkPublic = publicChecks,
+  wait = delay,
+}) {
+  const config = previewConfiguration(environment.CORNER_STAGING_CONFIG_JSON, environment);
+  const historyPath = 'deployments?environment=staging&task=corner-preview';
+  const schemaPath = 'deployments?environment=staging-schema&task=corner-preview';
+  const current = (await github.all(historyPath))[0];
+  const p = current?.payload;
+  need(
+    current &&
+      String(current.id) === id(deploymentId) &&
+      p?.format === 4 &&
+      p.kind === kind &&
+      p.phase === 'deployed' &&
+      p.workerName === workerName &&
+      p.previewName === previewName &&
+      p.versionId === p.deploymentId &&
+      /^[a-f0-9]{40}$/.test(p.sourceSha ?? '') &&
+      p.origin === config.origin &&
+      p.runtimeConfigurationDigest === config.digest &&
+      p.bindingsRevision === config.bindingsRevision,
+    'Completion requires the exact current incomplete Preview and unchanged configuration',
+  );
+  const schema = (await github.all(schemaPath))[0];
+  need(
+    schema?.payload?.format === 4 &&
+      schema.payload.kind === kind &&
+      schema.payload.phase === 'schema-attempted' &&
+      ['sourceSha', 'runId', 'artifactId', 'candidateDigest', 'runtimeConfigurationDigest'].every(
+        (key) => schema.payload[key] === p[key],
+      ),
+    'Completion schema journal differs from the deployed Preview',
+  );
+  const candidate = await loadArtifact({
+    api: github.api.bind(github),
+    repository: github.repository,
+    branch: 'staging',
+    reference: p,
+    destination: join(work, 'candidate'),
+  });
+  need(
+    candidate.digest === p.candidateDigest &&
+      p.qualification?.passed === true &&
+      p.qualification.candidateDigest === candidate.digest &&
+      p.qualification.sourceSha === p.sourceSha &&
+      p.qualification.generation === candidate.generation,
+    'Completion requires the unchanged qualified Preview artifact',
+  );
+  const assertCurrent = async () => {
+    need(
+      (await github.api('git/ref/heads/staging')).object?.sha === p.sourceSha &&
+        String((await github.all(historyPath))[0]?.id) === String(current.id) &&
+        String((await github.all(schemaPath))[0]?.id) === String(schema.id),
+      'Preview source or deployment/schema journal changed during completion',
+    );
+    const live = await cf(`workers/workers/${workerName}/previews/${previewName}/deployments/latest`);
+    need(
+      live.id === p.deploymentId &&
+        Object.entries(config.value).every(([name, value]) => live.env?.[name]?.text === value) &&
+        live.env?.CF_VERSION_METADATA?.type === 'version_metadata' &&
+        secretNames.every((name) => live.env?.[name]?.type === 'secret_text') &&
+        !Object.values(live.env ?? {}).some((binding) => binding.type === 'service'),
+      'Live Preview differs from the incomplete deployment',
+    );
+    need(
+      (await verify(candidate.directory)).digest === candidate.digest,
+      'Immutable Preview payload changed during completion',
+    );
+  };
+  await assertCurrent();
+  const production = JSON.stringify(await cf(`workers/scripts/${workerName}/deployments`));
+  try {
+    await verifyPreviewPublic(
+      p.origin,
+      p.deploymentId,
+      {
+        'CF-Access-Client-Id': environment.CORNER_STAGING_ACCESS_CLIENT_ID,
+        'CF-Access-Client-Secret': environment.CORNER_STAGING_ACCESS_CLIENT_SECRET,
+      },
+      checkPublic,
+      wait,
+    );
+    await assertCurrent();
+    need(
+      JSON.stringify(await cf(`workers/scripts/${workerName}/deployments`)) === production,
+      'Production Worker changed during Preview completion',
+    );
+    await setStatus(github, schema, 'success');
+    const result = await record(github, { ...p, phase: 'complete' }, 'success');
+    await setStatus(github, current, 'inactive');
+    return result;
+  } catch (error) {
+    await setStatus(github, current, 'failure');
+    throw error;
+  }
 }
 
 export async function deployPreview({
@@ -170,6 +299,7 @@ export async function deployPreview({
   execute = command,
   cf = cloudflare,
   checkPublic = publicChecks,
+  wait = delay,
 }) {
   need(/^[a-f0-9]{40}$/.test(sourceSha ?? ''), 'Exact staging source SHA required');
   id(runId);
@@ -288,12 +418,18 @@ export async function deployPreview({
     qualification,
     phase: 'schema-attempted',
   };
-  await record(github, payload);
-  execute(
-    process.execPath,
-    [join(candidate.directory, candidate.manifest.migrationEntry), '--apply'],
-    { cwd: candidate.directory, env: environment },
-  );
+  const schemaAttempt = await record(github, payload);
+  try {
+    execute(
+      process.execPath,
+      [join(candidate.directory, candidate.manifest.migrationEntry), '--apply'],
+      { cwd: candidate.directory, env: environment },
+    );
+    await setStatus(github, schemaAttempt, 'success');
+  } catch (error) {
+    await setStatus(github, schemaAttempt, 'failure');
+    throw error;
+  }
   await reverify();
   await current();
   await serving();
@@ -378,12 +514,7 @@ export async function deployPreview({
   need(
     !Object.values(bindings).some((binding) => binding.type === 'service') &&
       bindings.CORNER_ORIGIN?.text === config.origin &&
-      [
-        'DATABASE_URL',
-        'NEON_AUTH_BASE_URL',
-        'BETTER_AUTH_SECRET',
-        'CORNER_TOKEN_ENCRYPTION_KEY',
-      ].every((name) => bindings[name]?.type === 'secret_text'),
+      secretNames.every((name) => bindings[name]?.type === 'secret_text'),
     'Preview has unexpected runtime bindings',
   );
   const deployed = {
@@ -394,18 +525,32 @@ export async function deployPreview({
     deploymentUrls: output.deployment_urls,
     versionId: output.deployment_id,
   };
-  await record(github, deployed);
-  await reverify();
-  need(
-    JSON.stringify(await cf(`workers/scripts/${workerName}/deployments`)) === production,
-    'Production Worker deployment changed during Preview update; reconcile before accepting',
-  );
-  const access = {
-    'CF-Access-Client-Id': environment.CORNER_STAGING_ACCESS_CLIENT_ID,
-    'CF-Access-Client-Secret': environment.CORNER_STAGING_ACCESS_CLIENT_SECRET,
-  };
-  await checkPublic(config.origin, output.deployment_id, undefined, access);
-  return record(github, { ...deployed, phase: 'complete' }, 'success');
+  const deployedRecord = await record(github, deployed);
+  try {
+    await reverify();
+    need(
+      JSON.stringify(await cf(`workers/scripts/${workerName}/deployments`)) === production,
+      'Production Worker deployment changed during Preview update; reconcile before accepting',
+    );
+    const access = {
+      'CF-Access-Client-Id': environment.CORNER_STAGING_ACCESS_CLIENT_ID,
+      'CF-Access-Client-Secret': environment.CORNER_STAGING_ACCESS_CLIENT_SECRET,
+    };
+    await verifyPreviewPublic(config.origin, output.deployment_id, access, checkPublic, wait);
+    await current();
+    await reverify();
+    need(
+      (await cf(`workers/workers/${workerName}/previews/${previewName}/deployments/latest`)).id === output.deployment_id &&
+        JSON.stringify(await cf(`workers/scripts/${workerName}/deployments`)) === production,
+      'Preview or production deployment changed during public validation',
+    );
+    const result = await record(github, { ...deployed, phase: 'complete' }, 'success');
+    await setStatus(github, deployedRecord, 'inactive');
+    return result;
+  } catch (error) {
+    await setStatus(github, deployedRecord, 'failure');
+    throw error;
+  }
 }
 
 async function main() {
@@ -415,16 +560,27 @@ async function main() {
         process.env.GITHUB_EVENT_NAME === 'workflow_dispatch',
       'Preview deployment must run from trusted staging workflow source',
     );
+  const completionId = process.env.PREVIEW_COMPLETION_DEPLOYMENT_ID;
+  need(
+    !completionId || (!process.env.PREVIEW_RUN_ID && !process.env.PREVIEW_SOURCE_SHA),
+    'Preview completion cannot be combined with a new deployment candidate',
+  );
   const work = await mkdtemp(join(tmpdir(), 'corner-native-preview-'));
   try {
-    const result = await deployPreview({
-      github: new GitHub(),
-      runId: process.env.PREVIEW_RUN_ID,
-      sourceSha: process.env.PREVIEW_SOURCE_SHA,
-      work,
-    });
+    const options = { github: new GitHub(), work };
+    const result = completionId
+      ? await completePreview({ ...options, deploymentId: completionId })
+      : await deployPreview({
+          ...options,
+          runId: process.env.PREVIEW_RUN_ID,
+          sourceSha: process.env.PREVIEW_SOURCE_SHA,
+        });
     if (process.env.GITHUB_OUTPUT)
-      await writeFile(process.env.GITHUB_OUTPUT, `deployment_id=${result.id}\n`, { flag: 'a' });
+      await writeFile(
+        process.env.GITHUB_OUTPUT,
+        `deployment_id=${result.id}\nsource_sha=${result.payload.sourceSha}\n`,
+        { flag: 'a' },
+      );
     console.log(
       `Corner native staging Preview verified: ${result.payload.origin}; deployment ${result.id}; source ${result.payload.sourceSha}`,
     );
@@ -433,9 +589,11 @@ async function main() {
   }
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
-  main().catch(() => {
+  main().catch((error) => {
     console.error(
-      'Native staging Preview deployment failed; private provider output withheld. Inspect the last deployment/schema journal before retrying.',
+      error instanceof PreviewError || error instanceof PublicCheckError
+        ? `Native staging Preview blocked: ${error.message}`
+        : 'Native staging Preview operation failed (private output withheld). Inspect the deployment/schema journal before retrying.',
     );
     process.exitCode = 1;
   });
