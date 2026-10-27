@@ -8,6 +8,9 @@ import { RPC_PREFIX } from '@packages/api/protocol';
 import type { WorkspaceMutationInput } from '@packages/api/schemas';
 import type { Bootstrap } from '@packages/api/workspace-data';
 
+const ACCOUNT_READ_RETRIES = 2;
+const ACCOUNT_READ_RETRY_DELAY_MS = 500;
+
 export const queryClient = new QueryClient({
   defaultOptions: {
     queries: { retry: false, refetchOnWindowFocus: false, refetchOnReconnect: false },
@@ -146,6 +149,10 @@ export function useResource<T extends Versioned>(
     queryFn: ({ signal }) => readResource(family, () => operation(signal), generation),
     enabled,
     refetchOnReconnect: true,
+    retry: (failureCount, error) => generation === lifetime
+      && errorCode(error) === 'ACCOUNT_SERVICE_UNAVAILABLE'
+      && failureCount < ACCOUNT_READ_RETRIES,
+    retryDelay: (attempt) => ACCOUNT_READ_RETRY_DELAY_MS * 2 ** attempt,
     structuralSharing: (previous, next) => {
       const current = previous as T | undefined;
       const incoming = next as T;

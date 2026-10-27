@@ -102,14 +102,14 @@ async function fetchApplication(request: Request, env: WorkerEnvironment): Promi
       // but do not run process-start recovery or provider registration in isolates.
       const app = createApp({
         config,
-        auth: createAuth(config),
+        auth: createAuth(config, fetch, env.CF_VERSION_METADATA?.id),
         store,
         aiAvailable: async (principal) =>
           connectionDTO(await provider.status(principal.userId)).available,
         ai: { provider, agent },
       });
       const result = secure(await app.fetch(incoming), true);
-      if (url.pathname === '/api/health' && env.CF_VERSION_METADATA?.id)
+      if (env.CF_VERSION_METADATA?.id)
         result.headers.set('X-Corner-Version', env.CF_VERSION_METADATA.id);
       return result;
     } finally {
