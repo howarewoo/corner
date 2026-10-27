@@ -35,17 +35,31 @@ import type { Mutate, Notify, Overlay, View } from '../workspace/types';
 import { activityIcon, activityLabel, cap, formatDate, newId, num } from '../workspace/utils';
 import { DateControls, Empty, IconButton, MacroLine, Progress } from '../workspace/workspace-ui';
 
-
 export function LiveToday(props: TodayActions) {
   const days = weekDates(mondayOf(props.selectedDate));
-  const nutrition = useResource('nutrition', { from: days[0], through: days[6] },
-    (signal) => nutritionWindow(days[0]!, days[6]!, signal));
-  const food = useResource('food', { date: props.selectedDate }, (signal) => foodDay(props.selectedDate, signal));
+  const nutrition = useResource('nutrition', { from: days[0], through: days[6] }, (signal) =>
+    nutritionWindow(days[0]!, days[6]!, signal),
+  );
+  const food = useResource('food', { date: props.selectedDate }, (signal) =>
+    foodDay(props.selectedDate, signal),
+  );
   if (!nutrition.data || !food.data || nutrition.isError || food.isError) {
     const error = nutrition.error ?? food.error;
-    return <section aria-label="Today"><p role={error ? 'alert' : 'status'}>{error?.message ?? 'Loading your day…'}</p>
-      {error && <Button onClick={() => { void nutrition.refetch(); void food.refetch(); }}>Retry</Button>}
-    </section>;
+    return (
+      <section aria-label="Today">
+        <p role={error ? 'alert' : 'status'}>{error?.message ?? 'Loading your day…'}</p>
+        {error && (
+          <Button
+            onClick={() => {
+              void nutrition.refetch();
+              void food.refetch();
+            }}
+          >
+            Retry
+          </Button>
+        )}
+      </section>
+    );
   }
   return <TodayView {...props} state={nutrition.data} food={food.data} />;
 }
@@ -63,12 +77,32 @@ type TodayActions = {
 export default function Today({ state, ...props }: TodayActions & { state?: AppState }) {
   if (!state) return <LiveToday {...props} />;
   const entries = state.logs.filter((entry) => entry.date === props.selectedDate);
-  return <TodayView {...props}
-    state={{ ...state, revision: 0, loggedPlanIds: state.logs.flatMap((entry) => entry.planEntryId ? [entry.planEntryId] : []) }}
-    food={{ entries, totals: macroTotal(entries) }} />;
+  return (
+    <TodayView
+      {...props}
+      state={{
+        ...state,
+        revision: 0,
+        loggedPlanIds: state.logs.flatMap((entry) =>
+          entry.planEntryId ? [entry.planEntryId] : [],
+        ),
+      }}
+      food={{ entries, totals: macroTotal(entries) }}
+    />
+  );
 }
 function TodayView({
-  state, food, selectedDate, setSelectedDate, displayName, disabled, navigate, mutate, notify, setOverlay, openRecipe,
+  state,
+  food,
+  selectedDate,
+  setSelectedDate,
+  displayName,
+  disabled,
+  navigate,
+  mutate,
+  notify,
+  setOverlay,
+  openRecipe,
 }: TodayActions & { state: NutritionWindow; food: { entries: FoodEntry[]; totals: Macros } }) {
   const targetsSet =
     state.settings.setup?.nutritionTargetsSet ??
@@ -81,8 +115,7 @@ function TodayView({
   const dayPlan = state.plan
     .filter((entry) => entry.date === selectedDate)
     .sort((a, b) => SLOTS.indexOf(a.slot) - SLOTS.indexOf(b.slot));
-  const dayLogs = [...food.entries]
-    .sort((a, b) => SLOTS.indexOf(a.slot) - SLOTS.indexOf(b.slot));
+  const dayLogs = [...food.entries].sort((a, b) => SLOTS.indexOf(a.slot) - SLOTS.indexOf(b.slot));
   const actual = food.totals;
   const planned = macroTotal(
     dayPlan.flatMap((entry) => {

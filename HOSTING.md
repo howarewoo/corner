@@ -148,7 +148,6 @@ This is an empty-only, controlled-interruption deployment plan, not authorizatio
 
 Implementing this plan or passing disposable checks does not claim a live cutover, managed Auth/inbox validation, or deployment approval.
 
-
 ### Verify, operate, and recover
 
 Public probes require one `X-Corner-Version` from health and verify RPC/auth/origin/assets/security/deep-link behavior. Scope Access headers only to the supplied probe origin. Anonymous native `workspace.get` POST with canonical Origin must return `SIGN_IN_REQUIRED`. Health cannot prove DB/Auth availability, email delivery, Access completeness, or human review.

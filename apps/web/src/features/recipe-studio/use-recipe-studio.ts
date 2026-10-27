@@ -24,14 +24,10 @@ export function useRecipeStudio({
   const generation = useRef(sessionLifetime()).current;
   const [studioPrompt, setStudioPrompt] = useState('');
   const [studioCalories, setStudioCalories] = useState(
-    initialSettings.training.calories > 0
-      ? Math.round(initialSettings.training.calories / 4)
-      : 500,
+    initialSettings.training.calories > 0 ? Math.round(initialSettings.training.calories / 4) : 500,
   );
   const [studioProtein, setStudioProtein] = useState(
-    initialSettings.training.protein > 0
-      ? Math.round(initialSettings.training.protein / 4)
-      : 25,
+    initialSettings.training.protein > 0 ? Math.round(initialSettings.training.protein / 4) : 25,
   );
   const [studioMinutes, setStudioMinutes] = useState(25);
   const recipeMutation = useMutation({

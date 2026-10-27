@@ -42,21 +42,39 @@ const endpoints: Record<string, string> = {
 };
 class AccountServiceUnavailable extends ApiError {
   constructor(
-    readonly category: 'network' | 'timeout' | 'upstream_status' | 'invalid_json' | 'invalid_session',
+    readonly category:
+      | 'network'
+      | 'timeout'
+      | 'upstream_status'
+      | 'invalid_json'
+      | 'invalid_session',
     readonly upstreamStatus: number | null = null,
   ) {
-    super(503, 'ACCOUNT_SERVICE_UNAVAILABLE', 'The account service is temporarily unavailable. Try again later.');
+    super(
+      503,
+      'ACCOUNT_SERVICE_UNAVAILABLE',
+      'The account service is temporarily unavailable. Try again later.',
+    );
   }
 }
-const procedures = new Map<string, string>(Object.entries(contract).flatMap(([group, entries]) =>
-  Object.keys(entries).map((name) => [`${RPC_PREFIX}/${group}/${name}`, `${group}.${name}`] as const)));
+const procedures = new Map<string, string>(
+  Object.entries(contract).flatMap(([group, entries]) =>
+    Object.keys(entries).map(
+      (name) => [`${RPC_PREFIX}/${group}/${name}`, `${group}.${name}`] as const,
+    ),
+  ),
+);
 const cookieNames = [
   'neon-auth.session_token',
   'neon-auth.session_data',
   'neon-auth.dont_remember',
 ];
 /** Same-origin, uncached managed sessions. No browser-supplied identity is authoritative. */
-export function createAuth(config: Config, fetcher: typeof fetch = fetch, servingVersion?: string): CornerAuth {
+export function createAuth(
+  config: Config,
+  fetcher: typeof fetch = fetch,
+  servingVersion?: string,
+): CornerAuth {
   const cookies = new WeakMap<Request, string[]>();
   const failureIds = new WeakMap<Request, string>();
   const secure = new URL(config.origin).protocol === 'https:';
@@ -114,7 +132,8 @@ export function createAuth(config: Config, fetcher: typeof fetch = fetch, servin
     } catch {
       throw new AccountServiceUnavailable(timeout.aborted ? 'timeout' : 'network');
     }
-    if (response.status >= 500) throw new AccountServiceUnavailable('upstream_status', response.status);
+    if (response.status >= 500)
+      throw new AccountServiceUnavailable('upstream_status', response.status);
     const received = response.headers.getSetCookie().map(localCookie);
     if (received.length) cookies.set(request, [...(cookies.get(request) ?? []), ...received]);
     return response;
@@ -190,14 +209,18 @@ export function createAuth(config: Config, fetcher: typeof fetch = fetch, servin
           data = await response.json();
         } catch (error) {
           throw new AccountServiceUnavailable(
-            error instanceof SyntaxError ? 'invalid_json'
-              : error instanceof DOMException && error.name === 'TimeoutError' ? 'timeout' : 'network',
+            error instanceof SyntaxError
+              ? 'invalid_json'
+              : error instanceof DOMException && error.name === 'TimeoutError'
+                ? 'timeout'
+                : 'network',
             response.status,
           );
         }
         if (data === null) return null;
         const parsed = sessionSchema.safeParse(data);
-        if (!parsed.success) throw new AccountServiceUnavailable('invalid_session', response.status);
+        if (!parsed.success)
+          throw new AccountServiceUnavailable('invalid_session', response.status);
         const { user, session } = parsed.data;
         if (session.userId !== user.id || Date.parse(session.expiresAt) <= Date.now()) return null;
         if (config.neonAuthRequireEmailVerification && !user.emailVerified) return null;
@@ -207,19 +230,21 @@ export function createAuth(config: Config, fetcher: typeof fetch = fetch, servin
           const requestId = crypto.randomUUID();
           failureIds.set(request, requestId);
           // Only allowlisted procedure names and typed failure metadata leave this boundary.
-          console.warn(JSON.stringify({
-            event: 'ACCOUNT_SESSION_LOOKUP_FAILED',
-            timestamp: new Date().toISOString(),
-            service: 'managed-auth',
-            severity: 'warn',
-            deployment: config.deployment,
-            requestId,
-            procedure: procedures.get(new URL(request.url).pathname) ?? null,
-            servingVersion: servingVersion ?? null,
-            category: error.category,
-            upstreamStatus: error.upstreamStatus,
-            durationMs: Math.round(performance.now() - started),
-          }));
+          console.warn(
+            JSON.stringify({
+              event: 'ACCOUNT_SESSION_LOOKUP_FAILED',
+              timestamp: new Date().toISOString(),
+              service: 'managed-auth',
+              severity: 'warn',
+              deployment: config.deployment,
+              requestId,
+              procedure: procedures.get(new URL(request.url).pathname) ?? null,
+              servingVersion: servingVersion ?? null,
+              category: error.category,
+              upstreamStatus: error.upstreamStatus,
+              durationMs: Math.round(performance.now() - started),
+            }),
+          );
         }
         throw error;
       }

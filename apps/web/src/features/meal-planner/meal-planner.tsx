@@ -46,10 +46,21 @@ export default function MealPlanner({
   openAgent: (prompt?: string) => void;
 }) {
   const dates = weekDates(mondayOf(selectedDate));
-  const query = useResource('nutrition', { from: dates[0], through: dates[6] },
-    (signal) => nutritionWindow(dates[0]!, dates[6]!, signal), !previewState);
+  const query = useResource(
+    'nutrition',
+    { from: dates[0], through: dates[6] },
+    (signal) => nutritionWindow(dates[0]!, dates[6]!, signal),
+    !previewState,
+  );
   const state = previewState ?? query.data;
-  if (!state || (!previewState && query.isError)) return <ResourceStatus error={query.error} loading={query.isPending} retry={() => void query.refetch()} />;
+  if (!state || (!previewState && query.isError))
+    return (
+      <ResourceStatus
+        error={query.error}
+        loading={query.isPending}
+        retry={() => void query.refetch()}
+      />
+    );
   const targetsSet =
     state.settings.setup?.nutritionTargetsSet ??
     (state.settings.training.calories > 0 && state.settings.rest.calories > 0);
@@ -60,8 +71,13 @@ export default function MealPlanner({
   const copyWeek = async () => {
     try {
       const previousDays = weekDates(shiftDate(weekStart, -7));
-      const source = previewState ?? await readResource('nutrition', () =>
-        nutritionWindow(previousDays[0]!, days[6]!, new AbortController().signal), sessionLifetime());
+      const source =
+        previewState ??
+        (await readResource(
+          'nutrition',
+          () => nutritionWindow(previousDays[0]!, days[6]!, new AbortController().signal),
+          sessionLifetime(),
+        ));
       const previous = source.plan.filter((entry) => previousDays.includes(entry.date));
       if (!previous.length) {
         notify('There are no meals in the previous week to copy.');
@@ -69,14 +85,21 @@ export default function MealPlanner({
       }
       const mutation: Parameters<Mutate>[0] = {
         type: 'plan.week',
-        data: { weekStart, entries: previous.map((entry) => ({
-          ...entry, id: newId(), date: shiftDate(entry.date, 7),
-        })), replace: true },
+        data: {
+          weekStart,
+          entries: previous.map((entry) => ({
+            ...entry,
+            id: newId(),
+            date: shiftDate(entry.date, 7),
+          })),
+          replace: true,
+        },
       };
       if (source.plan.some((entry) => days.includes(entry.date))) {
         setConfirmation({
           title: 'Replace this week’s plan?',
-          description: 'Replace this week’s plan with the previous week? Your food log will stay as it is.',
+          description:
+            'Replace this week’s plan with the previous week? Your food log will stay as it is.',
           confirm: () => mutate(mutation, 'Previous week copied'),
         });
         return;

@@ -313,7 +313,11 @@ describe('authenticated planning routes with fake inference only', { concurrency
     answer = async () => completed(mealProposal());
     const run = await start('atomic-http-run');
     await agent.settled(run.id);
-    assert.equal((await recordPage(createQueries(db), alice.id, { resource: 'recipes', limit: 100 })).items.length, 0);
+    assert.equal(
+      (await recordPage(createQueries(db), alice.id, { resource: 'recipes', limit: 100 })).items
+        .length,
+      0,
+    );
     const originalApply = store.applyBatch.bind(store);
     store.applyBatch = (owner, requestId, mutations, revision, onApplied) =>
       originalApply(owner, requestId, mutations, revision, async (connection) => {
@@ -355,7 +359,11 @@ describe('authenticated planning routes with fake inference only', { concurrency
     });
     assert.equal((await readResponse(retry)).revision, 1);
     assert.equal(calls.length, 1);
-    assert.equal((await recordPage(createQueries(db), bob.id, { resource: 'recipes', limit: 100 })).items.length, 0);
+    assert.equal(
+      (await recordPage(createQueries(db), bob.id, { resource: 'recipes', limit: 100 })).items
+        .length,
+      0,
+    );
   });
 
   test('stale proposals preserve food and workout history added after the request', async () => {
@@ -381,7 +389,11 @@ describe('authenticated planning routes with fake inference only', { concurrency
       'STALE_PROPOSAL',
     );
     assert.deepEqual((await store.exportSnapshot(alice.id)).state.logs, [log]);
-    assert.equal((await recordPage(createQueries(db), alice.id, { resource: 'recipes', limit: 100 })).items.length, 0);
+    assert.equal(
+      (await recordPage(createQueries(db), alice.id, { resource: 'recipes', limit: 100 })).items
+        .length,
+      0,
+    );
     assert.equal((await agent.get(alice.id, run.id)).status, 'completed');
   });
 
@@ -538,7 +550,11 @@ describe('authenticated planning routes with fake inference only', { concurrency
     const rejected = await start('actual-fields-rejected');
     await agent.settled(rejected.id);
     assert.equal((await agent.get(alice.id, rejected.id)).status, 'failed');
-    assert.equal((await recordPage(createQueries(db), alice.id, { resource: 'sessions', limit: 100 })).items.length, 0);
+    assert.equal(
+      (await recordPage(createQueries(db), alice.id, { resource: 'sessions', limit: 100 })).items
+        .length,
+      0,
+    );
     answer = async () => completed(workoutProposal(plannedWorkout()));
     const planned = await start('targets-only-planned');
     await agent.settled(planned.id);
@@ -572,7 +588,11 @@ describe('authenticated planning routes with fake inference only', { concurrency
       body: { requestId: 'apply-removal-123', id: removal.id },
     });
     assert.equal(removed.status, 200);
-    assert.equal((await recordPage(createQueries(db), alice.id, { resource: 'sessions', limit: 100 })).items.length, 0);
+    assert.equal(
+      (await recordPage(createQueries(db), alice.id, { resource: 'sessions', limit: 100 })).items
+        .length,
+      0,
+    );
   });
 
   test('AI cannot overwrite actual values in an otherwise planned workout', async () => {

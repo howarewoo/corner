@@ -19,7 +19,11 @@ import type { Settings } from '@packages/workspace/types';
 import type { FoodWindowInput } from '@packages/api/schemas';
 import { executeEntityCommand } from './entity-commands.js';
 import { readFoodWindow } from './food-records.js';
-import { MAX_WORKSPACE_TRANSFER_BYTES, type CommandResult, type FoodWindow } from '@packages/api/workspace-data';
+import {
+  MAX_WORKSPACE_TRANSFER_BYTES,
+  type CommandResult,
+  type FoodWindow,
+} from '@packages/api/workspace-data';
 import { exportRelational, importRelational } from './workspace-portability.js';
 
 export type WorkspaceSnapshot = { state: AppState; revision: number };
@@ -77,7 +81,11 @@ export function inspectImport(rawState: unknown): {
   try {
     const serialized = JSON.stringify(rawState);
     if (!serialized || Buffer.byteLength(serialized) > MAX_WORKSPACE_TRANSFER_BYTES)
-      throw new ApiError(413, 'STATE_TOO_LARGE', 'This workspace exceeds the supported import size.');
+      throw new ApiError(
+        413,
+        'STATE_TOO_LARGE',
+        'This workspace exceeds the supported import size.',
+      );
   } catch (error) {
     if (error instanceof ApiError) throw error;
     throw new ApiError(400, 'INVALID_STATE', 'Choose a valid Corner JSON export.');
@@ -166,7 +174,6 @@ const userSchema = z
   .max(256)
   .refine((value) => !/[\u0000\r\n]/.test(value));
 
-
 export type WorkspaceBootstrap = { settings: Settings; revision: number };
 
 export class WorkspaceStore {
@@ -182,39 +189,76 @@ export class WorkspaceStore {
   }
 
   private async metadata(connection: Database, userId: string, name?: string) {
-    const row = (await connection.select().from(workspaceMetadata)
-      .where(eq(workspaceMetadata.user_id, userId)).limit(1))[0];
-    return row ? {
-      settings: SettingsSchema.parse({ ...row.settings, timezone: row.timezone }),
-      revision: revisionSchema.parse(row.revision), nextPosition: row.next_position,
-    } : { settings: createInitialState(name).settings, revision: 0, nextPosition: 0 };
+    const row = (
+      await connection
+        .select()
+        .from(workspaceMetadata)
+        .where(eq(workspaceMetadata.user_id, userId))
+        .limit(1)
+    )[0];
+    return row
+      ? {
+          settings: SettingsSchema.parse({ ...row.settings, timezone: row.timezone }),
+          revision: revisionSchema.parse(row.revision),
+          nextPosition: row.next_position,
+        }
+      : { settings: createInitialState(name).settings, revision: 0, nextPosition: 0 };
   }
 
   async foodWindow(userId: string, input: FoodWindowInput): Promise<FoodWindow> {
     userSchema.parse(userId);
-    return this.db.transaction(async (connection) => {
-      const { revision } = await this.metadata(connection, userId);
-      return readFoodWindow(connection, userId, input, revision);
-    }, { isolationLevel: 'repeatable read', accessMode: 'read only' });
+    return this.db.transaction(
+      async (connection) => {
+        const { revision } = await this.metadata(connection, userId);
+        return readFoodWindow(connection, userId, input, revision);
+      },
+      { isolationLevel: 'repeatable read', accessMode: 'read only' },
+    );
   }
 
-  async mutate(userId: string, requestId: string, mutation: unknown,
-    expectedRevision?: number): Promise<CommandResult> {
-    return this.commit(userId, requestId, { kind: 'mutation', mutation, expectedRevision },
-      expectedRevision, (connection, current, position) =>
-        executeEntityCommand(connection, userId, MutationSchema.parse(mutation), current.settings, position));
+  async mutate(
+    userId: string,
+    requestId: string,
+    mutation: unknown,
+    expectedRevision?: number,
+  ): Promise<CommandResult> {
+    return this.commit(
+      userId,
+      requestId,
+      { kind: 'mutation', mutation, expectedRevision },
+      expectedRevision,
+      (connection, current, position) =>
+        executeEntityCommand(
+          connection,
+          userId,
+          MutationSchema.parse(mutation),
+          current.settings,
+          position,
+        ),
+    );
   }
 
-  async applyBatch(userId: string, requestId: string, mutations: Mutation[],
-    expectedRevision: number, onApplied?: (connection: Transaction) => Promise<void>): Promise<CommandResult> {
-    return this.commit(userId, requestId, { kind: 'batch', mutations, expectedRevision },
-      expectedRevision, async (connection, current, position) => {
+  async applyBatch(
+    userId: string,
+    requestId: string,
+    mutations: Mutation[],
+    expectedRevision: number,
+    onApplied?: (connection: Transaction) => Promise<void>,
+  ): Promise<CommandResult> {
+    return this.commit(
+      userId,
+      requestId,
+      { kind: 'batch', mutations, expectedRevision },
+      expectedRevision,
+      async (connection, current, position) => {
         const parsed = z.array(MutationSchema).min(1).max(200).parse(mutations);
         let settings = current.settings;
         for (const command of parsed)
           settings = await executeEntityCommand(connection, userId, command, settings, position);
         return settings;
-      }, onApplied);
+      },
+      onApplied,
+    );
   }
 
   inspectImport(rawState: unknown) {
@@ -241,70 +285,124 @@ export class WorkspaceStore {
 
   async importPreview(userId: string, rawState: unknown) {
     const inspected = inspectImport(rawState);
-    return this.db.transaction(async (connection) => ({
-      summary: { ...inspected.counts, bytes: inspected.bytes },
-      canImport: await this.isEmpty(userId, connection),
-      revision: (await this.metadata(connection, userId)).revision,
-    }), { isolationLevel: 'repeatable read', accessMode: 'read only' });
+    return this.db.transaction(
+      async (connection) => ({
+        summary: { ...inspected.counts, bytes: inspected.bytes },
+        canImport: await this.isEmpty(userId, connection),
+        revision: (await this.metadata(connection, userId)).revision,
+      }),
+      { isolationLevel: 'repeatable read', accessMode: 'read only' },
+    );
   }
 
-  async replaceImport(userId: string, requestId: string, rawState: unknown,
-    expectedRevision: number): Promise<CommandResult> {
-    return this.commit(userId, requestId, { kind: 'import', state: rawState, expectedRevision },
-      expectedRevision, async (connection, _current, position) => {
+  async replaceImport(
+    userId: string,
+    requestId: string,
+    rawState: unknown,
+    expectedRevision: number,
+  ): Promise<CommandResult> {
+    return this.commit(
+      userId,
+      requestId,
+      { kind: 'import', state: rawState, expectedRevision },
+      expectedRevision,
+      async (connection, _current, position) => {
         const imported = inspectImport(rawState).state;
-        if (!await this.isEmpty(userId, connection))
-          throw new ApiError(409, 'WORKSPACE_NOT_EMPTY',
-            'Import into an empty account so your existing records are preserved.');
+        if (!(await this.isEmpty(userId, connection)))
+          throw new ApiError(
+            409,
+            'WORKSPACE_NOT_EMPTY',
+            'Import into an empty account so your existing records are preserved.',
+          );
         await importRelational(connection, userId, imported, position);
         return imported.settings;
-      });
+      },
+    );
   }
 
   /** Full portability snapshots are explicit and never used by routine commands. */
   async exportSnapshot(userId: string, name?: string): Promise<WorkspaceSnapshot> {
     userSchema.parse(userId);
-    return this.db.transaction(async (connection) => {
-      const metadata = await this.metadata(connection, userId, name);
-      const state = await exportRelational(connection, userId, metadata.settings);
-      inspectImport(state);
-      return { state, revision: metadata.revision };
-    }, { isolationLevel: 'repeatable read', accessMode: 'read only' });
+    return this.db.transaction(
+      async (connection) => {
+        const metadata = await this.metadata(connection, userId, name);
+        const state = await exportRelational(connection, userId, metadata.settings);
+        inspectImport(state);
+        return { state, revision: metadata.revision };
+      },
+      { isolationLevel: 'repeatable read', accessMode: 'read only' },
+    );
   }
 
-  private async commit(userId: string, requestId: string, payload: unknown,
+  private async commit(
+    userId: string,
+    requestId: string,
+    payload: unknown,
     expectedRevision: number | undefined,
-    update: (connection: Transaction, current: WorkspaceBootstrap, position: () => number) => Promise<Settings>,
-    onApplied?: (connection: Transaction) => Promise<void>): Promise<CommandResult> {
+    update: (
+      connection: Transaction,
+      current: WorkspaceBootstrap,
+      position: () => number,
+    ) => Promise<Settings>,
+    onApplied?: (connection: Transaction) => Promise<void>,
+  ): Promise<CommandResult> {
     userSchema.parse(userId);
     requestIdSchema.parse(requestId);
     if (expectedRevision !== undefined) revisionSchema.parse(expectedRevision);
     const hash = fingerprint(payload);
     return this.db.transaction(async (connection) => {
       await connection.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${userId}, 0))`);
-      const receipt = (await connection.select({ payload_hash: mutationReceipts.payload_hash })
-        .from(mutationReceipts).where(and(eq(mutationReceipts.user_id, userId),
-          eq(mutationReceipts.request_id, requestId))).limit(1))[0];
+      const receipt = (
+        await connection
+          .select({ payload_hash: mutationReceipts.payload_hash })
+          .from(mutationReceipts)
+          .where(
+            and(eq(mutationReceipts.user_id, userId), eq(mutationReceipts.request_id, requestId)),
+          )
+          .limit(1)
+      )[0];
       const current = await this.metadata(connection, userId);
       if (receipt) {
         if (receipt.payload_hash !== hash)
-          throw new ApiError(409, 'REQUEST_ID_REUSED', 'This request identifier was already used for a different change.');
+          throw new ApiError(
+            409,
+            'REQUEST_ID_REUSED',
+            'This request identifier was already used for a different change.',
+          );
         await onApplied?.(connection);
         return { revision: current.revision };
       }
       if (expectedRevision !== undefined && current.revision !== expectedRevision)
-        throw new ApiError(409, 'REVISION_CONFLICT', 'Your workspace changed. Refresh and review this change again.');
+        throw new ApiError(
+          409,
+          'REVISION_CONFLICT',
+          'Your workspace changed. Refresh and review this change again.',
+        );
       if (current.revision >= Number.MAX_SAFE_INTEGER)
-        throw new ApiError(409, 'WORKSPACE_LIMIT', 'This workspace cannot accept further revisions.');
+        throw new ApiError(
+          409,
+          'WORKSPACE_LIMIT',
+          'This workspace cannot accept further revisions.',
+        );
       const { timezone: initialTimezone, ...initialSettings } = current.settings;
-      await connection.insert(workspaceMetadata).values({
-        user_id: userId, revision: current.revision, next_position: current.nextPosition,
-        timezone: initialTimezone, settings: initialSettings,
-      }).onConflictDoNothing();
+      await connection
+        .insert(workspaceMetadata)
+        .values({
+          user_id: userId,
+          revision: current.revision,
+          next_position: current.nextPosition,
+          timezone: initialTimezone,
+          settings: initialSettings,
+        })
+        .onConflictDoNothing();
       let nextPosition = current.nextPosition;
       const position = () => {
         if (nextPosition >= Number.MAX_SAFE_INTEGER)
-          throw new ApiError(409, 'WORKSPACE_LIMIT', 'This workspace cannot accept further records.');
+          throw new ApiError(
+            409,
+            'WORKSPACE_LIMIT',
+            'This workspace cannot accept further records.',
+          );
         return nextPosition++;
       };
       let settings: Settings;
@@ -318,17 +416,38 @@ export class WorkspaceStore {
       }
       const revision = current.revision + 1;
       const { timezone, ...preferences } = settings;
-      await connection.update(workspaceMetadata).set({
-        revision, next_position: nextPosition, timezone, settings: preferences,
-      }).where(eq(workspaceMetadata.user_id, userId));
+      await connection
+        .update(workspaceMetadata)
+        .set({
+          revision,
+          next_position: nextPosition,
+          timezone,
+          settings: preferences,
+        })
+        .where(eq(workspaceMetadata.user_id, userId));
       await connection.insert(mutationReceipts).values({
-        user_id: userId, request_id: requestId, payload_hash: hash, revision,
+        user_id: userId,
+        request_id: requestId,
+        payload_hash: hash,
+        revision,
         created_at: new Date().toISOString(),
       });
-      await connection.delete(mutationReceipts).where(and(eq(mutationReceipts.user_id, userId),
-        inArray(mutationReceipts.request_id, connection.select({ request_id: mutationReceipts.request_id })
-          .from(mutationReceipts).where(eq(mutationReceipts.user_id, userId))
-          .orderBy(desc(mutationReceipts.revision)).offset(1000))));
+      await connection
+        .delete(mutationReceipts)
+        .where(
+          and(
+            eq(mutationReceipts.user_id, userId),
+            inArray(
+              mutationReceipts.request_id,
+              connection
+                .select({ request_id: mutationReceipts.request_id })
+                .from(mutationReceipts)
+                .where(eq(mutationReceipts.user_id, userId))
+                .orderBy(desc(mutationReceipts.revision))
+                .offset(1000),
+            ),
+          ),
+        );
       await onApplied?.(connection);
       return { revision };
     });

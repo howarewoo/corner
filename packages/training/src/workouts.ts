@@ -432,8 +432,13 @@ export function prepareTrainingCommand(
 ): PreparedTrainingCommand {
   const mutation = TrainingMutationSchema.parse(raw);
   const next: PreparedTrainingCommand = {
-    sessions: [], deletedSessionIds: [], templates: [], checkIns: [],
-    requests: [], reviews: [], scheduledDates: [],
+    sessions: [],
+    deletedSessionIds: [],
+    templates: [],
+    checkIns: [],
+    requests: [],
+    reviews: [],
+    scheduledDates: [],
   };
   switch (mutation.type) {
     case 'training.session.save': {
@@ -472,9 +477,11 @@ export function prepareTrainingCommand(
         ...dependencies.scheduledDates,
         ...dependencies.sessions.map((session) => session.date),
       ]);
-      const entries = starterTrainingWeek(mutation.data.weekStart, dependencies.templates, dependencies.schedule).filter(
-        (session) => !occupied.has(session.date),
-      );
+      const entries = starterTrainingWeek(
+        mutation.data.weekStart,
+        dependencies.templates,
+        dependencies.schedule,
+      ).filter((session) => !occupied.has(session.date));
       next.sessions.push(...entries);
       markDates(
         next,

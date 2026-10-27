@@ -45,14 +45,20 @@ async function appendFixtureMigration(folder: string, name: string, source: stri
   const journal = JSON.parse(await readFile(journalPath, 'utf8'));
   const previous = journal.entries.at(-1);
   const prefix = String(journal.entries.length).padStart(4, '0');
-  const snapshot = JSON.parse(await readFile(
-    join(folder, `meta/${String(previous.idx).padStart(4, '0')}_snapshot.json`), 'utf8',
-  ));
+  const snapshot = JSON.parse(
+    await readFile(
+      join(folder, `meta/${String(previous.idx).padStart(4, '0')}_snapshot.json`),
+      'utf8',
+    ),
+  );
   snapshot.prevId = snapshot.id;
   snapshot.id = randomUUID();
   journal.entries.push({
-    idx: journal.entries.length, version: '7', when: previous.when + 1,
-    tag: `${prefix}_${name}`, breakpoints: true,
+    idx: journal.entries.length,
+    version: '7',
+    when: previous.when + 1,
+    tag: `${prefix}_${name}`,
+    breakpoints: true,
   });
   await writeFile(journalPath, JSON.stringify(journal));
   await writeFile(join(folder, `meta/${prefix}_snapshot.json`), JSON.stringify(snapshot));
@@ -83,8 +89,11 @@ test('a failing pending migration rolls back its DDL and ledger entry without lo
     const before = await savedRecord(f.database);
     const history = (await f.database.query('SELECT * FROM __drizzle_migrations')).rows;
     await cp(migrationsFolder, folder, { recursive: true });
-    await appendFixtureMigration(folder, 'failure',
-      'ALTER TABLE workspace_metadata ADD COLUMN migration_note TEXT;\n--> statement-breakpoint\nSELECT corner_missing_migration_function();');
+    await appendFixtureMigration(
+      folder,
+      'failure',
+      'ALTER TABLE workspace_metadata ADD COLUMN migration_note TEXT;\n--> statement-breakpoint\nSELECT corner_missing_migration_function();',
+    );
     await assert.rejects(migrate(f.database, folder));
     assert.deepEqual((await f.database.query('SELECT * FROM workspace_metadata')).rows, before);
     assert.deepEqual((await f.database.query('SELECT * FROM __drizzle_migrations')).rows, history);
@@ -139,7 +148,11 @@ test('native follow-up migration preserves application records and legacy audit 
     ]);
     const audit = (await f.database.query('SELECT * FROM corner_schema_migrations')).rows;
     await cp(migrationsFolder, folder, { recursive: true });
-    await appendFixtureMigration(folder, 'next', 'CREATE TABLE migration_next (id TEXT PRIMARY KEY);');
+    await appendFixtureMigration(
+      folder,
+      'next',
+      'CREATE TABLE migration_next (id TEXT PRIMARY KEY);',
+    );
     await migrate(f.database, folder);
     assert.equal(
       (await f.database.query("SELECT to_regclass('migration_next') AS name")).rows[0].name,
