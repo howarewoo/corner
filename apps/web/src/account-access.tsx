@@ -407,8 +407,7 @@ export default function AccountAccess({
         </div>
         <div>
           <h1>
-            Make room for
-            <br />
+            Make room for <br />
             your next step.
           </h1>
           <p>
