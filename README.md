@@ -97,7 +97,9 @@ Run `pnpm run format` to write formatting changes, or `pnpm run format:check` fo
 
 [`.oxfmtrc.json`](.oxfmtrc.json) keeps single quotes and existing `package.json` key ordering, and excludes generated test bundles. Oxfmt also respects `.gitignore` and skips lockfiles. Other formatting options use Oxfmt's defaults.
 
-Formatter installation does not reformat the existing repository. The initial repository-wide check reports existing formatting differences; formatting is an explicit command, not part of `verify` or CI.
+OMP automatically runs `pnpm run format <touched files>` after successful `write` and `edit` tool calls through [`.omp/hooks/post/format.js`](.omp/hooks/post/format.js). The hook formats only touched files inside this checkout, including edit rename destinations; directories, deleted files, internal-resource writes, and external paths are skipped. The root `format` script owns formatter selection and options. Formatter failures are reported without undoing the file mutation. Start a new OMP session to load a newly added hook, and re-read formatted files before using hashline anchors.
+
+The hook does not reformat the existing repository or format shell-command writes. Outside OMP, run the formatting commands explicitly. Formatting is not part of `verify` or CI.
 
 ### Linting
 
