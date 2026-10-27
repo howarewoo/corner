@@ -60,6 +60,7 @@ export async function verifyArtifact(directory) {
           'configurationSha256',
           'configurationEntry',
           'workerEntry',
+          'maintenanceWorkerEntry',
           'workerName',
           'migrationEntry',
           'files',
@@ -90,7 +91,10 @@ export async function verifyArtifact(directory) {
     !files[manifest.workerEntry] ||
     !files[manifest.migrationEntry] ||
     !files['assets/index.html'] ||
-    files['wrangler.json'] !== manifest.configurationSha256
+    files['wrangler.json'] !== manifest.configurationSha256 ||
+    (manifest.maintenanceWorkerEntry !== undefined &&
+      (manifest.maintenanceWorkerEntry !== 'worker/maintenance-worker.js' ||
+        !files[manifest.maintenanceWorkerEntry]))
   )
     throw new Error('Invalid artifact entry points.');
   const config = JSON.parse(await readFile(join(directory, 'wrangler.json'), 'utf8'));
@@ -165,22 +169,30 @@ export async function verifyArtifact(directory) {
   };
 }
 
-export function qualificationRecovery(current, prior) {
-  if (!prior) return 'bootstrap';
-  if (current.generation === prior.generation) return 'compatible';
+export function qualificationRecovery(current, prior, preserving = false) {
+  if (!prior) {
+    if (preserving) throw new Error('Preserving cutover qualification requires a previous artifact.');
+    return 'bootstrap';
+  }
+  if (current.generation === prior.generation) {
+    if (preserving)
+      throw new Error('Preserving cutover qualification requires a document-to-relational transition.');
+    return 'compatible';
+  }
   if (current.generation === 'relational-v1' && prior.generation === 'document-v1')
-    return 'forward-only';
+    return preserving ? 'preserving' : 'forward-only';
   throw new Error('Unsupported artifact storage generation transition.');
 }
 
-export function assertQualificationGeneration(report, current, prior) {
+export function assertQualificationGeneration(report, current, prior, preserving = false) {
   if (
     report.generation !== current.generation ||
     report.previousGeneration !== (prior?.generation ?? null) ||
-    report.recovery !== qualificationRecovery(current, prior)
+    report.recovery !== qualificationRecovery(current, prior, preserving)
   )
     throw new Error('Qualification storage generation mismatch.');
 }
+
 
 async function copyTree(source, destination) {
   const files = await inventory(source, '', false);
@@ -212,6 +224,7 @@ export async function packageArtifact({ root: sourceRoot = root, out, sourceSha 
   await access(join(sourceRoot, 'apps/server/dist/migrate.js'));
   const workerSource = join(sourceRoot, 'apps/server/dist/worker');
   await access(join(workerSource, 'worker.js'));
+  await access(join(workerSource, 'maintenance-worker.js'));
   await access(join(sourceRoot, 'apps/web/dist/index.html'));
   await mkdir(dirname(out), { recursive: true });
   await mkdir(out); // Deliberately not recursive: existing outputs are immutable.
@@ -268,6 +281,7 @@ export async function packageArtifact({ root: sourceRoot = root, out, sourceSha 
     configurationSha256: files['wrangler.json'],
     configurationEntry: 'wrangler.json',
     workerEntry: 'worker/worker.js',
+    maintenanceWorkerEntry: 'worker/maintenance-worker.js',
     workerName: original.name,
     migrationEntry: 'migration/dist/migrate.mjs',
     files,
@@ -279,8 +293,14 @@ export async function packageArtifact({ root: sourceRoot = root, out, sourceSha 
   return verifyArtifact(out);
 }
 
-export async function qualifyArtifact({ candidate, previous, bootstrap = false, report }) {
-  if (!report || Boolean(previous) === Boolean(bootstrap))
+export async function qualifyArtifact({
+  candidate,
+  previous,
+  bootstrap = false,
+  preserving = false,
+  report,
+}) {
+  if (!report || Boolean(previous) === Boolean(bootstrap) || (preserving && bootstrap))
     throw new Error(
       'Qualification requires exactly one of --previous or --bootstrap, and --report.',
     );
@@ -292,6 +312,12 @@ export async function qualifyArtifact({ candidate, previous, bootstrap = false, 
       throw new Error('Qualification report must be outside artifacts.');
   }
   const current = await verifyArtifact(candidate);
+  if (
+    preserving &&
+    (!current.manifest.maintenanceWorkerEntry ||
+      !current.manifest.files[current.manifest.maintenanceWorkerEntry])
+  )
+    throw new Error('Preserving cutover qualification requires a packaged maintenance Worker entry.');
   let prior;
   if (previous) {
     previous = resolve(previous);
@@ -311,11 +337,13 @@ export async function qualifyArtifact({ candidate, previous, bootstrap = false, 
     if (
       prior.generation === 'relational-v1' &&
       (receipt.generation !== prior.generation ||
-        !['bootstrap', 'forward-only', 'compatible'].includes(receipt.recovery) ||
+        !['bootstrap', 'forward-only', 'preserving', 'compatible'].includes(receipt.recovery) ||
         (receipt.bootstrap
           ? receipt.previousGeneration !== null || receipt.recovery !== 'bootstrap'
           : receipt.previousGeneration !==
-            (receipt.recovery === 'forward-only' ? 'document-v1' : 'relational-v1')))
+            (['forward-only', 'preserving'].includes(receipt.recovery)
+              ? 'document-v1'
+              : 'relational-v1')))
     )
       throw new Error('Previous artifact has no matching storage generation qualification.');
     for (const [index, item] of prior.manifest.migrations.entries()) {
@@ -326,7 +354,7 @@ export async function qualifyArtifact({ candidate, previous, bootstrap = false, 
         );
     }
   }
-  const recovery = qualificationRecovery(current, prior);
+  const recovery = qualificationRecovery(current, prior, preserving);
   execFileSync(
     process.execPath,
     [
@@ -343,6 +371,7 @@ export async function qualifyArtifact({ candidate, previous, bootstrap = false, 
             join(previous, prior.manifest.migrationEntry),
           ]
         : []),
+      ...(preserving ? ['--preserving-cutover', 'qualification-cutover-operation'] : []),
     ],
     { cwd: root, env: process.env, stdio: 'inherit' },
   );
@@ -380,6 +409,9 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     if (flag === '--bootstrap') {
       if (options.bootstrap) throw new Error('Duplicate --bootstrap');
       options.bootstrap = true;
+    } else if (flag === '--preserving') {
+      if (options.preserving) throw new Error('Duplicate --preserving');
+      options.preserving = true;
     } else if (
       ['--source', '--previous', '--report'].includes(flag) &&
       args[index + 1] &&

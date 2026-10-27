@@ -2,6 +2,9 @@ import assert from 'node:assert/strict';
 import { after, before, test } from 'node:test';
 import type { Pool } from 'pg';
 import { createApp } from '../app.ts';
+import maintenanceWorker from '../maintenance-worker.ts';
+import { maintenanceChecks } from '../../../../scripts/release.mjs';
+import type { WorkerEnvironment } from '../worker.ts';
 import type { Config } from '../config.ts';
 import { WorkspaceStore } from '../store.ts';
 import { createQueries } from '../queries.ts';
@@ -100,4 +103,113 @@ test('account proxy and exact paths do not broaden during route composition', as
     (await request('/api/rpc/workspace/%67et', { headers: { Cookie: cookie } })).status,
     404,
   );
+});
+
+test('maintenance Worker responds 503 with Retry-After and no-store without invoking DB, Auth, or ASSETS', async () => {
+  const versionId = '11111111-2222-4333-8444-555555555555';
+  let assetsCalled = 0;
+  const env: WorkerEnvironment = {
+    CORNER_ORIGIN: 'https://corner.example.test',
+    DATABASE_URL: 'postgresql://unused:unused@127.0.0.1:5432/unused',
+    NEON_AUTH_BASE_URL: 'https://auth.example.test/neondb/auth',
+    NEON_AUTH_REQUIRE_EMAIL_VERIFICATION: 'true',
+    BETTER_AUTH_SECRET: 'synthetic-maintenance-secret-over-32-characters',
+    CORNER_TOKEN_ENCRYPTION_KEY: Buffer.alloc(32, 9).toString('base64'),
+    CF_VERSION_METADATA: { id: versionId },
+    ASSETS: {
+      fetch: async () => {
+        assetsCalled += 1;
+        throw new Error('ASSETS binding must never be invoked during maintenance');
+      },
+    },
+  };
+  const ctx = {
+    waitUntil() {},
+    passThroughOnException() {},
+  } as unknown as ExecutionContext;
+
+  const wrongOrigin = await maintenanceWorker.fetch(
+    new Request('https://wrong.example.test/api/health'),
+    env,
+    ctx,
+  );
+  assert.equal(wrongOrigin.status, 400);
+  assert.equal(wrongOrigin.headers.get('X-Corner-Version'), versionId);
+  assert.equal(await wrongOrigin.text(), 'Open Corner using its configured origin.');
+
+  const health = await maintenanceWorker.fetch(
+    new Request('https://corner.example.test/api/health'),
+    env,
+    ctx,
+  );
+  assert.equal(health.status, 503);
+  assert.equal(health.headers.get('X-Corner-Version'), versionId);
+  assert.equal(health.headers.get('Retry-After'), '60');
+  assert.equal(health.headers.get('Cache-Control'), 'private, no-store');
+  assert.deepEqual(await health.json(), {
+    ok: false,
+    maintenance: true,
+    code: 'MAINTENANCE_ACTIVE',
+    error: 'Corner is temporarily unavailable for scheduled maintenance. Please try again shortly.',
+  });
+
+  const rpc = await maintenanceWorker.fetch(
+    new Request('https://corner.example.test/api/rpc/workspace/get', {
+      method: 'POST',
+      headers: { Origin: 'https://corner.example.test', 'Content-Type': 'application/json' },
+      body: '{}',
+    }),
+    env,
+    ctx,
+  );
+  assert.equal(rpc.status, 503);
+  const rpcPayload = await rpc.json();
+  assert.deepEqual(rpcPayload, {
+    json: {
+      defined: true,
+      code: 'SERVICE_UNAVAILABLE',
+      status: 503,
+      message:
+        'Corner is temporarily unavailable for scheduled maintenance. Please try again shortly.',
+      data: { code: 'MAINTENANCE_ACTIVE' },
+    },
+  });
+
+  const authReq = await maintenanceWorker.fetch(
+    new Request('https://corner.example.test/api/auth/sign-in/email', {
+      method: 'POST',
+      headers: { Origin: 'https://corner.example.test', 'Content-Type': 'application/json' },
+      body: '{}',
+    }),
+    env,
+    ctx,
+  );
+  assert.equal(authReq.status, 503);
+  assert.equal((await authReq.json()).code, 'MAINTENANCE_ACTIVE');
+
+  const page = await maintenanceWorker.fetch(
+    new Request('https://corner.example.test/'),
+    env,
+    ctx,
+  );
+  assert.equal(page.status, 503);
+  assert.equal(page.headers.get('Retry-After'), '60');
+  assert.match(page.headers.get('Content-Security-Policy') ?? '', /frame-ancestors 'none'/);
+  assert.match(await page.text(), /Corner is updating/);
+
+  const asset = await maintenanceWorker.fetch(
+    new Request('https://corner.example.test/assets/index.js'),
+    env,
+    ctx,
+  );
+  assert.equal(asset.status, 503);
+  assert.equal(asset.headers.get('Retry-After'), '60');
+
+  await maintenanceChecks(
+    'https://corner.example.test',
+    versionId,
+    (url: URL | string, init?: RequestInit) =>
+      maintenanceWorker.fetch(new Request(url, init), env, ctx),
+  );
+  assert.equal(assetsCalled, 0);
 });

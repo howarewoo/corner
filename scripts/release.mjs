@@ -17,7 +17,22 @@ import { loadCiArtifact } from './ci-artifact.mjs';
 const sha = /^[a-f0-9]{40}$/;
 const digest = /^[a-f0-9]{64}$/;
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
+const cutoverId = /^[A-Za-z0-9._:-]{1,128}$/;
 const phases = new Set(['deployed', 'public-passed', 'complete']);
+const maintenancePhases = new Set([
+  'maintenance-uploaded',
+  'maintenance-active',
+  'cutover-validated',
+  'maintenance-complete',
+  'maintenance-aborted',
+]);
+const cutoverDbPhases = new Set([
+  'untouched',
+  'source-staged',
+  'native-schema-advanced',
+  'import-partial',
+  'completed',
+]);
 const hash = (value) => createHash('sha256').update(value).digest('hex');
 class ReleaseError extends Error {}
 export class PublicCheckError extends ReleaseError {
@@ -113,6 +128,35 @@ export function validateReceipt(receipt) {
       receipt.qualification.candidateDigest === receipt.candidateDigest,
     'Unqualified production receipt',
   );
+  return receipt;
+}
+export function validateMaintenanceReceipt(receipt) {
+  need(
+    receipt?.format === 4 &&
+      receipt.kind === releaseTarget().kind &&
+      receipt.workerName === 'corner' &&
+      maintenancePhases.has(receipt.phase) &&
+      sha.test(receipt.sourceSha) &&
+      digest.test(receipt.candidateDigest) &&
+      digest.test(receipt.configurationSha256) &&
+      digest.test(receipt.runtimeConfigurationDigest) &&
+      receipt.preservingCutover === true &&
+      cutoverId.test(receipt.operationId ?? '') &&
+      uuid.test(receipt.originalVersionId ?? '') &&
+      uuid.test(receipt.maintenanceVersionId ?? '') &&
+      uuid.test(receipt.candidateVersionId ?? '') &&
+      receipt.qualification?.passed === true &&
+      receipt.qualification.candidateDigest === receipt.candidateDigest &&
+      receipt.qualification.recovery === 'preserving' &&
+      receipt.qualification.generation === 'relational-v1' &&
+      receipt.qualification.previousGeneration === 'document-v1',
+    'Invalid format-4 maintenance release journal',
+  );
+  id(receipt.runId);
+  id(receipt.artifactId);
+  id(receipt.planId);
+  id(receipt.baselineId);
+  if (receipt.schemaId != null) id(receipt.schemaId);
   return receipt;
 }
 export function assertBaseline(expected, current) {
@@ -213,6 +257,15 @@ export class GitHub {
       );
     return current;
   }
+  async maintenance() {
+    if (typeof this.all !== 'function') return null;
+    const records = await this.all(
+      `deployments?environment=${releaseTarget().environment}-maintenance&task=corner-release`,
+    );
+    const current = records[0] ?? null;
+    if (current) validateMaintenanceReceipt(current.payload);
+    return current;
+  }
   async record(payload, state = 'in_progress') {
     const target = releaseTarget();
     const environment =
@@ -220,7 +273,9 @@ export class GitHub {
         ? `${target.environment}-plan`
         : payload.phase === 'schema-attempted'
           ? `${target.environment}-schema`
-          : target.environment;
+          : maintenancePhases.has(payload.phase)
+            ? `${target.environment}-maintenance`
+            : target.environment;
     const record = await this.api('deployments', {
       method: 'POST',
       body: JSON.stringify({
@@ -245,7 +300,9 @@ export class GitHub {
       body: JSON.stringify({
         state,
         auto_inactive:
-          state === 'success' && ['planned', 'schema-attempted'].includes(payload.phase),
+          state === 'success' &&
+          (['planned', 'schema-attempted'].includes(payload.phase) ||
+            maintenancePhases.has(payload.phase)),
         environment_url: payload.origin,
         description: `Corner ${payload.phase}`,
       }),
@@ -318,6 +375,8 @@ export async function plan({
   bootstrap = false,
   provisionedVersionId = null,
   rollbackId,
+  preservingCutover = false,
+  operationId = null,
   configuration,
   automatic = false,
   work,
@@ -327,8 +386,12 @@ export async function plan({
   const target = releaseTarget();
   if (automatic) {
     need(
-      !bootstrap && !rollbackId && provisionedVersionId === null,
-      'Automatic production cannot bootstrap, adopt, or roll back a Worker',
+      !bootstrap &&
+        !rollbackId &&
+        provisionedVersionId === null &&
+        !preservingCutover &&
+        !operationId,
+      'Automatic production cannot bootstrap, adopt, or roll back a Worker, or run a preserving cutover',
     );
     await assertCurrentMain(github, sourceSha);
   }
@@ -337,8 +400,20 @@ export async function plan({
       (bootstrap && typeof provisionedVersionId === 'string' && uuid.test(provisionedVersionId)),
     'A provisioned Worker version pin is valid only for explicit bootstrap',
   );
+  need(
+    preservingCutover
+      ? !bootstrap && !rollbackId && provisionedVersionId === null && cutoverId.test(operationId ?? '')
+      : !operationId,
+    'Preserving cutover requires an explicit operator release and valid operation ID without bootstrap or rollback',
+  );
   const baseline = await github.baseline();
   const schemaState = await github.schema();
+  const maintenanceState = await github.maintenance?.();
+  if (maintenanceState)
+    need(
+      ['maintenance-complete', 'maintenance-aborted'].includes(maintenanceState.payload.phase),
+      'Maintenance cutover is active; explicitly resume or abort before planning another release',
+    );
   const schemaReference = schemaState?.payload ?? baseline?.payload;
   need(
     bootstrap ? !baseline : baseline,
@@ -422,10 +497,20 @@ export async function plan({
         'Candidate does not preserve CURRENT attempted migration history',
       );
     }
+    if (preservingCutover) {
+      need(
+        previous?.generation === 'document-v1' &&
+          candidate.generation === 'relational-v1' &&
+          candidate.manifest.maintenanceWorkerEntry === 'worker/maintenance-worker.js' &&
+          Boolean(candidate.manifest.files?.[candidate.manifest.maintenanceWorkerEntry]),
+        'Preserving cutover requires a document-v1 baseline and relational-v1 candidate with a packaged maintenance Worker',
+      );
+    }
     qualification = await qualify({
       candidate: candidate.directory,
       previous: previous?.directory,
       bootstrap,
+      preserving: preservingCutover,
       report: join(work, 'qualification.json'),
     });
     need(
@@ -435,7 +520,7 @@ export async function plan({
         qualification.bootstrap === bootstrap,
       'Release qualification mismatch',
     );
-    assertQualificationGeneration(qualification, candidate, previous);
+    assertQualificationGeneration(qualification, candidate, previous, preservingCutover);
     await assertForwardSource(github, baseline?.payload, sourceSha);
   }
   const payload = {
@@ -456,6 +541,8 @@ export async function plan({
     provisionedVersionId,
     rollback: Boolean(rollbackId),
     rollbackVersionId: rollbackId ? reference.versionId : null,
+    preservingCutover: Boolean(preservingCutover),
+    operationId: preservingCutover ? String(operationId) : null,
     qualification,
     bindingsRevision: config.bindingsRevision,
     targetQualification: rollbackId ? reference.qualification : null,
@@ -589,6 +676,495 @@ export async function publicChecks(origin, versionId, fetcher = fetch, access = 
     throw new PublicCheckError('Public request or response failed (private output withheld)');
   }
 }
+export async function maintenanceChecks(origin, versionId, fetcher = fetch, access = {}) {
+  const accessHeaders = {};
+  const clientId = access['CF-Access-Client-Id'];
+  const clientSecret = access['CF-Access-Client-Secret'];
+  if (clientId && clientSecret) {
+    accessHeaders['CF-Access-Client-Id'] = clientId;
+    accessHeaders['CF-Access-Client-Secret'] = clientSecret;
+  }
+  const call = (path, init = {}) =>
+    fetcher(new URL(path, origin), {
+      redirect: 'manual',
+      signal: AbortSignal.timeout(30000),
+      ...init,
+      headers: { ...accessHeaders, 'Cache-Control': 'no-cache', ...init.headers },
+    });
+  const check = (value, message, retryable = false) => {
+    if (!value) throw new PublicCheckError(message, retryable);
+  };
+  try {
+    const assertGate = async (response, kind = 'page') => {
+      check(
+        response.status === 503 &&
+          response.headers.get('X-Corner-Version') === versionId &&
+          /no-store/.test(response.headers.get('Cache-Control') ?? '') &&
+          /^[1-9][0-9]*$/.test(response.headers.get('Retry-After') ?? ''),
+        `Maintenance gate or version identity mismatch (HTTP ${response.status})`,
+        true,
+      );
+      if (kind === 'rpc') {
+        const payload = await response.json();
+        check(
+          payload?.json?.defined === true &&
+            payload.json.code === 'SERVICE_UNAVAILABLE' &&
+            payload.json.status === 503 &&
+            payload.json.data?.code === 'MAINTENANCE_ACTIVE',
+          'Maintenance RPC contract failed',
+        );
+      } else if (kind === 'api') {
+        const payload = await response.json();
+        check(
+          payload?.ok === false &&
+            payload.maintenance === true &&
+            payload.code === 'MAINTENANCE_ACTIVE',
+          'Maintenance API contract failed',
+        );
+      } else {
+        check(
+          /frame-ancestors 'none'/.test(response.headers.get('Content-Security-Policy') ?? ''),
+          'Maintenance security headers failed',
+        );
+      }
+    };
+    await assertGate(await call('/api/health'), 'api');
+    await assertGate(await call('/'), 'page');
+    await assertGate(await call('/assets/index.js'), 'page');
+    await assertGate(
+      await call('/api/auth/sign-in/email', {
+        method: 'POST',
+        headers: { Origin: origin, 'Content-Type': 'application/json' },
+        body: '{}',
+      }),
+      'api',
+    );
+    await assertGate(
+      await call('/api/rpc/workspace/get', {
+        method: 'POST',
+        headers: { Origin: origin, 'Content-Type': 'application/json' },
+        body: '{}',
+      }),
+      'rpc',
+    );
+  } catch (error) {
+    if (error instanceof PublicCheckError) throw error;
+    throw new PublicCheckError('Maintenance gate check failed (private output withheld)', true);
+  }
+}
+function parseCutoverState(raw, expectedOperationId) {
+  let state;
+  try {
+    state = JSON.parse(String(raw ?? '').trim());
+  } catch {
+    throw new ReleaseError('Cutover state inspection failed (output withheld)');
+  }
+  need(
+    state &&
+      typeof state === 'object' &&
+      !Array.isArray(state) &&
+      cutoverDbPhases.has(state.phase) &&
+      (state.operationId == null || state.operationId === expectedOperationId),
+    'Cutover state inspection reported an invalid or mismatched database phase',
+  );
+  return state;
+}
+export async function validateCutoverCandidate(
+  candidate,
+  expectedOperationId,
+  load = (path) => import(pathToFileURL(path).href),
+) {
+  let database;
+  let connection;
+  const refused = () =>
+    new ReleaseError(
+      'Preserving cutover blocked by candidate schema/data validation (private details withheld)',
+    );
+  try {
+    const {
+      createDatabase,
+      directDatabaseUrl,
+      storageGeneration,
+      migrationHistory,
+      currentSchema,
+      validatePersistedRecords,
+      inspectDocumentCutover,
+    } = await load(join(candidate.directory, candidate.manifest.migrationEntry));
+    need(
+      typeof createDatabase === 'function' &&
+        storageGeneration === 'relational-v1' &&
+        typeof migrationHistory === 'function' &&
+        typeof currentSchema === 'function' &&
+        typeof validatePersistedRecords === 'function' &&
+        typeof inspectDocumentCutover === 'function',
+      'Candidate lacks packaged preserving-cutover validators',
+    );
+    const rawUrl = need(
+      process.env.DATABASE_URL_UNPOOLED,
+      'Protected unpooled database connection required',
+    );
+    const url = typeof directDatabaseUrl === 'function' ? directDatabaseUrl(rawUrl) : rawUrl;
+    database = createDatabase(url);
+    const cutoverState = await inspectDocumentCutover(database, expectedOperationId);
+    need(
+      cutoverState?.phase === 'completed' && cutoverState.operationId === expectedOperationId,
+      'Cutover is not completed for the pinned operation',
+    );
+    connection = await database.connect();
+    await connection.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+    const schema = await currentSchema(connection);
+    await migrationHistory(connection, schema, candidate.manifest.migrations, true);
+    await validatePersistedRecords(connection, schema);
+    await connection.query('COMMIT');
+  } catch (error) {
+    if (connection) {
+      try {
+        await connection.query('ROLLBACK');
+      } catch {
+        /* Keep private details withheld. */
+      }
+    }
+    if (error instanceof ReleaseError) throw error;
+    throw refused();
+  } finally {
+    try {
+      connection?.release();
+    } catch {
+      throw refused();
+    } finally {
+      if (database) {
+        try {
+          await database.end();
+        } catch {
+          throw refused();
+        }
+      }
+    }
+  }
+}
+async function executePreservingCutover({
+  github,
+  planRecord,
+  planPayload: p,
+  baseline,
+  currentBaselineId = baseline.id,
+  schemaState,
+  maintenanceState,
+  candidate,
+  config,
+  target,
+  work,
+  wrangler,
+  common,
+  vars,
+  packagedConfig,
+  reverify,
+  execute,
+  cf,
+  checkPublic,
+  checkMaintenance,
+  validateCutover,
+}) {
+  need(
+    candidate.manifest.maintenanceWorkerEntry === 'worker/maintenance-worker.js' &&
+      Boolean(candidate.manifest.files?.[candidate.manifest.maintenanceWorkerEntry]),
+    'Candidate lacks a packaged maintenance Worker entry',
+  );
+  const maintenanceCfg = join(work, 'wrangler-maintenance.json');
+  await writeFile(
+    maintenanceCfg,
+    JSON.stringify({
+      ...packagedConfig,
+      name: target.workerName,
+      workers_dev: config.workersDev,
+      preview_urls: true,
+      main: join(candidate.directory, candidate.manifest.maintenanceWorkerEntry),
+      assets: { ...packagedConfig.assets, directory: join(candidate.directory, 'assets') },
+    }),
+  );
+  const maintenanceCommon = ['--config', maintenanceCfg];
+  const inspectDbPhase = () => {
+    const raw = execute(
+      process.execPath,
+      [join(candidate.directory, candidate.manifest.migrationEntry), '--inspect-cutover'],
+      { cwd: candidate.directory, env: process.env },
+    );
+    return parseCutoverState(raw, p.operationId);
+  };
+  const assertSingleLiveVersion = async (expectedVersionIds, message) => {
+    const live = await cf(`workers/scripts/${target.workerName}/deployments`);
+    const version =
+      live.deployments?.[0]?.versions?.length === 1 &&
+      live.deployments[0].versions[0].percentage === 100
+        ? live.deployments[0].versions[0].version_id
+        : null;
+    need(version && expectedVersionIds.includes(version), message);
+    return version;
+  };
+  const deployExactVersion = async (versionId, cfgArgs = common) => {
+    wrangler(['versions', 'deploy', `${versionId}@100%`, ...cfgArgs, '--yes']);
+    await assertSingleLiveVersion(
+      [versionId],
+      'Cloudflare traffic does not match the pinned Worker version',
+    );
+  };
+  let originalVersionId = maintenanceState?.payload.originalVersionId ?? baseline.payload.versionId;
+  let maintenanceVersionId = maintenanceState?.payload.maintenanceVersionId ?? null;
+  let candidateVersionId = maintenanceState?.payload.candidateVersionId ?? null;
+  let currentPhase = maintenanceState?.payload.phase ?? null;
+  const isPlanSchemaAttempt =
+    schemaState &&
+    String(schemaState.id) !== String(p.schemaId ?? '') &&
+    schemaState.payload.planId === String(planRecord.id) &&
+    schemaState.payload.candidateDigest === p.candidateDigest;
+  let activeSchemaId = isPlanSchemaAttempt ? String(schemaState.id) : p.schemaId;
+  const baseMaintenancePayload = () => ({
+    ...p,
+    planId: String(planRecord.id),
+    baselineId: String(baseline.id),
+    schemaId: activeSchemaId,
+    originalVersionId,
+    maintenanceVersionId,
+    candidateVersionId,
+  });
+  if (!maintenanceState) {
+    await assertSingleLiveVersion(
+      [originalVersionId],
+      'Live release drifted from the approved baseline; explicit recovery required',
+    );
+    const initialDb = inspectDbPhase();
+    need(
+      initialDb.phase === 'untouched',
+      'Database already has an active or completed cutover state; inspect before starting cutover',
+    );
+    const maintOut = wrangler([
+      'versions',
+      'upload',
+      ...maintenanceCommon,
+      '--no-bundle',
+      ...vars,
+    ]);
+    maintenanceVersionId = maintOut.match(/Worker Version ID:\s*([a-f0-9-]{36})/)?.[1];
+    need(
+      uuid.test(maintenanceVersionId ?? ''),
+      'Maintenance upload did not return an exact Worker version ID',
+    );
+    const candOut = wrangler(['versions', 'upload', ...common, '--no-bundle', ...vars]);
+    candidateVersionId = candOut.match(/Worker Version ID:\s*([a-f0-9-]{36})/)?.[1];
+    need(
+      uuid.test(candidateVersionId ?? ''),
+      'Candidate upload did not return an exact Worker version ID',
+    );
+    await reverify();
+    await github.record(
+      { ...baseMaintenancePayload(), phase: 'maintenance-uploaded' },
+      'success',
+    );
+    currentPhase = 'maintenance-uploaded';
+  } else {
+    need(
+      originalVersionId === baseline.payload.versionId &&
+        uuid.test(maintenanceVersionId ?? '') &&
+        uuid.test(candidateVersionId ?? ''),
+      'Persisted maintenance journal version pins do not match baseline',
+    );
+  }
+  const liveVersion = await assertSingleLiveVersion(
+    [originalVersionId, maintenanceVersionId, candidateVersionId],
+    'Live Worker drifted to an unpinned version during maintenance cutover',
+  );
+  let dbState = inspectDbPhase();
+  if (
+    liveVersion !== candidateVersionId ||
+    !['cutover-validated', 'maintenance-complete'].includes(currentPhase)
+  ) {
+    if (liveVersion !== maintenanceVersionId) {
+      need(
+        liveVersion === originalVersionId && dbState.phase === 'untouched',
+        'Cannot enter maintenance from an unexpected live version or mutated database without active maintenance',
+      );
+      await deployExactVersion(maintenanceVersionId, maintenanceCommon);
+    }
+    await checkMaintenance(p.origin, maintenanceVersionId);
+    if (currentPhase === 'maintenance-uploaded') {
+      await github.record(
+        { ...baseMaintenancePayload(), phase: 'maintenance-active' },
+        'success',
+      );
+      currentPhase = 'maintenance-active';
+    }
+    dbState = inspectDbPhase();
+    if (dbState.phase !== 'completed') {
+      if (!isPlanSchemaAttempt) {
+        assertBaseline(p.schemaId, schemaState?.id);
+        const schemaAttempt = await github.record({
+          ...p,
+          phase: 'schema-attempted',
+          planId: String(planRecord.id),
+        });
+        activeSchemaId = String(schemaAttempt.id);
+        await runDeployment(github, schemaAttempt, () =>
+          execute(
+            process.execPath,
+            [
+              join(candidate.directory, candidate.manifest.migrationEntry),
+              '--preserving-cutover',
+              '--operation-id',
+              p.operationId,
+            ],
+            { cwd: candidate.directory, env: process.env },
+          ),
+        );
+      } else {
+        await runDeployment(github, schemaState, () =>
+          execute(
+            process.execPath,
+            [
+              join(candidate.directory, candidate.manifest.migrationEntry),
+              '--preserving-cutover',
+              '--operation-id',
+              p.operationId,
+            ],
+            { cwd: candidate.directory, env: process.env },
+          ),
+        );
+      }
+      dbState = inspectDbPhase();
+      need(
+        dbState.phase === 'completed',
+        'Preserving cutover did not reach completed database state',
+      );
+    } else if (!isPlanSchemaAttempt) {
+      assertBaseline(p.schemaId, schemaState?.id);
+      const schemaAttempt = await github.record(
+        {
+          ...p,
+          phase: 'schema-attempted',
+          planId: String(planRecord.id),
+        },
+        'success',
+      );
+      activeSchemaId = String(schemaAttempt.id);
+    } else {
+      await github.status(schemaState, 'success');
+    }
+    await reverify();
+    await validateCutover(candidate, p.operationId);
+    if (currentPhase !== 'cutover-validated') {
+      await github.record(
+        { ...baseMaintenancePayload(), phase: 'cutover-validated' },
+        'success',
+      );
+      currentPhase = 'cutover-validated';
+    }
+    assertBaseline(currentBaselineId, (await github.baseline())?.id);
+    await deployExactVersion(candidateVersionId, common);
+  } else {
+    need(
+      dbState.phase === 'completed',
+      'Candidate version is live before database cutover completion',
+    );
+    if (!isPlanSchemaAttempt) {
+      assertBaseline(p.schemaId, schemaState?.id);
+      const schemaAttempt = await github.record(
+        {
+          ...p,
+          phase: 'schema-attempted',
+          planId: String(planRecord.id),
+        },
+        'success',
+      );
+      activeSchemaId = String(schemaAttempt.id);
+    }
+    await reverify();
+    await validateCutover(candidate, p.operationId);
+    assertBaseline(currentBaselineId, (await github.baseline())?.id);
+  }
+  const receipt = {
+    ...p,
+    phase: 'deployed',
+    versionId: candidateVersionId,
+    planId: String(planRecord.id),
+    schemaId: activeSchemaId,
+    originalVersionId,
+    maintenanceVersionId,
+    candidateVersionId,
+    rollbackCompatibility: null,
+    qualification: p.qualification,
+  };
+  const latestBaseline = await github.baseline();
+  assertBaseline(currentBaselineId, latestBaseline?.id);
+  if (
+    latestBaseline?.payload.phase === 'complete' &&
+    latestBaseline.payload.planId === String(planRecord.id) &&
+    latestBaseline.payload.candidateDigest === p.candidateDigest &&
+    latestBaseline.payload.versionId === candidateVersionId
+  ) {
+    await reverify();
+    await assertSingleLiveVersion(
+      [candidateVersionId],
+      'Cloudflare traffic does not match approved Worker',
+    );
+    await checkPublic(p.origin, candidateVersionId);
+    if (currentPhase !== 'maintenance-complete') {
+      await github.record(
+        { ...baseMaintenancePayload(), phase: 'maintenance-complete' },
+        'success',
+      );
+    }
+    return latestBaseline;
+  }
+  const deployed =
+    latestBaseline &&
+    latestBaseline.payload.planId === String(planRecord.id) &&
+    latestBaseline.payload.candidateDigest === p.candidateDigest &&
+    latestBaseline.payload.versionId === candidateVersionId &&
+    ['deployed', 'public-passed'].includes(latestBaseline.payload.phase)
+      ? latestBaseline
+      : await github.record(receipt);
+  let publicVerified = false;
+  try {
+    return await runDeployment(
+      github,
+      deployed,
+      async () => {
+        await reverify();
+        await assertSingleLiveVersion(
+          [candidateVersionId],
+          'Cloudflare traffic does not match approved Worker',
+        );
+        await checkPublic(p.origin, candidateVersionId);
+        publicVerified = true;
+        const completed = await recordCompletion(github, receipt);
+        if (currentPhase !== 'maintenance-complete') {
+          await github.record(
+            { ...baseMaintenancePayload(), phase: 'maintenance-complete' },
+            'success',
+          );
+        }
+        return completed;
+      },
+      'inactive',
+    );
+  } catch (error) {
+    if (!publicVerified) {
+      try {
+        await deployExactVersion(maintenanceVersionId, maintenanceCommon);
+        await checkMaintenance(p.origin, maintenanceVersionId);
+        await github.record(
+          { ...baseMaintenancePayload(), phase: 'cutover-validated' },
+          'success',
+        );
+      } catch (restoreError) {
+        throw new AggregateError(
+          [error, restoreError],
+          'Public verification failed and restoring the pinned maintenance Worker also failed',
+        );
+      }
+    }
+    throw error;
+  }
+}
 export async function validateLiveRollback(
   target,
   current,
@@ -659,6 +1235,7 @@ export async function promote({
   work,
   execute = command,
   checkPublic = publicChecks,
+  checkMaintenance = maintenanceChecks,
   cf = cloudflare,
   qualify = qualifyArtifact,
   verify = verifyArtifact,
@@ -685,7 +1262,7 @@ export async function promote({
   await assertCurrentCandidate();
   if (automatic)
     need(
-      !p.bootstrap && !p.rollback,
+      !p.bootstrap && !p.rollback && !p.preservingCutover,
       'Automatic production cannot execute an operator release plan',
     );
   const config = validateConfiguration(configuration);
@@ -695,6 +1272,12 @@ export async function promote({
   );
   const baseline = await github.baseline();
   assertBaseline(p.baselineId, baseline?.id);
+  const maintenanceState = await github.maintenance?.();
+  if (maintenanceState)
+    need(
+      ['maintenance-complete', 'maintenance-aborted'].includes(maintenanceState.payload.phase),
+      'Maintenance cutover is already active; use explicit resume or abort',
+    );
   need(
     p.format === 4 &&
       sha.test(p.sourceSha) &&
@@ -705,7 +1288,11 @@ export async function promote({
         (p.bootstrap &&
           typeof p.provisionedVersionId === 'string' &&
           uuid.test(p.provisionedVersionId))) &&
-      typeof p.rollback === 'boolean',
+      typeof p.rollback === 'boolean' &&
+      (p.preservingCutover === undefined || typeof p.preservingCutover === 'boolean') &&
+      (p.preservingCutover
+        ? !p.bootstrap && !p.rollback && cutoverId.test(p.operationId ?? '')
+        : !p.operationId),
     'Invalid persisted release plan',
   );
   id(p.runId);
@@ -720,7 +1307,8 @@ export async function promote({
           uuid.test(p.rollbackVersionId)
         : p.qualification.candidateDigest === p.candidateDigest &&
           p.qualification.previousDigest === (baseline?.payload.candidateDigest ?? null) &&
-          p.qualification.bootstrap === p.bootstrap),
+          p.qualification.bootstrap === p.bootstrap &&
+          (!p.preservingCutover || p.qualification.recovery === 'preserving')),
     'Persisted release qualification does not bind candidate and current baseline',
   );
   const schemaState = await github.schema();
@@ -773,7 +1361,7 @@ export async function promote({
     const serving = baseline
       ? await github.artifact(baseline.payload, join(work, 'serving-generation'))
       : undefined;
-    assertQualificationGeneration(p.qualification, candidate, serving);
+    assertQualificationGeneration(p.qualification, candidate, serving, Boolean(p.preservingCutover));
   }
   const toolVersion = createRequire(new URL('../apps/server/package.json', import.meta.url))(
     'wrangler/package.json',
@@ -853,6 +1441,30 @@ export async function promote({
     execute('pnpm', ['--filter', 'server', 'exec', 'wrangler', ...args], {
       env: { ...process.env, WRANGLER_SEND_METRICS: 'false' },
     });
+  if (p.preservingCutover) {
+    return executePreservingCutover({
+      github,
+      planRecord: prepared,
+      planPayload: p,
+      baseline,
+      schemaState,
+      maintenanceState: null,
+      candidate,
+      config,
+      target,
+      work,
+      wrangler,
+      common,
+      vars,
+      packagedConfig,
+      reverify,
+      execute,
+      cf,
+      checkPublic,
+      checkMaintenance,
+      validateCutover: validateCutoverCandidate,
+    });
+  }
   let versionId = p.rollbackVersionId;
   if (p.rollback) {
     validateReceipt(baseline.payload);
@@ -986,6 +1598,12 @@ export async function complete({
     p.origin === config.origin && p.runtimeConfigurationDigest === config.digest,
     'Completion configuration differs from the deployed release',
   );
+  const maintenanceState = await github.maintenance?.();
+  if (maintenanceState)
+    need(
+      ['maintenance-complete', 'maintenance-aborted'].includes(maintenanceState.payload.phase),
+      'Cannot complete normal release while maintenance cutover is active; use cutover resume',
+    );
   const schema = await github.schema();
   if (p.rollback) assertBaseline(p.schemaId, schema?.id);
   else
@@ -1023,6 +1641,216 @@ export async function complete({
     },
     'inactive',
   );
+}
+export async function resume({
+  github,
+  planId,
+  operationId,
+  abort = false,
+  configuration,
+  work,
+  execute = command,
+  checkPublic = publicChecks,
+  checkMaintenance = maintenanceChecks,
+  cf = cloudflare,
+  verify = verifyArtifact,
+  validateCutover = validateCutoverCandidate,
+}) {
+  const prepared = await github.api(`deployments/${id(planId)}`);
+  const p = prepared.payload;
+  const target = releaseTarget();
+  need(
+    prepared.environment === `${target.environment}-plan` &&
+      p?.phase === 'planned' &&
+      p.kind === target.kind &&
+      p.workerName === target.workerName &&
+      p.preservingCutover === true &&
+      !p.automatic &&
+      !p.bootstrap &&
+      !p.rollback &&
+      cutoverId.test(p.operationId ?? '') &&
+      p.operationId === operationId,
+    'Resume requires the exact planned preserving-cutover deployment and operation ID',
+  );
+  const config = validateConfiguration(configuration);
+  need(
+    config.digest === p.runtimeConfigurationDigest && p.origin === config.origin,
+    'Production configuration changed from the pinned preserving cutover plan',
+  );
+  const maintenanceState = await github.maintenance?.();
+  need(
+    maintenanceState &&
+      [
+        'maintenance-uploaded',
+        'maintenance-active',
+        'cutover-validated',
+        'maintenance-complete',
+      ].includes(maintenanceState.payload.phase) &&
+      maintenanceState.payload.planId === String(prepared.id) &&
+      maintenanceState.payload.operationId === p.operationId &&
+      maintenanceState.payload.candidateDigest === p.candidateDigest,
+    'Resume requires an active maintenance journal bound to the pinned plan and operation ID',
+  );
+  const currentBaseline = await github.baseline();
+  need(currentBaseline, 'Missing production baseline');
+  if (maintenanceState.payload.phase === 'maintenance-complete') {
+    need(
+      !abort &&
+        String(currentBaseline.id) !== String(p.baselineId) &&
+        currentBaseline.payload.planId === String(prepared.id) &&
+        currentBaseline.payload.candidateDigest === p.candidateDigest &&
+        currentBaseline.payload.versionId === maintenanceState.payload.candidateVersionId &&
+        ['deployed', 'public-passed'].includes(currentBaseline.payload.phase),
+      'Preserving cutover is already complete',
+    );
+  }
+  let originalBaseline = currentBaseline;
+  if (String(currentBaseline.id) !== String(p.baselineId)) {
+    need(
+      !abort &&
+        currentBaseline.payload.planId === String(prepared.id) &&
+        currentBaseline.payload.candidateDigest === p.candidateDigest &&
+        currentBaseline.payload.versionId === maintenanceState.payload.candidateVersionId &&
+        ['deployed', 'public-passed', 'complete'].includes(currentBaseline.payload.phase),
+      'Production baseline drifted from the pinned preserving cutover plan',
+    );
+    originalBaseline = await github.api(`deployments/${id(p.baselineId)}`);
+    validateReceipt(originalBaseline.payload);
+  }
+  const schemaState = await github.schema();
+  if (schemaState && String(schemaState.id) !== String(p.schemaId ?? '')) {
+    need(
+      schemaState.payload.planId === String(prepared.id) &&
+        schemaState.payload.candidateDigest === p.candidateDigest,
+      'Schema journal drifted from the pinned preserving cutover plan',
+    );
+  } else {
+    assertBaseline(p.schemaId, schemaState?.id);
+  }
+  need(process.env.DATABASE_URL_UNPOOLED, 'Protected unpooled migration connection is required');
+  const candidate = await github.artifact(p, join(work, 'candidate'));
+  need(
+    candidate.digest === p.candidateDigest &&
+      candidate.manifest.configurationSha256 === p.configurationSha256,
+    'Approved candidate changed',
+  );
+  const serving = await github.artifact(originalBaseline.payload, join(work, 'serving-generation'));
+  assertQualificationGeneration(p.qualification, candidate, serving, true);
+  const toolVersion = createRequire(new URL('../apps/server/package.json', import.meta.url))(
+    'wrangler/package.json',
+  ).version;
+  need(
+    toolVersion === candidate.manifest.wranglerVersion,
+    'Pinned deployment tool differs from the qualified artifact; select a matching main candidate',
+  );
+  const settings = await cf(`workers/scripts/${target.workerName}/settings`);
+  need(
+    [
+      'DATABASE_URL',
+      'NEON_AUTH_BASE_URL',
+      'BETTER_AUTH_SECRET',
+      'CORNER_TOKEN_ENCRYPTION_KEY',
+    ].every((name) =>
+      settings.bindings?.some((binding) => binding.name === name && binding.type === 'secret_text'),
+    ),
+    'Production Worker is missing required protected secret bindings',
+  );
+  const packagedConfig = JSON.parse(
+    await readFile(join(candidate.directory, candidate.manifest.configurationEntry), 'utf8'),
+  );
+  const cfg = join(work, 'wrangler-deploy.json');
+  await writeFile(
+    cfg,
+    JSON.stringify({
+      ...packagedConfig,
+      name: target.workerName,
+      workers_dev: config.workersDev,
+      preview_urls: true,
+      main: join(candidate.directory, candidate.manifest.workerEntry),
+      assets: { ...packagedConfig.assets, directory: join(candidate.directory, 'assets') },
+    }),
+  );
+  const reverify = async () =>
+    need(
+      (await verify(candidate.directory)).digest === p.candidateDigest,
+      'Immutable payload changed during promotion',
+    );
+  const vars = Object.entries(config.value).flatMap(([key, value]) => ['--var', `${key}:${value}`]);
+  const common = ['--config', cfg];
+  const wrangler = (args) =>
+    execute('pnpm', ['--filter', 'server', 'exec', 'wrangler', ...args], {
+      env: { ...process.env, WRANGLER_SEND_METRICS: 'false' },
+    });
+  if (abort) {
+    need(
+      ['maintenance-uploaded', 'maintenance-active'].includes(maintenanceState.payload.phase),
+      'Pre-cutover abort refused after cutover validation',
+    );
+    const raw = execute(
+      process.execPath,
+      [join(candidate.directory, candidate.manifest.migrationEntry), '--inspect-cutover'],
+      { cwd: candidate.directory, env: process.env },
+    );
+    const dbState = parseCutoverState(raw, p.operationId);
+    need(
+      dbState.phase === 'untouched',
+      `Pre-cutover abort refused: database cutover phase is ${dbState.phase}; resume forward instead`,
+    );
+    const originalVersionId = maintenanceState.payload.originalVersionId;
+    const maintenanceVersionId = maintenanceState.payload.maintenanceVersionId;
+    const live = await cf(`workers/scripts/${target.workerName}/deployments`);
+    const liveVersion =
+      live.deployments?.[0]?.versions?.length === 1 &&
+      live.deployments[0].versions[0].percentage === 100
+        ? live.deployments[0].versions[0].version_id
+        : null;
+    need(
+      liveVersion === originalVersionId || liveVersion === maintenanceVersionId,
+      'Live Worker drifted to an unpinned version; cannot automatically abort maintenance',
+    );
+    if (liveVersion !== originalVersionId) {
+      wrangler(['versions', 'deploy', `${originalVersionId}@100%`, ...common, '--yes']);
+    }
+    const after = await cf(`workers/scripts/${target.workerName}/deployments`);
+    need(
+      after.deployments?.[0]?.versions?.length === 1 &&
+        after.deployments[0].versions[0].version_id === originalVersionId &&
+        after.deployments[0].versions[0].percentage === 100,
+      'Cloudflare traffic does not match the restored original Worker version',
+    );
+    await checkPublic(p.origin, originalVersionId);
+    assertBaseline(originalBaseline.id, (await github.baseline())?.id);
+    return github.record(
+      {
+        ...maintenanceState.payload,
+        phase: 'maintenance-aborted',
+      },
+      'success',
+    );
+  }
+  return executePreservingCutover({
+    github,
+    planRecord: prepared,
+    planPayload: p,
+    baseline: originalBaseline,
+    currentBaselineId: currentBaseline.id,
+    schemaState,
+    maintenanceState,
+    candidate,
+    config,
+    target,
+    work,
+    wrangler,
+    common,
+    vars,
+    packagedConfig,
+    reverify,
+    execute,
+    cf,
+    checkPublic,
+    checkMaintenance,
+    validateCutover,
+  });
 }
 export async function deploy(options) {
   const prepared = await plan({
@@ -1068,6 +1896,8 @@ async function main() {
         bootstrap: process.env.RELEASE_BOOTSTRAP === 'true',
         provisionedVersionId: process.env.RELEASE_PROVISIONED_VERSION_ID || undefined,
         rollbackId: process.env.RELEASE_ROLLBACK_ID || undefined,
+        preservingCutover: process.env.RELEASE_PRESERVING_CUTOVER === 'true',
+        operationId: process.env.RELEASE_OPERATION_ID || undefined,
         configuration: process.env[`${target.prefix}_CONFIG_JSON`],
         work,
       });
@@ -1078,6 +1908,15 @@ async function main() {
         configuration: process.env[`${target.prefix}_CONFIG_JSON`],
         work,
       });
+    else if (action === 'resume')
+      record = await resume({
+        github,
+        planId: process.env.RELEASE_PLAN_ID,
+        operationId: process.env.RELEASE_OPERATION_ID,
+        abort: process.env.RELEASE_CUTOVER_ABORT === 'true',
+        configuration: process.env[`${target.prefix}_CONFIG_JSON`],
+        work,
+      });
     else if (action === 'complete')
       record = await complete({
         github,
@@ -1085,7 +1924,7 @@ async function main() {
         configuration: process.env[`${target.prefix}_CONFIG_JSON`],
         work,
       });
-    else throw new Error('Usage: node scripts/release.mjs deploy|plan|promote|complete');
+    else throw new Error('Usage: node scripts/release.mjs deploy|plan|promote|resume|complete');
     if (process.env.GITHUB_OUTPUT)
       await writeFile(process.env.GITHUB_OUTPUT, `deployment_id=${record.id}\n`, { flag: 'a' });
     console.log(
