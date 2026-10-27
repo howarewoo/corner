@@ -67,7 +67,7 @@ Shared Base UI toasts use flat, solid fills without borders. Their separation co
 
 Dropdown menu popups use a flat solid fill, no border or container focus ring, and `--shadow-floating` for separation. Dark mode uses a stronger black floating shadow; keyboard focus remains visible on individual menu items. Popover and select borders are unchanged.
 
-Focus is an interaction cue, not a permanent border treatment. Preserve the existing `:focus-visible`, higher-contrast, forced-color, and reduced-motion rules in the global stylesheet. Their presence is not a claim of audited accessibility conformance.
+Focus is an interaction cue, not a permanent border treatment. The noninteractive shared `WorkspaceHeader` title remains programmatically focusable (`tabIndex={-1}`) for workspace entry and navigation, but its focus is intentionally outline-free in the product and catalog, including light, dark, and forced-color modes. Interactive controls retain visible keyboard focus. Preserve the existing `:focus-visible`, higher-contrast, forced-color, and reduced-motion rules in the global stylesheet. Their presence is not a claim of audited accessibility conformance.
 
 Workspace load and refresh errors use a persistent error toast with a Retry action, not an inline banner that shifts page content. Successful recovery clears the toast; initial-load failures continue to pause mutations until hydration succeeds.
 
