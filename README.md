@@ -63,30 +63,30 @@ The build compiles the nutrition, training, workspace, agent, and API packages i
 
 ### Workspace commands
 
-| Root command                                     | Result                                                                                                                                      |
-| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `pnpm run dev`                                   | Isolated local PostgreSQL/Auth and development apps; optional `--port=45100` selects three consecutive loopback ports                       |
-| `pnpm run dev:seed`                              | Explicitly create empty/demo local users; preserve existing fixture edits                                                                   |
-| `pnpm run dev:down`                              | Stop owned local services without deleting data                                                                                             |
-| `pnpm run dev:reset --confirm-delete-local-data` | Delete only the owned local database; retain keys                                                                                           |
-| `pnpm run build`                                 | Cached dependency-aware builds for all workspaces                                                                                           |
-| `pnpm run check`                                 | Type checks for all apps and shared packages                                                                                                |
-| `pnpm run lint`                                  | Repository-wide Oxlint checks with the registered shadcn lint plugin                                                                        |
-| `pnpm run format`                                | Format supported repository files with Oxfmt                                                                                                |
-| `pnpm run format:check`                          | Check formatting without changing files                                                                                                     |
+| Root command                                     | Result                                                                                                                                       |
+| ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm run dev`                                   | Isolated local PostgreSQL/Auth and development apps; optional `--port=45100` selects three consecutive loopback ports                        |
+| `pnpm run dev:seed`                              | Explicitly create empty/demo local users; preserve existing fixture edits                                                                    |
+| `pnpm run dev:down`                              | Stop owned local services without deleting data                                                                                              |
+| `pnpm run dev:reset --confirm-delete-local-data` | Delete only the owned local database; retain keys                                                                                            |
+| `pnpm run build`                                 | Cached dependency-aware builds for all workspaces                                                                                            |
+| `pnpm run check`                                 | Type checks for all apps and shared packages                                                                                                 |
+| `pnpm run lint`                                  | Repository-wide Oxlint checks with the registered shadcn lint plugin                                                                         |
+| `pnpm run format`                                | Format supported repository files with Oxfmt                                                                                                 |
+| `pnpm run format:check`                          | Check formatting without changing files                                                                                                      |
 | `pnpm test`                                      | Native Node server suite and Vitest web suite, with Turbo shared-build prerequisites                                                         |
 | `pnpm run test:browser`                          | After a full build: Chromium desktop and WebKit phone journeys against disposable PostgreSQL/Auth on port 43141                              |
-| `pnpm run smoke`                                 | Actual compiled-server account, proxy, health, and shutdown checks                                                                          |
+| `pnpm run smoke`                                 | Actual compiled-server account, proxy, health, and shutdown checks                                                                           |
 | `pnpm run smoke:dev`                             | Actual two-app development proxy, session, and shared exercise-catalog checks; excludes the design catalog                                   |
-| `pnpm start`                                     | The compiled production server and built web app                                                                                            |
-| `pnpm run db:generate`                           | Generate reviewed SQL and snapshots from the server-owned Drizzle schema; no database connection required                                   |
-| `pnpm run db:check`                              | Check Drizzle Kit migration snapshot consistency                                                                                            |
-| `pnpm run db:migrate`                            | Apply checked-in Drizzle migrations through `DATABASE_URL_UNPOOLED`, after a build                                                          |
-| `pnpm run db:baseline:staging`                   | Explicit verified migration-history baseline for a new empty schema-only staging branch; build first, private operator environment required |
-| `pnpm run build:workers`                         | Build all workspaces and dry-run the single full-stack `corner` Worker without deployment                                                   |
-| `pnpm run verify -- --plan`                      | Show conservative changed-path selection without running checks                                                                             |
-| `pnpm run verify`                                | Run selected local checks; `-- --full` forces the complete qualification                                                                    |
-| `pnpm run test:ci`                               | Native Node CI, release, and artifact regression tests                                                                                      |
+| `pnpm start`                                     | The compiled production server and built web app                                                                                             |
+| `pnpm run db:generate`                           | Generate reviewed SQL and snapshots from the server-owned Drizzle schema; no database connection required                                    |
+| `pnpm run db:check`                              | Check Drizzle Kit migration snapshot consistency                                                                                             |
+| `pnpm run db:migrate`                            | Apply checked-in Drizzle migrations through `DATABASE_URL_UNPOOLED`, after a build                                                           |
+| `pnpm run db:baseline:staging`                   | Explicit verified migration-history baseline for a new empty schema-only staging branch; build first, private operator environment required  |
+| `pnpm run build:workers`                         | Build all workspaces and dry-run the single full-stack `corner` Worker without deployment                                                    |
+| `pnpm run verify -- --plan`                      | Show conservative changed-path selection without running checks                                                                              |
+| `pnpm run verify`                                | Run selected local checks; `-- --full` forces the complete qualification                                                                     |
+| `pnpm run test:ci`                               | Native Node CI, release, and artifact regression tests                                                                                       |
 | `pnpm run smoke:workers`                         | Actual full-stack workerd runtime with a local Neon-compatible WebSocket proxy, disposable PostgreSQL, and HTTPS Auth, after `build:workers` |
 
 For a focused build, use `pnpm run build --filter=server` or `pnpm run build --filter=web`. Turbo also builds their domain/API dependencies. Each app declares its own dependencies; import models and validation directly from their owning `@packages/nutrition`, `@packages/training`, `@packages/workspace`, or `@packages/agent` subpath, and the application contract through `@packages/api`, rather than relative paths into another workspace.
@@ -97,7 +97,9 @@ Run `pnpm run format` to write formatting changes, or `pnpm run format:check` fo
 
 [`.oxfmtrc.json`](.oxfmtrc.json) keeps single quotes and existing `package.json` key ordering, and excludes generated test bundles. Oxfmt also respects `.gitignore` and skips lockfiles. Other formatting options use Oxfmt's defaults.
 
-Formatter installation does not reformat the existing repository. The initial repository-wide check reports existing formatting differences; formatting is an explicit command, not part of `verify` or CI.
+OMP automatically runs `pnpm run format <touched files>` after successful `write` and `edit` tool calls through [`.omp/hooks/post/format.js`](.omp/hooks/post/format.js). The hook formats only touched files inside this checkout, including edit rename destinations; directories, deleted files, internal-resource writes, and external paths are skipped. The root `format` script owns formatter selection and options. Formatter failures are reported without undoing the file mutation. Start a new OMP session to load a newly added hook, and re-read formatted files before using hashline anchors.
+
+The hook does not reformat the existing repository or format shell-command writes. Outside OMP, run the formatting commands explicitly. Formatting is not part of `verify` or CI.
 
 ### Linting
 
@@ -212,7 +214,6 @@ Application tables live in Neon Postgres, separate from managed accounts in `neo
 
 Workspace entities are individual relational records. Normal authenticated startup returns only settings/revision/AI availability; screens use bounded date queries, cursor pages, details, and complete-range aggregates. Cursor invalidation or a concurrent revision change requires refreshing the relevant slice rather than silently skipping records. Recorded nutrition/workout snapshots survive edits or deletion of source recipes/templates.
 
-
 For a complete backup:
 
 1. Use Neon restore/branch facilities within your plan's retention window, and maintain encrypted off-service PostgreSQL dumps using the **direct** connection. Include managed account data; follow Neon's restore procedures for Auth.
@@ -225,7 +226,7 @@ Application queries use Drizzle ORM over the existing `pg` pools. Edit [schema.t
 
 Upgrades run `pnpm install --frozen-lockfile`, `pnpm run build`, and the explicit `pnpm run db:migrate` before restarting one Corner process. The official Drizzle migrator applies pending SQL transactionally under a migration lock; Corner verifies the applied hash/timestamp prefix first. The native `__drizzle_migrations` ledger lives in the application schema, including each owned disposable test schema. Startup never applies migrations. Never edit applied SQL or its Kit journal/snapshots.
 
-The `relational-v1` transition appends `0001_zippy_silver_sable.sql` to native Drizzle history. Before any retirement, the same migration transaction exclusively locks `workspace_state` and refuses **every persisted row**, including default/settings-only rows. Stop old writers before applying it. There is no backfill, reset, dual write, or legacy fallback read; unexpected records require operator reconciliation and preserved backups, not deletion. This first relational baseline supports reviewed forward repair only: an old document-only binary cannot recover the migrated SQL. Later compatible relational releases retain ordinary prior/candidate/recovered-code qualification and current-data validation. Existing native history, historical receipts/audit metadata, Auth, provider credentials/keys, and backups are never rewritten or reset. See [HOSTING.md](HOSTING.md#relational-storage-cutover) for the procedure and recovery boundary; source changes do not authorize a live cutover.
+The `relational-v1` transition appends `0001_zippy_silver_sable.sql` to native Drizzle history. Ordinary `db:migrate` (`--apply`) exclusively locks `workspace_state` and refuses **every persisted row**, including default/settings-only rows. Populated `0000` workspaces use only the explicit `--preserving-cutover --operation-id <id>` operation (and read-only `--inspect-cutover`) during a controlled maintenance window: it preflights all documents before native DDL, stages raw rows and provenance into `corner_cutover_recovery` outside the application schema, clears and fences `workspace_state` with `CHECK (false)`, runs unchanged native `0001`, and atomically imports each owner's relational records at its original revision with a durable completion marker before read-only persisted-record validation. There is no reset, dual write, or legacy fallback read; unmarked destination conflicts or invalid documents fail closed without data deletion. Once source staging commits, recovery stays in maintenance and resumes forward; an old document-only binary cannot serve fenced or migrated storage. Existing native history, retained recovery archives, historical receipts/audit metadata, Auth, provider credentials/keys, and backups are never rewritten or reset. See [HOSTING.md](HOSTING.md#relational-storage-cutover) for the procedure and recovery boundary; source changes do not authorize a live cutover.
 
 ## Hosted deployment preparation
 
@@ -280,14 +281,14 @@ Full CI installs both engines and runs the browser suite after building. Failure
 
 Local targeting uses [scripts/verify.mjs](scripts/verify.mjs). Selection compares the working tree and untracked files with `HEAD` by default; use `--base origin/main` for the complete branch. `--scope docs|web|design|ui|server|full` is an advisory local override, never an independent merge qualification. Missing/unknown comparisons, mixed workspaces, shared/server/auth/runtime changes, and verification policy select the full profile. PR and main CI always run `--full`; there is no targeted CI activation or duplicate advisory CI job.
 
-| Change                                                                    | Selected work                                                                                                |
-| ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| Root product/hosting Markdown or `docs/*.md`                              | Local Markdown link targets; source claims and anchors remain human checks                                   |
-| Ordinary web components/styles                                            | Web build and Vitest suite, with Turbo shared prerequisites                                                    |
-| Design catalog                                                            | Catalog build/typecheck                                                                                      |
-| Shared UI source                                                          | UI, web, and catalog builds plus existing web suite                                                          |
-| Server/shared/auth/runtime/browser, mixed or uncertain changes             | CI/release regressions, root check, server/web suites, all builds, Playwright journeys, and runtime smokes    |
-| Workflows, scripts, dependency/build configuration, unknown root controls | Full profile                                                                                                 |
+| Change                                                                    | Selected work                                                                                              |
+| ------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| Root product/hosting Markdown or `docs/*.md`                              | Local Markdown link targets; source claims and anchors remain human checks                                 |
+| Ordinary web components/styles                                            | Web build and Vitest suite, with Turbo shared prerequisites                                                |
+| Design catalog                                                            | Catalog build/typecheck                                                                                    |
+| Shared UI source                                                          | UI, web, and catalog builds plus existing web suite                                                        |
+| Server/shared/auth/runtime/browser, mixed or uncertain changes            | CI/release regressions, root check, server/web suites, all builds, Playwright journeys, and runtime smokes |
+| Workflows, scripts, dependency/build configuration, unknown root controls | Full profile                                                                                               |
 
 All non-documentation rows also run repository-wide lint.
 
@@ -308,7 +309,7 @@ The configuration helper detects personal versus organization ownership. Persona
 
 `--report` appends profile/command elapsed times as JSONL, not a qualification receipt. Compare at least three docs/web/full runs with the same runner and cache conditions; report the median, cold-install cost, and runner cost separately. No speed SLA or CI saving is inferred from a plan preview or Turbo cache hit.
 
-Both persistent branches run the full profile, then package/exercise the standalone format-4 single-Worker payload before uploading `corner-release-<sourceSHA>` with 90-day retention. Preserve current/recovery references longer; missing artifacts block promotion. CI itself does not deploy. After successful exact current trusted staging push CI, the credential-free listener in `.github/workflows/staging.yml` dispatches its deployment job explicitly on `staging`, independent of GitHub's default branch. `scripts/staging-preview.mjs` consumes the identical full-stack bundle/assets/Drizzle migrator without rebuilding and records separate `corner-preview` / `corner-staging-preview` staging ledgers. After successful current main push CI, `.github/workflows/production.yml` dispatches `release.yml` explicitly on main; `scripts/release.mjs deploy` qualifies and promotes that exact artifact without a separate approval or invented human review. Production records one version in its format-4 `corner-release` / `corner-production` receipt. Pre-Drizzle artifacts and receipts are not recovery targets. [HOSTING.md](HOSTING.md#build-migrate-and-release) owns activation, credentials, automatic updates, explicit operator releases, verification states, and recovery.
+Both persistent branches run the full profile, then package/exercise the standalone format-4 single-Worker payload (including the packaged `worker/maintenance-worker.js` gate for explicit operator maintenance cutovers) before uploading `corner-release-<sourceSHA>` with 90-day retention. Preserve current/recovery references longer; missing artifacts block promotion. CI itself does not deploy. After successful exact current trusted staging push CI, the credential-free listener in `.github/workflows/staging.yml` dispatches its deployment job explicitly on `staging`, independent of GitHub's default branch. `scripts/staging-preview.mjs` consumes the identical full-stack bundle/assets/Drizzle migrator without rebuilding and records separate `corner-preview` / `corner-staging-preview` staging ledgers. After successful current main push CI, `.github/workflows/production.yml` dispatches `release.yml` explicitly on main; `scripts/release.mjs deploy` qualifies and promotes that exact artifact without a separate approval or invented human review, and never invokes preserving cutover or maintenance implicitly. Production records one version in its format-4 `corner-release` / `corner-production` receipt. Pre-Drizzle artifacts and receipts are not recovery targets. [HOSTING.md](HOSTING.md#build-migrate-and-release) owns activation, credentials, automatic updates, explicit operator releases, verification states, and recovery.
 
 The provider contract is implemented against the official documentation above. A real account must complete consent before live subscription inference can be verified. Browser visual verification and Docker execution are reported separately in the release notes; automated success should not be mistaken for those checks.
 
@@ -326,20 +327,20 @@ Old feature-preview provisioning workflows are removed. Never recreate removed l
 
 ### Main source areas
 
-| Folder                    | Responsibility                                                                                               |
-| ------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `apps/web/src/`           | React account UI, profile/import settings, meal planner, recipes, workouts, and agent review                 |
-| `apps/server/src/`        | Managed Auth boundary, PostgreSQL persistence, oRPC procedures, model connection, and planning agent         |
-| `packages/nutrition/src/` | Food and recipe types/schemas, meal calendar, macro/grocery calculations, and food estimates                 |
-| `packages/training/src/`  | Workout types/rules, result prefill, exercise catalog, and provenance data                                   |
-| `packages/workspace/src/` | Combined state/settings, validated mutation composition, training-aware nutrition targets, and initial state |
-| `packages/agent/src/`     | Planning proposal contracts, allowed changes, and proposal-to-mutation validation                            |
-| `packages/api/src/`       | Browser-safe oRPC contract, transport schemas, and inferred client types                                     |
-| `apps/web/src/**/__tests__/` | Vitest component/logic tests and Playwright browser journeys colocated with their owners                                  |
-| `apps/web/__tests__/`     | Node-environment Vitest checks for web configuration                                                         |
-| `apps/server/tests/`      | Accounts, email, data isolation, agent, provider, and proxy regression checks                                |
-| `scripts/`                | Workspace test runner, production/development smoke checks, configuration, and packaging                     |
-| `deployment/`             | HTTPS edge configuration for the optional hosted Compose deployment                                          |
+| Folder                       | Responsibility                                                                                               |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `apps/web/src/`              | React account UI, profile/import settings, meal planner, recipes, workouts, and agent review                 |
+| `apps/server/src/`           | Managed Auth boundary, PostgreSQL persistence, oRPC procedures, model connection, and planning agent         |
+| `packages/nutrition/src/`    | Food and recipe types/schemas, meal calendar, macro/grocery calculations, and food estimates                 |
+| `packages/training/src/`     | Workout types/rules, result prefill, exercise catalog, and provenance data                                   |
+| `packages/workspace/src/`    | Combined state/settings, validated mutation composition, training-aware nutrition targets, and initial state |
+| `packages/agent/src/`        | Planning proposal contracts, allowed changes, and proposal-to-mutation validation                            |
+| `packages/api/src/`          | Browser-safe oRPC contract, transport schemas, and inferred client types                                     |
+| `apps/web/src/**/__tests__/` | Vitest component/logic tests and Playwright browser journeys colocated with their owners                     |
+| `apps/web/__tests__/`        | Node-environment Vitest checks for web configuration                                                         |
+| `apps/server/tests/`         | Accounts, email, data isolation, agent, provider, and proxy regression checks                                |
+| `scripts/`                   | Workspace test runner, production/development smoke checks, configuration, and packaging                     |
+| `deployment/`                | HTTPS edge configuration for the optional hosted Compose deployment                                          |
 
 ## Project guidance
 

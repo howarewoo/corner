@@ -55,34 +55,69 @@ type ProposalContext = Pick<AppState, 'settings' | 'recipes' | 'plan'> & {
   revision: number;
   training: Pick<AppState['training'], 'sessions' | 'templates'>;
 };
-async function proposalContext(changes: AgentChange[], signal: AbortSignal): Promise<ProposalContext> {
+async function proposalContext(
+  changes: AgentChange[],
+  signal: AbortSignal,
+): Promise<ProposalContext> {
   const bootstrap = await rpc.workspace.get(undefined, { signal });
-  const recipeIds = new Set<string>(), planIds = new Set<string>(), sessionIds = new Set<string>(), templateIds = new Set<string>();
+  const recipeIds = new Set<string>(),
+    planIds = new Set<string>(),
+    sessionIds = new Set<string>(),
+    templateIds = new Set<string>();
   for (const change of changes) {
     switch (change.type) {
-      case 'recipe': recipeIds.add(change.data.id); break;
-      case 'meal': planIds.add(change.data.id); recipeIds.add(change.data.recipeId); break;
-      case 'remove_meal': planIds.add(change.data.id); break;
-      case 'workout': case 'remove_workout': sessionIds.add(change.data.id); break;
-      case 'routine': templateIds.add(change.data.id); break;
+      case 'recipe':
+        recipeIds.add(change.data.id);
+        break;
+      case 'meal':
+        planIds.add(change.data.id);
+        recipeIds.add(change.data.recipeId);
+        break;
+      case 'remove_meal':
+        planIds.add(change.data.id);
+        break;
+      case 'workout':
+      case 'remove_workout':
+        sessionIds.add(change.data.id);
+        break;
+      case 'routine':
+        templateIds.add(change.data.id);
+        break;
     }
   }
-  const plan: PlanEntry[] = [], sessions: WorkoutSession[] = [], templates: WorkoutTemplate[] = [], recipes: Recipe[] = [];
-  const requestedPlans = [...planIds], requestedSessions = [...sessionIds], requestedTemplates = [...templateIds];
-  const pages = Math.max(Math.ceil(requestedPlans.length / 100), Math.ceil(requestedSessions.length / 25), Math.ceil(requestedTemplates.length / 100));
+  const plan: PlanEntry[] = [],
+    sessions: WorkoutSession[] = [],
+    templates: WorkoutTemplate[] = [],
+    recipes: Recipe[] = [];
+  const requestedPlans = [...planIds],
+    requestedSessions = [...sessionIds],
+    requestedTemplates = [...templateIds];
+  const pages = Math.max(
+    Math.ceil(requestedPlans.length / 100),
+    Math.ceil(requestedSessions.length / 25),
+    Math.ceil(requestedTemplates.length / 100),
+  );
   for (let index = 0; index < pages; index += 1) {
-    const details = await rpc.workspace.details({
-      planIds: requestedPlans.slice(index * 100, (index + 1) * 100),
-      sessionIds: requestedSessions.slice(index * 25, (index + 1) * 25),
-      templateIds: requestedTemplates.slice(index * 100, (index + 1) * 100),
-    }, { signal });
+    const details = await rpc.workspace.details(
+      {
+        planIds: requestedPlans.slice(index * 100, (index + 1) * 100),
+        sessionIds: requestedSessions.slice(index * 25, (index + 1) * 25),
+        templateIds: requestedTemplates.slice(index * 100, (index + 1) * 100),
+      },
+      { signal },
+    );
     requireRevision(bootstrap.revision, details.revision);
-    plan.push(...details.plan); sessions.push(...details.sessions); templates.push(...details.templates);
+    plan.push(...details.plan);
+    sessions.push(...details.sessions);
+    templates.push(...details.templates);
   }
   for (const meal of plan) recipeIds.add(meal.recipeId);
   const requestedRecipes = [...recipeIds];
   for (let index = 0; index < requestedRecipes.length; index += 100) {
-    const details = await rpc.workspace.details({ recipeIds: requestedRecipes.slice(index, index + 100) }, { signal });
+    const details = await rpc.workspace.details(
+      { recipeIds: requestedRecipes.slice(index, index + 100) },
+      { signal },
+    );
     requireRevision(bootstrap.revision, details.revision);
     recipes.push(...details.recipes);
   }
@@ -601,15 +636,37 @@ export default function AgentPanel({
   });
   const applyMutation = useMutation({
     mutationFn: (input: Parameters<typeof rpc.agent.apply>[0]) =>
-      writeWorkspace(() => rpc.agent.apply(input), mutationGeneration, selected?.result?.changes.flatMap((change) => {
-        switch (change.type) {
-          case 'recipe': return ['recipes', 'details', 'nutrition', 'groceries', 'proposal'];
-          case 'meal': case 'remove_meal': return ['plan', 'nutrition', 'groceries', 'proposal'];
-          case 'routine': return ['templates', 'details', 'proposal'];
-          case 'workout': case 'remove_workout': return ['sessions', 'scheduledDates', 'details', 'nutrition', 'progress', 'exerciseChoices', 'exerciseHistory', 'prefill', 'reviews', 'proposal'];
-          case 'targets': return ['workspace', 'nutrition', 'proposal'];
-        }
-      }) ?? []),
+      writeWorkspace(
+        () => rpc.agent.apply(input),
+        mutationGeneration,
+        selected?.result?.changes.flatMap((change) => {
+          switch (change.type) {
+            case 'recipe':
+              return ['recipes', 'details', 'nutrition', 'groceries', 'proposal'];
+            case 'meal':
+            case 'remove_meal':
+              return ['plan', 'nutrition', 'groceries', 'proposal'];
+            case 'routine':
+              return ['templates', 'details', 'proposal'];
+            case 'workout':
+            case 'remove_workout':
+              return [
+                'sessions',
+                'scheduledDates',
+                'details',
+                'nutrition',
+                'progress',
+                'exerciseChoices',
+                'exerciseHistory',
+                'prefill',
+                'reviews',
+                'proposal',
+              ];
+            case 'targets':
+              return ['workspace', 'nutrition', 'proposal'];
+          }
+        }) ?? [],
+      ),
     retry: false,
   });
   const historyQuery = useQuery({
@@ -645,10 +702,16 @@ export default function AgentPanel({
   const appliedIntent = useRef(new Map<string, string>());
   const active = useRef(true);
   const selected = runs.find((run) => run.id === selectedId) ?? runs[0];
-  const contextQuery = useResource('proposal', { id: selected?.id, revision, changes: selected?.result?.changes },
-    (signal) => proposalContext(selected?.result?.changes ?? [], signal), !state && Boolean(selected?.result?.changes.length));
+  const contextQuery = useResource(
+    'proposal',
+    { id: selected?.id, revision, changes: selected?.result?.changes },
+    (signal) => proposalContext(selected?.result?.changes ?? [], signal),
+    !state && Boolean(selected?.result?.changes.length),
+  );
   const context: ProposalContext | undefined = state ? { ...state, revision } : contextQuery.data;
-  const contextReady = Boolean(state || (contextQuery.data && !contextQuery.isError && !contextQuery.isFetching));
+  const contextReady = Boolean(
+    state || (contextQuery.data && !contextQuery.isError && !contextQuery.isFetching),
+  );
   const ready = Boolean(connection?.available && connection.connected && connection.enabled);
   const refresh = useCallback(async () => {
     await Promise.all([historyQuery.refetch(), connectionQuery.refetch()]);
@@ -746,7 +809,8 @@ export default function AgentPanel({
       operation.current ||
       run.status !== 'completed' ||
       run.result?.status !== 'proposal' ||
-      run.baseRevision !== revision || !contextReady
+      run.baseRevision !== revision ||
+      !contextReady
     )
       return;
     operation.current = true;
@@ -1010,7 +1074,13 @@ export default function AgentPanel({
                   </div>
                 )}
               </div>
-              {selected.result.changes.length > 0 && !contextReady && <ResourceStatus error={contextQuery.error} loading={contextQuery.isPending || contextQuery.isFetching} retry={() => void contextQuery.refetch()} />}
+              {selected.result.changes.length > 0 && !contextReady && (
+                <ResourceStatus
+                  error={contextQuery.error}
+                  loading={contextQuery.isPending || contextQuery.isFetching}
+                  retry={() => void contextQuery.refetch()}
+                />
+              )}
               {selected.result.changes.length > 0 && contextReady && context && (
                 <div className="agent-changes">
                   {selected.result.changes.map((change, index) => (

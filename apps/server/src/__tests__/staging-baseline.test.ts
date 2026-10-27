@@ -54,7 +54,10 @@ async function fixture() {
         }
       },
       async unchanged() {
-        assert.deepEqual((await source.query('SELECT * FROM corner_subscription_meta')).rows, before);
+        assert.deepEqual(
+          (await source.query('SELECT * FROM corner_subscription_meta')).rows,
+          before,
+        );
         assert.deepEqual(
           (await source.query('SELECT * FROM __drizzle_migrations ORDER BY id')).rows,
           history,

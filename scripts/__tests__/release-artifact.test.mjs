@@ -6,7 +6,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import { packageArtifact, verifyArtifact, qualifyArtifact, qualificationRecovery, assertQualificationGeneration } from '../release-artifact.mjs';
+import {
+  packageArtifact,
+  verifyArtifact,
+  qualifyArtifact,
+  qualificationRecovery,
+  assertQualificationGeneration,
+} from '../release-artifact.mjs';
 
 const hash = (bytes) => createHash('sha256').update(bytes).digest('hex');
 
@@ -22,18 +28,37 @@ test('storage transition is artifact-derived, distinct from bootstrap, and canno
   const relational = { generation: 'relational-v1' };
   assert.equal(qualificationRecovery(relational), 'bootstrap');
   assert.equal(qualificationRecovery(relational, document), 'forward-only');
+  assert.equal(qualificationRecovery(relational, document, true), 'preserving');
   assert.equal(qualificationRecovery(relational, relational), 'compatible');
   assert.throws(() => qualificationRecovery(document, relational), /Unsupported/);
   for (const report of [
     { generation: 'relational-v1', previousGeneration: 'document-v1', recovery: 'compatible' },
     { generation: 'relational-v1', previousGeneration: null, recovery: 'bootstrap' },
     { generation: 'document-v1', previousGeneration: 'document-v1', recovery: 'compatible' },
-  ]) assert.throws(() => assertQualificationGeneration(report, relational, document), /generation mismatch/);
+    { generation: 'relational-v1', previousGeneration: 'document-v1', recovery: 'preserving' },
+  ])
+    assert.throws(
+      () => assertQualificationGeneration(report, relational, document),
+      /generation mismatch/,
+    );
+  assert.doesNotThrow(() =>
+    assertQualificationGeneration(
+      {
+        generation: 'relational-v1',
+        previousGeneration: 'document-v1',
+        recovery: 'forward-only',
+      },
+      relational,
+      document,
+    ),
+  );
   assert.doesNotThrow(() => assertQualificationGeneration({
+    generation: 'relational-v1', previousGeneration: 'document-v1', recovery: 'preserving',
+  }, relational, document, true));
+  assert.throws(() => assertQualificationGeneration({
     generation: 'relational-v1', previousGeneration: 'document-v1', recovery: 'forward-only',
-  }, relational, document));
+  }, relational, document, true), /generation mismatch/);
 });
-
 async function fixture(t, migration = 'CREATE TABLE example (id int);') {
   const directory = await mkdtemp(join(tmpdir(), 'corner-artifact-test-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
@@ -138,8 +163,10 @@ test('packaging canonicalizes JSONC comments and trailing commas but rejects mal
         'export {};',
       ]),
     ),
+    'apps/server/dist/worker/maintenance-worker.js':
+      'export default { fetch() { return new Response("maintenance", { status: 503 }); } };',
     'apps/server/dist/migrate.js':
-      'export function migrate() { throw new Error("packaging fixture"); } export function migrationCli() { throw new Error("packaging fixture CLI"); }',
+      'export function migrate() { throw new Error("packaging fixture"); } export function migrationCli() { throw new Error("packaging fixture CLI"); } export function preservingDocumentCutover() { throw new Error("packaging fixture"); } export function inspectDocumentCutover() { throw new Error("packaging fixture"); } export function cutoverRecoverySchema() { throw new Error("packaging fixture"); } export function directDatabaseUrl() { throw new Error("packaging fixture"); }',
     'apps/server/dist/database.js':
       'export function createDatabase() { throw new Error("packaging fixture"); }',
     'apps/server/dist/persisted-records.js':
@@ -181,6 +208,8 @@ test('packaging canonicalizes JSONC comments and trailing commas but rejects mal
   await writeFile(path, `// Wrangler JSONC\n/* format-only change */\n${json.slice(0, -2)},\n}\n`);
   const jsonc = await packageArtifact({ ...options, out: join(directory, 'jsonc') });
   assert.equal(jsonc.digest, plain.digest, 'JSONC formatting must not change the release payload.');
+  assert.equal(plain.manifest.maintenanceWorkerEntry, 'worker/maintenance-worker.js');
+  assert.ok(plain.manifest.files['worker/maintenance-worker.js']);
   await writeFile(path, '{"name": }');
   await assert.rejects(
     packageArtifact({ ...options, out: join(directory, 'malformed') }),
@@ -250,6 +279,18 @@ test('qualification never infers bootstrap and cannot write inside an artifact',
   );
 });
 
+test('preserving qualification requires a packaged maintenance Worker entry', async (t) => {
+  const { candidate, directory } = await fixture(t);
+  await assert.rejects(
+    qualifyArtifact({
+      candidate,
+      previous: candidate,
+      preserving: true,
+      report: join(directory, 'preserving-report.json'),
+    }),
+    /maintenance Worker entry/,
+  );
+});
 test('missing or unqualified previous baselines fail before executing packaged code', async (t) => {
   const { candidate, directory } = await fixture(t);
   const prior = await fixture(t);

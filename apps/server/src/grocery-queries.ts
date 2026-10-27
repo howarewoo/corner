@@ -6,8 +6,11 @@ import type { Database } from './queries.js';
 import { checkCursor, consistentRead } from './workspace-queries.js';
 
 /** Aggregate the whole week in SQL; paginate groups, never truncate source meals. */
-export async function groceries(db: Database, userId: string,
-  raw: z.input<typeof groceriesSchema>): Promise<GroceryWindow> {
+export async function groceries(
+  db: Database,
+  userId: string,
+  raw: z.input<typeof groceriesSchema>,
+): Promise<GroceryWindow> {
   const input = groceriesSchema.parse(raw);
   const dates = weekDates(input.weekStart);
   return consistentRead(db, userId, async (connection, revision) => {
@@ -43,11 +46,24 @@ export async function groceries(db: Database, userId: string,
         LEFT JOIN workspace_grocery_checks c ON c.user_id = ${userId} AND c.key = ${input.weekStart} || '|' || g.key
         WHERE true ${after} ORDER BY g.key COLLATE "C" ASC LIMIT ${input.limit + 1}`);
     const page = result.rows.slice(0, input.limit);
-    const items = page.map((row) => ({ key: String(row.key), name: String(row.name),
-      quantity: Number(row.quantity), unit: String(row.unit), aisle: String(row.aisle), notes: row.notes as string[] }));
+    const items = page.map((row) => ({
+      key: String(row.key),
+      name: String(row.name),
+      quantity: Number(row.quantity),
+      unit: String(row.unit),
+      aisle: String(row.aisle),
+      notes: row.notes as string[],
+    }));
     const checks: Record<string, boolean> = {};
-    for (const row of page) if (row.checked !== null) checks[`${input.weekStart}|${String(row.key)}`] = Boolean(row.checked);
-    return { revision, items, checks, nextCursor: result.rows.length > input.limit
-      ? { revision, key: items[items.length - 1].key } : null };
+    for (const row of page)
+      if (row.checked !== null)
+        checks[`${input.weekStart}|${String(row.key)}`] = Boolean(row.checked);
+    return {
+      revision,
+      items,
+      checks,
+      nextCursor:
+        result.rows.length > input.limit ? { revision, key: items[items.length - 1].key } : null,
+    };
   });
 }

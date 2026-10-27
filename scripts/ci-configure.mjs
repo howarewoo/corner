@@ -13,9 +13,16 @@ const stagingRulesetName = 'Require staging deployment before main';
 
 export function stagingDeploymentRuleset(current) {
   const conditions = { ref_name: { include: ['refs/heads/main'], exclude: [] } };
-  if (current && (current.target !== 'branch' || !isDeepStrictEqual(current.conditions, conditions)))
-    throw new Error('The staging deployment ruleset has conflicting targets; resolve it explicitly.');
-  const deploymentRules = (current?.rules ?? []).filter((rule) => rule.type === 'required_deployments');
+  if (
+    current &&
+    (current.target !== 'branch' || !isDeepStrictEqual(current.conditions, conditions))
+  )
+    throw new Error(
+      'The staging deployment ruleset has conflicting targets; resolve it explicitly.',
+    );
+  const deploymentRules = (current?.rules ?? []).filter(
+    (rule) => rule.type === 'required_deployments',
+  );
   if (deploymentRules.length > 1)
     throw new Error('The staging deployment ruleset has ambiguous deployment requirements.');
   const environments = deploymentRules[0]?.parameters?.required_deployment_environments ?? [];
@@ -31,7 +38,9 @@ export function stagingDeploymentRuleset(current) {
       ...(current?.rules ?? []).filter((rule) => rule.type !== 'required_deployments'),
       {
         type: 'required_deployments',
-        parameters: { required_deployment_environments: [...new Set([...environments, 'staging'])] },
+        parameters: {
+          required_deployment_environments: [...new Set([...environments, 'staging'])],
+        },
       },
     ],
   };

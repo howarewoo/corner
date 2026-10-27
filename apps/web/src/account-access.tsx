@@ -250,7 +250,10 @@ export default function AccountAccess({
       if (!current(pending.id)) return;
       setEmail(submittedEmail);
       setPassword('');
-      if (policy.emailVerificationRequired && (signup || result.data?.user?.emailVerified === false)) {
+      if (
+        policy.emailVerificationRequired &&
+        (signup || result.data?.user?.emailVerified === false)
+      ) {
         show('verify');
         return;
       }

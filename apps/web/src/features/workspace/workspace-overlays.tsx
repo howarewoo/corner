@@ -44,57 +44,70 @@ export default function WorkspaceOverlays({
   saveRecipe: (recipe: Recipe) => Promise<void>;
 }) {
   const recipeId = overlay?.kind === 'recipe' ? overlay.recipe.id : undefined;
-  const detail = useResource('details', { recipeIds: recipeId ? [recipeId] : [] },
+  const detail = useResource(
+    'details',
+    { recipeIds: recipeId ? [recipeId] : [] },
     (signal) => rpc.workspace.details({ recipeIds: recipeId ? [recipeId] : [] }, { signal }),
-    !state && Boolean(recipeId));
-  const savedRecipe = (state?.recipes ?? detail.data?.recipes ?? []).find((recipe) => recipe.id === recipeId);
+    !state && Boolean(recipeId),
+  );
+  const savedRecipe = (state?.recipes ?? detail.data?.recipes ?? []).find(
+    (recipe) => recipe.id === recipeId,
+  );
   return (
     <>
-      {overlay?.kind === 'recipe' && !state && (!detail.data || detail.isError) ?
-        <Dialog title="Recipe" onClose={() => setOverlay(null)}><ResourceStatus error={detail.error} loading={detail.isPending} retry={() => void detail.refetch()} /></Dialog>
-        : overlay?.kind === 'recipe' && (
-        <RecipeDetail
-          recipe={savedRecipe || overlay.recipe}
-          busy={disabled}
-          saved={Boolean(savedRecipe)}
-          onClose={() => setOverlay(null)}
-          onFavorite={(recipe) =>
-            void mutate({
-              type: 'recipe.favorite',
-              data: { id: recipe.id, favorite: !recipe.favorite },
-            })
-          }
-          onEdit={(recipe) => setOverlay({ kind: 'recipeForm', recipe })}
-          onPlan={(recipe) =>
-            setOverlay({
-              kind: 'pick',
-              date: selectedDate,
-              slot:
-                recipe.category === 'breakfast'
-                  ? 'breakfast'
-                  : recipe.category === 'snack'
-                    ? 'snack'
-                    : 'dinner',
-              recipeId: recipe.id,
-            })
-          }
-          onSave={saveRecipe}
-          onDelete={(recipe) =>
-            setConfirmation({
-              title: `Delete “${recipe.name}”?`,
-              description:
-                'Remove any uses of this recipe from your meal plan first. Existing food log entries keep their nutrition.',
-              confirm: async () => {
-                const deleted = await mutate(
-                  { type: 'recipe.delete', data: { id: recipe.id } },
-                  'Recipe deleted',
-                );
-                if (deleted) setOverlay(null);
-                return deleted;
-              },
-            })
-          }
-        />
+      {overlay?.kind === 'recipe' && !state && (!detail.data || detail.isError) ? (
+        <Dialog title="Recipe" onClose={() => setOverlay(null)}>
+          <ResourceStatus
+            error={detail.error}
+            loading={detail.isPending}
+            retry={() => void detail.refetch()}
+          />
+        </Dialog>
+      ) : (
+        overlay?.kind === 'recipe' && (
+          <RecipeDetail
+            recipe={savedRecipe || overlay.recipe}
+            busy={disabled}
+            saved={Boolean(savedRecipe)}
+            onClose={() => setOverlay(null)}
+            onFavorite={(recipe) =>
+              void mutate({
+                type: 'recipe.favorite',
+                data: { id: recipe.id, favorite: !recipe.favorite },
+              })
+            }
+            onEdit={(recipe) => setOverlay({ kind: 'recipeForm', recipe })}
+            onPlan={(recipe) =>
+              setOverlay({
+                kind: 'pick',
+                date: selectedDate,
+                slot:
+                  recipe.category === 'breakfast'
+                    ? 'breakfast'
+                    : recipe.category === 'snack'
+                      ? 'snack'
+                      : 'dinner',
+                recipeId: recipe.id,
+              })
+            }
+            onSave={saveRecipe}
+            onDelete={(recipe) =>
+              setConfirmation({
+                title: `Delete “${recipe.name}”?`,
+                description:
+                  'Remove any uses of this recipe from your meal plan first. Existing food log entries keep their nutrition.',
+                confirm: async () => {
+                  const deleted = await mutate(
+                    { type: 'recipe.delete', data: { id: recipe.id } },
+                    'Recipe deleted',
+                  );
+                  if (deleted) setOverlay(null);
+                  return deleted;
+                },
+              })
+            }
+          />
+        )
       )}
       {overlay?.kind === 'recipeForm' && (
         <RecipeForm

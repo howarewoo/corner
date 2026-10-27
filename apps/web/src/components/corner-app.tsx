@@ -93,7 +93,13 @@ function CornerWorkspace({
   } = useWorkspaceState({ initialState, initialSettings, initialRevision, preview });
   // These hooks stay mounted with the workspace so drafts and filters survive navigation.
   const recipeFilters = useRecipeFilters();
-  const studio = useRecipeStudio({ initialSettings: initialSettings ?? initialState!.settings, settings, aiAvailable, mutate, notify });
+  const studio = useRecipeStudio({
+    initialSettings: initialSettings ?? initialState!.settings,
+    settings,
+    aiAvailable,
+    mutate,
+    notify,
+  });
   useEffect(() => {
     if (isNutritionView(view)) setLastNutritionView(view);
     setOverlay(null);

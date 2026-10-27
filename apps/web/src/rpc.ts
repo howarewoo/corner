@@ -91,28 +91,65 @@ export function acceptWorkspace(next: Versioned, generation = lifetime) {
 }
 export function mutationFamilies(mutation: WorkspaceMutationInput['mutation']): string[] {
   switch (mutation.type) {
-    case 'log.save': case 'log.delete': return ['food', 'nutrition'];
-    case 'recipe.favorite': return ['recipes', 'details'];
-    case 'recipe.save': case 'recipe.delete': return ['recipes', 'details', 'nutrition', 'groceries', 'proposal'];
-    case 'plan.save': case 'plan.delete': case 'plan.week': return ['plan', 'nutrition', 'groceries', 'proposal'];
-    case 'grocery.check': return ['groceries'];
-    case 'settings.save': return ['workspace', 'nutrition', 'proposal'];
-    case 'request.save': return ['recipeRequests'];
-    case 'request.fulfill': return ['recipeRequests', 'recipes', 'details', 'nutrition', 'groceries', 'proposal'];
-    case 'training.template.save': return ['templates', 'details', 'proposal'];
-    case 'training.checkin.save': return ['checkIns', 'progress'];
-    case 'training.request.save': return ['trainingRequests'];
-    case 'training.review.save': case 'training.review.dismiss': return ['reviews'];
-    case 'training.session.save': case 'training.session.delete': case 'training.week':
+    case 'log.save':
+    case 'log.delete':
+      return ['food', 'nutrition'];
+    case 'recipe.favorite':
+      return ['recipes', 'details'];
+    case 'recipe.save':
+    case 'recipe.delete':
+      return ['recipes', 'details', 'nutrition', 'groceries', 'proposal'];
+    case 'plan.save':
+    case 'plan.delete':
+    case 'plan.week':
+      return ['plan', 'nutrition', 'groceries', 'proposal'];
+    case 'grocery.check':
+      return ['groceries'];
+    case 'settings.save':
+      return ['workspace', 'nutrition', 'proposal'];
+    case 'request.save':
+      return ['recipeRequests'];
+    case 'request.fulfill':
+      return ['recipeRequests', 'recipes', 'details', 'nutrition', 'groceries', 'proposal'];
+    case 'training.template.save':
+      return ['templates', 'details', 'proposal'];
+    case 'training.checkin.save':
+      return ['checkIns', 'progress'];
+    case 'training.request.save':
+      return ['trainingRequests'];
+    case 'training.review.save':
+    case 'training.review.dismiss':
+      return ['reviews'];
+    case 'training.session.save':
+    case 'training.session.delete':
+    case 'training.week':
     case 'training.review.apply':
-      return ['sessions', 'scheduledDates', 'details', 'nutrition', 'progress', 'exerciseChoices', 'exerciseHistory', 'prefill', 'reviews', 'proposal'];
+      return [
+        'sessions',
+        'scheduledDates',
+        'details',
+        'nutrition',
+        'progress',
+        'exerciseChoices',
+        'exerciseHistory',
+        'prefill',
+        'reviews',
+        'proposal',
+      ];
   }
 }
-export async function invalidateWorkspace(revision: number, families?: readonly string[], generation = lifetime) {
+export async function invalidateWorkspace(
+  revision: number,
+  families?: readonly string[],
+  generation = lifetime,
+) {
   if (generation !== lifetime) throw new Error('This session has ended.');
   const affected = families ? new Set(families) : null;
   const predicate = (query: { queryKey: readonly unknown[] }) =>
-    query.queryKey[1] === generation && (affected ? affected.has(String(query.queryKey[0])) : !['session', 'connection'].includes(String(query.queryKey[0])));
+    query.queryKey[1] === generation &&
+    (affected
+      ? affected.has(String(query.queryKey[0]))
+      : !['session', 'connection'].includes(String(query.queryKey[0])));
   // Family floors also protect keys which did not exist when the write committed.
   for (const family of families ?? ['*']) {
     revisionFloors.set(family, Math.max(revisionFloors.get(family) ?? 0, revision));
@@ -132,7 +169,9 @@ export async function writeWorkspace<T extends Versioned>(
   return result;
 }
 export async function readResource<T extends Versioned>(
-  family: string, operation: () => Promise<T>, generation = lifetime,
+  family: string,
+  operation: () => Promise<T>,
+  generation = lifetime,
 ): Promise<T> {
   const result = await scoped(operation, generation);
   if (result.revision < Math.max(revisionFloors.get(family) ?? 0, revisionFloors.get('*') ?? 0))
@@ -141,7 +180,10 @@ export async function readResource<T extends Versioned>(
   return result;
 }
 export function useResource<T extends Versioned>(
-  family: string, parameters: unknown, operation: (signal: AbortSignal) => Promise<T>, enabled = true,
+  family: string,
+  parameters: unknown,
+  operation: (signal: AbortSignal) => Promise<T>,
+  enabled = true,
 ) {
   const generation = useSessionLifetime();
   return useQuery({
@@ -149,29 +191,48 @@ export function useResource<T extends Versioned>(
     queryFn: ({ signal }) => readResource(family, () => operation(signal), generation),
     enabled,
     refetchOnReconnect: true,
-    retry: (failureCount, error) => generation === lifetime
-      && errorCode(error) === 'ACCOUNT_SERVICE_UNAVAILABLE'
-      && failureCount < ACCOUNT_READ_RETRIES,
+    retry: (failureCount, error) =>
+      generation === lifetime &&
+      errorCode(error) === 'ACCOUNT_SERVICE_UNAVAILABLE' &&
+      failureCount < ACCOUNT_READ_RETRIES,
     retryDelay: (attempt) => ACCOUNT_READ_RETRY_DELAY_MS * 2 ** attempt,
     structuralSharing: (previous, next) => {
       const current = previous as T | undefined;
       const incoming = next as T;
       if (generation !== lifetime) throw new Error('This session has ended.');
-      if (incoming.revision < Math.max(revisionFloors.get(family) ?? 0, revisionFloors.get('*') ?? 0))
+      if (
+        incoming.revision < Math.max(revisionFloors.get(family) ?? 0, revisionFloors.get('*') ?? 0)
+      )
         throw new Error('Your data changed while loading. Please retry.');
-      return current && current.revision > incoming.revision ? current : replaceEqualDeep(previous, next);
+      return current && current.revision > incoming.revision
+        ? current
+        : replaceEqualDeep(previous, next);
     },
   });
 }
 export function useWorkspace(enabled = true) {
   const observed = useObservedRevision();
-  const query = useResource('workspace', undefined, (signal) => rpc.workspace.get(undefined, { signal }), enabled);
+  const query = useResource(
+    'workspace',
+    undefined,
+    (signal) => rpc.workspace.get(undefined, { signal }),
+    enabled,
+  );
   const payloadRevision = query.data?.revision;
   useEffect(() => {
     // Resource observations are a watermark, never settings payloads. Allow an
     // in-flight older bootstrap to settle, then refresh if its settings lag.
-    if (enabled && payloadRevision !== undefined && payloadRevision < observed && !query.isFetching && !query.isError)
-      void queryClient.refetchQueries({ queryKey: privateKey('workspace'), exact: true }, { cancelRefetch: false });
+    if (
+      enabled &&
+      payloadRevision !== undefined &&
+      payloadRevision < observed &&
+      !query.isFetching &&
+      !query.isError
+    )
+      void queryClient.refetchQueries(
+        { queryKey: privateKey('workspace'), exact: true },
+        { cancelRefetch: false },
+      );
   }, [enabled, observed, payloadRevision, query.isFetching, query.isError]);
   return { ...query, observedRevision: observed };
 }
