@@ -9,7 +9,11 @@ import { isDeepStrictEqual } from 'node:util';
 import { setTimeout as delay } from 'node:timers/promises';
 import { GitHub, publicChecks, PublicCheckError } from './release.mjs';
 import { loadCiArtifact } from './ci-artifact.mjs';
-import { qualifyArtifact, verifyArtifact, assertQualificationGeneration } from './release-artifact.mjs';
+import {
+  qualifyArtifact,
+  verifyArtifact,
+  assertQualificationGeneration,
+} from './release-artifact.mjs';
 
 const workerName = 'corner';
 const previewName = 'staging';
@@ -245,7 +249,9 @@ export async function completePreview({
         String((await github.all(schemaPath))[0]?.id) === String(schema.id),
       'Preview source or deployment/schema journal changed during completion',
     );
-    const live = await cf(`workers/workers/${workerName}/previews/${previewName}/deployments/latest`);
+    const live = await cf(
+      `workers/workers/${workerName}/previews/${previewName}/deployments/latest`,
+    );
     need(
       live.id === p.deploymentId &&
         Object.entries(config.value).every(([name, value]) => live.env?.[name]?.text === value) &&
@@ -540,7 +546,8 @@ export async function deployPreview({
     await current();
     await reverify();
     need(
-      (await cf(`workers/workers/${workerName}/previews/${previewName}/deployments/latest`)).id === output.deployment_id &&
+      (await cf(`workers/workers/${workerName}/previews/${previewName}/deployments/latest`)).id ===
+        output.deployment_id &&
         JSON.stringify(await cf(`workers/scripts/${workerName}/deployments`)) === production,
       'Preview or production deployment changed during public validation',
     );

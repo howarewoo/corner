@@ -94,7 +94,11 @@ function App() {
           handleFocus(visible);
           if (visible)
             void queryClient.invalidateQueries(
-              { predicate: (query) => query.queryKey[1] === sessionLifetime() && !['session', 'connection'].includes(String(query.queryKey[0])) },
+              {
+                predicate: (query) =>
+                  query.queryKey[1] === sessionLifetime() &&
+                  !['session', 'connection'].includes(String(query.queryKey[0])),
+              },
               { cancelRefetch: false },
             );
         };

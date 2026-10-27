@@ -62,13 +62,24 @@ export default function RecipeStudio({
   } = studio;
   const page = useRecordPage({ resource: 'recipeRequests', order: 'recent', limit: 20 }, !state);
   const requests = state ? [...state.requests].reverse() : (page.data?.items ?? []);
-  const recipeIds = [...new Set(requests.flatMap((request) => request.recipeId ? [request.recipeId] : []))];
-  const details = useResource('details', { recipeIds, revision: page.data?.revision },
-    (signal) => rpc.workspace.details({ recipeIds }, { signal }), !state && Boolean(page.data));
+  const recipeIds = [
+    ...new Set(requests.flatMap((request) => (request.recipeId ? [request.recipeId] : []))),
+  ];
+  const details = useResource(
+    'details',
+    { recipeIds, revision: page.data?.revision },
+    (signal) => rpc.workspace.details({ recipeIds }, { signal }),
+    !state && Boolean(page.data),
+  );
   const recipes = state?.recipes ?? details.data?.recipes ?? [];
   const drift = !state && page.data && details.data && page.data.revision !== details.data.revision;
-  const historyReady = Boolean(state || (page.data && details.data && !drift && !page.isError && !details.isError));
-  const reloadHistory = () => { page.reload(); void details.refetch(); };
+  const historyReady = Boolean(
+    state || (page.data && details.data && !drift && !page.isError && !details.isError),
+  );
+  const reloadHistory = () => {
+    page.reload();
+    void details.refetch();
+  };
 
   return (
     <>
@@ -253,43 +264,53 @@ export default function RecipeStudio({
           <div className="request-list">
             <div className="section-heading">
               <h2>Recipe requests</h2>
-              <span>{requests.length}{!state ? ' on this page' : ''}</span>
+              <span>
+                {requests.length}
+                {!state ? ' on this page' : ''}
+              </span>
             </div>
-            {!historyReady ? <ResourceStatus error={page.error ?? details.error ?? (drift ? new Error('Your data changed while loading. Please retry.') : null)} loading={!page.isError && !details.isError} retry={reloadHistory} /> : requests.length ? (
+            {!historyReady ? (
+              <ResourceStatus
+                error={
+                  page.error ??
+                  details.error ??
+                  (drift ? new Error('Your data changed while loading. Please retry.') : null)
+                }
+                loading={!page.isError && !details.isError}
+                retry={reloadHistory}
+              />
+            ) : requests.length ? (
               requests.map((request) => (
-                  <div className="request-item" key={request.id}>
-                    <Badge variant="secondary" className={`request-status ${request.status}`}>
-                      {request.status === 'fulfilled' ? <Check size={12} /> : <Clock3 size={12} />}
-                      {cap(request.status)}
-                    </Badge>
-                    <h3>{request.prompt}</h3>
-                    <p>
-                      {request.calories} kcal · {request.protein}g protein · {request.maxMinutes}{' '}
-                      min
-                    </p>
-                    {request.status === 'fulfilled' &&
-                    request.recipeId &&
-                    recipes.find((r) => r.id === request.recipeId) ? (
-                      <Button
-                        variant="link"
-                        size="default"
-                        onClick={() =>
-                          openRecipe(recipes.find((r) => r.id === request.recipeId)!)
-                        }
-                      >
-                        View recipe <ArrowRight size={13} />
-                      </Button>
-                    ) : (
-                      <Button
-                        variant="link"
-                        size="default"
-                        onClick={() => void copyText(studioBrief(request), 'Request brief copied')}
-                      >
-                        Copy request brief <Copy size={13} />
-                      </Button>
-                    )}
-                  </div>
-                ))
+                <div className="request-item" key={request.id}>
+                  <Badge variant="secondary" className={`request-status ${request.status}`}>
+                    {request.status === 'fulfilled' ? <Check size={12} /> : <Clock3 size={12} />}
+                    {cap(request.status)}
+                  </Badge>
+                  <h3>{request.prompt}</h3>
+                  <p>
+                    {request.calories} kcal · {request.protein}g protein · {request.maxMinutes} min
+                  </p>
+                  {request.status === 'fulfilled' &&
+                  request.recipeId &&
+                  recipes.find((r) => r.id === request.recipeId) ? (
+                    <Button
+                      variant="link"
+                      size="default"
+                      onClick={() => openRecipe(recipes.find((r) => r.id === request.recipeId)!)}
+                    >
+                      View recipe <ArrowRight size={13} />
+                    </Button>
+                  ) : (
+                    <Button
+                      variant="link"
+                      size="default"
+                      onClick={() => void copyText(studioBrief(request), 'Request brief copied')}
+                    >
+                      Copy request brief <Copy size={13} />
+                    </Button>
+                  )}
+                </div>
+              ))
             ) : (
               <p className="muted request-empty">
                 Your saved ideas will appear here. Keep a running list for your next meal prep.

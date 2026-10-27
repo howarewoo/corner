@@ -251,7 +251,10 @@ test('configuration excludes secrets and binds explicit public settings plus ope
   assert.throws(
     () =>
       validateConfiguration(
-        JSON.stringify({ ...JSON.parse(configuration), NEON_AUTH_REQUIRE_EMAIL_VERIFICATION: 'false' }),
+        JSON.stringify({
+          ...JSON.parse(configuration),
+          NEON_AUTH_REQUIRE_EMAIL_VERIFICATION: 'false',
+        }),
       ),
     /Release requires/,
   );
@@ -867,7 +870,13 @@ test('bootstrap validates all required bindings before any production mutation',
   Object.assign(f.payload, {
     bootstrap: true,
     baselineId: null,
-    qualification: { ...report, bootstrap: true, previousDigest: null, previousGeneration: null, recovery: 'bootstrap' },
+    qualification: {
+      ...report,
+      bootstrap: true,
+      previousDigest: null,
+      previousGeneration: null,
+      recovery: 'bootstrap',
+    },
   });
   const before = process.env.CORNER_WORKER_SECRETS_JSON;
   delete process.env.CORNER_WORKER_SECRETS_JSON;
@@ -885,7 +894,13 @@ test('first bootstrap recovers from transient public failure without migrating o
   Object.assign(f.payload, {
     bootstrap: true,
     baselineId: null,
-    qualification: { ...report, bootstrap: true, previousDigest: null, previousGeneration: null, recovery: 'bootstrap' },
+    qualification: {
+      ...report,
+      bootstrap: true,
+      previousDigest: null,
+      previousGeneration: null,
+      recovery: 'bootstrap',
+    },
   });
   const before = {
     database: process.env.DATABASE_URL,
@@ -1046,8 +1061,11 @@ test('explicit adoption pins the existing Worker before migration and again befo
           provisionedVersionId: oldVersion,
           baselineId: null,
           qualification: {
-            ...report, bootstrap: true, previousDigest: null,
-            previousGeneration: null, recovery: 'bootstrap',
+            ...report,
+            bootstrap: true,
+            previousDigest: null,
+            previousGeneration: null,
+            recovery: 'bootstrap',
           },
         });
         f.options.cf = async (path) => {

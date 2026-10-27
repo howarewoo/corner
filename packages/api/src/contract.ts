@@ -14,9 +14,21 @@ import {
   type WorkspaceMutationInput,
 } from './schemas.js';
 import {
-  detailsSchema, exerciseHistorySchema, groceriesSchema, prefillSchema, rangeSchema, recordPageSchema,
-  type Bootstrap, type CommandResult, type ExerciseHistoryPage, type FoodWindow,
-  type GroceryWindow, type PrefillHistory, type Progress, type RecordDetails, type RecordPage,
+  detailsSchema,
+  exerciseHistorySchema,
+  groceriesSchema,
+  prefillSchema,
+  rangeSchema,
+  recordPageSchema,
+  type Bootstrap,
+  type CommandResult,
+  type ExerciseHistoryPage,
+  type FoodWindow,
+  type GroceryWindow,
+  type PrefillHistory,
+  type Progress,
+  type RecordDetails,
+  type RecordPage,
 } from './workspace-data.js';
 import { foodWindowSchema } from './schemas.js';
 import { exerciseChoicesSchema, type ExerciseChoices } from './workspace-data.js';
@@ -77,14 +89,18 @@ export const contract = {
     get: base.input(empty).output(type<Bootstrap>()),
     foodWindow: base.input(foodWindowSchema).output(type<FoodWindow>()),
     page: base.input(recordPageSchema).output(type<RecordPage>()),
-    details: base.meta({ maxBodyBytes: 48 * 1024, public: false })
-      .input(detailsSchema).output(type<RecordDetails>()),
+    details: base
+      .meta({ maxBodyBytes: 48 * 1024, public: false })
+      .input(detailsSchema)
+      .output(type<RecordDetails>()),
     groceries: base.input(groceriesSchema).output(type<GroceryWindow>()),
     progress: base.input(rangeSchema).output(type<Progress>()),
     exerciseHistory: base.input(exerciseHistorySchema).output(type<ExerciseHistoryPage>()),
     exerciseChoices: base.input(exerciseChoicesSchema).output(type<ExerciseChoices>()),
-    prefill: base.meta({ maxBodyBytes: 192 * 1024, public: false })
-      .input(prefillSchema).output(type<PrefillHistory>()),
+    prefill: base
+      .meta({ maxBodyBytes: 192 * 1024, public: false })
+      .input(prefillSchema)
+      .output(type<PrefillHistory>()),
     export: base.input(empty).output(type<{ state: AppState; revision: number }>()),
     // The store validates the original mutation after fingerprinting. Transport must not normalize it first.
     mutate: base

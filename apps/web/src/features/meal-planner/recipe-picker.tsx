@@ -14,7 +14,13 @@ import {
   ToggleGroupItem,
 } from '@packages/ui';
 import { cap, newId } from '../workspace/utils';
-import { Dialog, Field, MacroLine, ResourceStatus, ResourcePaging } from '../workspace/workspace-ui';
+import {
+  Dialog,
+  Field,
+  MacroLine,
+  ResourceStatus,
+  ResourcePaging,
+} from '../workspace/workspace-ui';
 import { useRecordPage } from '../workspace/resources';
 import { rpc, useResource } from '../../rpc';
 
@@ -42,17 +48,26 @@ export default function RecipePicker({
   const [servings, setServings] = useState(1);
   const [selected, setSelected] = useState<string | null>(initialRecipeId || null);
   const page = useRecordPage({ resource: 'recipes', search: query, limit: 30 }, !recipes);
-  const detail = useResource('details', { recipeIds: selected ? [selected] : [] },
-    (signal) => rpc.workspace.details({ recipeIds: selected ? [selected] : [] }, { signal }), !recipes && Boolean(selected));
+  const detail = useResource(
+    'details',
+    { recipeIds: selected ? [selected] : [] },
+    (signal) => rpc.workspace.details({ recipeIds: selected ? [selected] : [] }, { signal }),
+    !recipes && Boolean(selected),
+  );
   const recipe = (recipes ?? detail.data?.recipes ?? []).find((r) => r.id === selected);
-  const filtered = [...(recipes
-    ? recipes.filter((r) => `${r.name} ${r.tags.join(' ')} ${r.ingredients.map((item) => item.name).join(' ')}`.toLowerCase().includes(query.toLowerCase()))
-    : page.data?.items ?? [])]
-    .sort((a, b) => {
-      const preferred =
-        slot === 'breakfast' ? 'breakfast' : ['snack', 'fuel'].includes(slot) ? 'snack' : 'main';
-      return Number(b.category === preferred) - Number(a.category === preferred);
-    });
+  const filtered = [
+    ...(recipes
+      ? recipes.filter((r) =>
+          `${r.name} ${r.tags.join(' ')} ${r.ingredients.map((item) => item.name).join(' ')}`
+            .toLowerCase()
+            .includes(query.toLowerCase()),
+        )
+      : (page.data?.items ?? [])),
+  ].sort((a, b) => {
+    const preferred =
+      slot === 'breakfast' ? 'breakfast' : ['snack', 'fuel'].includes(slot) ? 'snack' : 'main';
+    return Number(b.category === preferred) - Number(a.category === preferred);
+  });
   return (
     <Dialog title="Add a meal to your plan" onClose={onClose}>
       <form
@@ -99,9 +114,19 @@ export default function RecipePicker({
             placeholder="Find a recipe…"
           />
         </InputGroup>
-        {!recipes && (!page.data || page.isError) && <ResourceStatus error={page.error} loading={page.isPending} retry={page.reload} />}
-        {!recipes && selected && (!detail.data || detail.isError) && <ResourceStatus error={detail.error} loading={detail.isPending} retry={() => void detail.refetch()} />}
-        {recipe && !filtered.some((item) => item.id === recipe.id) && <p>Selected: {recipe.name}</p>}
+        {!recipes && (!page.data || page.isError) && (
+          <ResourceStatus error={page.error} loading={page.isPending} retry={page.reload} />
+        )}
+        {!recipes && selected && (!detail.data || detail.isError) && (
+          <ResourceStatus
+            error={detail.error}
+            loading={detail.isPending}
+            retry={() => void detail.refetch()}
+          />
+        )}
+        {recipe && !filtered.some((item) => item.id === recipe.id) && (
+          <p>Selected: {recipe.name}</p>
+        )}
         <ToggleGroup
           className="recipe-picker-list"
           orientation="vertical"
@@ -125,14 +150,21 @@ export default function RecipePicker({
               </span>
             </ToggleGroupItem>
           ))}
-          {!filtered.length && (recipes || (page.data && !page.isError)) && <p className="muted">No matching recipes. Try another search.</p>}
+          {!filtered.length && (recipes || (page.data && !page.isError)) && (
+            <p className="muted">No matching recipes. Try another search.</p>
+          )}
         </ToggleGroup>
         {!recipes && <ResourcePaging {...page.paging} />}
         <div className="form-footer">
           <Button variant="outline" size="default" type="button" onClick={onClose}>
             Cancel
           </Button>
-          <Button variant="default" size="default" type="submit" disabled={busy || !recipe || (!recipes && (detail.isFetching || detail.isError))}>
+          <Button
+            variant="default"
+            size="default"
+            type="submit"
+            disabled={busy || !recipe || (!recipes && (detail.isFetching || detail.isError))}
+          >
             <Plus size={15} />
             Add to plan
           </Button>

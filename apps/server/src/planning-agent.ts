@@ -18,7 +18,14 @@ import {
   FOOD_ESTIMATE_INSTRUCTIONS,
 } from '@packages/nutrition/food-estimate';
 import { searchExerciseCatalog } from '@packages/training/exercise-catalog';
-import { planningContext, planningDetail, planningHistory, proposalDependencies, recipeContext, type PlanningSnapshot } from './planning-context.js';
+import {
+  planningContext,
+  planningDetail,
+  planningHistory,
+  proposalDependencies,
+  recipeContext,
+  type PlanningSnapshot,
+} from './planning-context.js';
 import { ApiError } from './http.js';
 import type { Recipe } from '@packages/nutrition/types';
 import type { WorkspaceStore } from './store.js';
@@ -293,8 +300,7 @@ export class PlanningAgent {
       request.referenceDate,
       snapshot.revision,
     );
-    if (fresh)
-      this.launch(row, async (signal) => this.plan(userId, snapshot, request, signal));
+    if (fresh) this.launch(row, async (signal) => this.plan(userId, snapshot, request, signal));
     return toRun(row);
   }
   private launch(row: Row, execute: (signal: AbortSignal) => Promise<unknown>) {
@@ -381,7 +387,8 @@ export class PlanningAgent {
         'NO_PROPOSAL',
         'This request does not have a completed proposal to apply.',
       );
-    if (row.status === 'applied') return { revision: (await this.store.bootstrap(userId)).revision, run: toRun(row) };
+    if (row.status === 'applied')
+      return { revision: (await this.store.bootstrap(userId)).revision, run: toRun(row) };
     const current = await this.store.bootstrap(userId);
     if (current.revision !== row.base_revision) {
       // A concurrent Apply of this run commits workspace, receipt and run status
@@ -399,7 +406,12 @@ export class PlanningAgent {
     // applies of one run must derive the identical receipt payload to replay.
     let dependencies;
     try {
-      dependencies = await proposalDependencies(this.db, userId, JSON.parse(row.result), row.base_revision);
+      dependencies = await proposalDependencies(
+        this.db,
+        userId,
+        JSON.parse(row.result),
+        row.base_revision,
+      );
     } catch (error) {
       if (error instanceof ApiError && error.code === 'STALE_PROPOSAL') {
         const applied = await this.row(userId, id);
@@ -408,7 +420,11 @@ export class PlanningAgent {
       }
       throw error;
     }
-    const { result, mutations } = proposalMutations(dependencies, JSON.parse(row.result), row.updated_at);
+    const { result, mutations } = proposalMutations(
+      dependencies,
+      JSON.parse(row.result),
+      row.updated_at,
+    );
     if (result.status !== 'proposal' || !mutations.length)
       throw new AgentError(
         409,
@@ -688,17 +704,44 @@ export class PlanningAgent {
           const args: unknown = JSON.parse(call.arguments);
           let data: unknown;
           if (call.name === 'submit_result')
-            return proposalMutations(await proposalDependencies(this.db, userId, args, revision), args).result;
+            return proposalMutations(
+              await proposalDependencies(this.db, userId, args, revision),
+              args,
+            ).result;
           if (call.name === 'search_exercises')
             data = searchExerciseCatalog({ ...searchSchema.parse(args), limit: 10 });
           else if (call.name === 'get_recipe')
-            data = await planningDetail(this.db, userId, 'recipe', lookupSchema.parse(args).id, revision);
+            data = await planningDetail(
+              this.db,
+              userId,
+              'recipe',
+              lookupSchema.parse(args).id,
+              revision,
+            );
           else if (call.name === 'get_workout')
-            data = await planningDetail(this.db, userId, 'workout', lookupSchema.parse(args).id, revision);
+            data = await planningDetail(
+              this.db,
+              userId,
+              'workout',
+              lookupSchema.parse(args).id,
+              revision,
+            );
           else if (call.name === 'get_routine')
-            data = await planningDetail(this.db, userId, 'routine', lookupSchema.parse(args).id, revision);
+            data = await planningDetail(
+              this.db,
+              userId,
+              'routine',
+              lookupSchema.parse(args).id,
+              revision,
+            );
           else if (call.name === 'read_history')
-            data = await planningHistory(this.db, userId, request.referenceDate, historySchema.parse(args).days, revision);
+            data = await planningHistory(
+              this.db,
+              userId,
+              request.referenceDate,
+              historySchema.parse(args).days,
+              revision,
+            );
           else throw new Error('That function is unavailable.');
           input.push({
             type: 'function_call_output',
