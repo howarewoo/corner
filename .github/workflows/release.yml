@@ -23,6 +23,20 @@ on:
       rollback_deployment_id:
         description: Explicit completed qualified production deployment ID to recover
         type: string
+      preserving_cutover:
+        description: Explicit operator-approved preserving document-v1 to relational-v1 maintenance cutover
+        type: boolean
+        default: false
+      operation_id:
+        description: Exact operator cutover operation ID (required for preserving cutover and cutover resume)
+        type: string
+      resume_plan_id:
+        description: Exact planned preserving-cutover deployment ID to resume or abort; leave run_id and source_sha empty
+        type: string
+      cutover_abort:
+        description: Abort a maintenance cutover and restore the pinned original Worker only when DB cutover phase is still untouched
+        type: boolean
+        default: false
       completion_deployment_id:
         description: Exact current deployed/public-passed receipt to retry checks without redeploying; leave other operation inputs empty
         type: string
@@ -37,7 +51,7 @@ env:
 
 jobs:
   deploy:
-    if: github.ref == 'refs/heads/main' && inputs.automatic && !inputs.completion_deployment_id
+    if: github.ref == 'refs/heads/main' && inputs.automatic && !inputs.completion_deployment_id && !inputs.preserving_cutover && !inputs.operation_id && !inputs.resume_plan_id && !inputs.cutover_abort
     runs-on: ubuntu-latest
     timeout-minutes: 25
     environment: production
@@ -86,7 +100,7 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
 
   plan:
-    if: github.ref == 'refs/heads/main' && !inputs.automatic && !inputs.completion_deployment_id
+    if: github.ref == 'refs/heads/main' && !inputs.automatic && !inputs.completion_deployment_id && !inputs.resume_plan_id && !inputs.cutover_abort
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -126,10 +140,12 @@ jobs:
           RELEASE_BOOTSTRAP: ${{ inputs.bootstrap }}
           RELEASE_PROVISIONED_VERSION_ID: ${{ inputs.provisioned_version_id }}
           RELEASE_ROLLBACK_ID: ${{ inputs.rollback_deployment_id }}
+          RELEASE_PRESERVING_CUTOVER: ${{ inputs.preserving_cutover }}
+          RELEASE_OPERATION_ID: ${{ inputs.operation_id }}
 
   promote:
     needs: plan
-    if: github.ref == 'refs/heads/main' && !inputs.automatic && !inputs.completion_deployment_id
+    if: github.ref == 'refs/heads/main' && !inputs.automatic && !inputs.completion_deployment_id && !inputs.resume_plan_id && !inputs.cutover_abort
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: production
@@ -172,8 +188,53 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
 
+  resume:
+    if: github.ref == 'refs/heads/main' && !inputs.automatic && inputs.resume_plan_id && inputs.operation_id && !inputs.completion_deployment_id && !inputs.run_id && !inputs.source_sha && !inputs.bootstrap && !inputs.provisioned_version_id && !inputs.rollback_deployment_id && !inputs.preserving_cutover
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+    concurrency:
+      group: corner-production-effects
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      actions: read
+      deployments: write
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: corner-test-only
+          POSTGRES_DB: corner_test
+        ports: ['5432:5432']
+        options: --health-cmd "pg_isready -U postgres -d corner_test" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      CORNER_TEST_DATABASE_URL: postgresql://postgres:corner-test-only@127.0.0.1:5432/corner_test
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '>=24.15.0 <25'
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - name: Inspect durable cutover phase and resume or abort pinned maintenance cutover
+        run: node scripts/release.mjs resume
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_PLAN_ID: ${{ inputs.resume_plan_id }}
+          RELEASE_OPERATION_ID: ${{ inputs.operation_id }}
+          RELEASE_CUTOVER_ABORT: ${{ inputs.cutover_abort }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+
   complete:
-    if: github.ref == 'refs/heads/main' && !inputs.automatic && inputs.completion_deployment_id && !inputs.run_id && !inputs.source_sha && !inputs.bootstrap && !inputs.provisioned_version_id && !inputs.rollback_deployment_id
+    if: github.ref == 'refs/heads/main' && !inputs.automatic && inputs.completion_deployment_id && !inputs.run_id && !inputs.source_sha && !inputs.bootstrap && !inputs.provisioned_version_id && !inputs.rollback_deployment_id && !inputs.preserving_cutover && !inputs.operation_id && !inputs.resume_plan_id && !inputs.cutover_abort
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: production

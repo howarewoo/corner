@@ -40,7 +40,7 @@
     "smoke": "node scripts/smoke.mjs",
     "package": "python3 scripts/package.py",
     "smoke:dev": "node scripts/dev-smoke.mjs",
-    "build:workers": "pnpm run build && pnpm --filter server exec wrangler deploy --dry-run --outdir dist/worker",
+    "build:workers": "pnpm run build && pnpm --filter server exec wrangler deploy --dry-run --outdir dist/worker && pnpm --filter server exec wrangler deploy src/maintenance-worker.ts --dry-run --outdir dist/worker",
     "smoke:workers": "node scripts/workers-smoke.mjs"
   },
   "devDependencies": {

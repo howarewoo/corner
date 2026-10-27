@@ -7,14 +7,17 @@ import {
   verifyRun,
   validateConfiguration,
   validateReceipt,
+  validateMaintenanceReceipt,
   assertBaseline,
   rollbackEligible,
   GitHub,
   plan,
   promote,
+  resume,
   complete,
   deploy,
   publicChecks,
+  maintenanceChecks,
   validateLiveRollback,
 } from '../release.mjs';
 import { loadCiArtifact } from '../ci-artifact.mjs';
@@ -26,7 +29,8 @@ const source = 'a'.repeat(40),
   previousDigest = 'd'.repeat(64),
   configurationSha256 = 'e'.repeat(64);
 const versionId = '12345678-1234-1234-1234-123456789012',
-  oldVersion = 'abcdefab-abcd-abcd-abcd-abcdefabcdef';
+  oldVersion = 'abcdefab-abcd-abcd-abcd-abcdefabcdef',
+  maintenanceVersionId = '22222222-3333-4444-8555-666666666666';
 const configuration = JSON.stringify({
   CORNER_ORIGIN: 'https://corner.example.com',
   NEON_AUTH_REQUIRE_EMAIL_VERIFICATION: 'true',
@@ -1454,4 +1458,621 @@ test('single runtime traffic-switch failure never records a deployed receipt', a
   await assert.rejects(promote(f.options), /runtime switch failed/);
   assert.equal(f.records.at(-1).phase, 'schema-attempted');
   assert(!f.records.some((row) => ['deployed', 'public-passed', 'complete'].includes(row.phase)));
+});
+
+function cutoverFixture({
+  dbPhase = 'untouched',
+  operationId = 'cutover-prod-2026-10-27',
+  overrides = {},
+} = {}) {
+  const f = fixture(overrides);
+  let currentDbPhase = dbPhase;
+  let liveVersion = oldVersion;
+  const preservingReport = {
+    ...report,
+    previousGeneration: 'document-v1',
+    recovery: 'preserving',
+  };
+  f.payload.preservingCutover = true;
+  f.payload.operationId = operationId;
+  f.payload.qualification = preservingReport;
+  const documentBaseline = {
+    ...receipt,
+    qualification: {
+      ...report,
+      sourceSha: previousSource,
+      candidateDigest: previousDigest,
+      generation: 'document-v1',
+      previousGeneration: null,
+      bootstrap: true,
+      recovery: 'bootstrap',
+    },
+  };
+  f.github.baseline = async () => {
+    const latestProd = [...f.records]
+      .reverse()
+      .find((row) => ['deployed', 'public-passed', 'complete'].includes(row.phase));
+    if (latestProd) {
+      return {
+        id: 21 + f.records.lastIndexOf(latestProd),
+        payload: latestProd,
+      };
+    }
+    return { id: 10, payload: documentBaseline };
+  };
+  f.github.schema = async () => {
+    const latestSchema = [...f.records]
+      .reverse()
+      .find((row) => row.phase === 'schema-attempted');
+    return latestSchema
+      ? { id: 21 + f.records.lastIndexOf(latestSchema), payload: latestSchema }
+      : null;
+  };
+  f.github.maintenance = async () => {
+    const latestMaint = [...f.records]
+      .reverse()
+      .find((row) =>
+        [
+          'maintenance-uploaded',
+          'maintenance-active',
+          'cutover-validated',
+          'maintenance-complete',
+          'maintenance-aborted',
+        ].includes(row.phase),
+      );
+    if (!latestMaint) return null;
+    validateMaintenanceReceipt(latestMaint);
+    return { id: 21 + f.records.lastIndexOf(latestMaint), payload: latestMaint };
+  };
+  const origApi = f.github.api;
+  f.github.api = async (path) => {
+    if (path === 'deployments/10') return { id: 10, environment: 'production', payload: documentBaseline };
+    return origApi(path);
+  };
+  f.github.artifact = async (reference) => ({
+    generation: reference.sourceSha === source ? 'relational-v1' : 'document-v1',
+    directory: join(work, reference.sourceSha),
+    manifest: {
+      ...manifest,
+      sourceSha: reference.sourceSha,
+      maintenanceWorkerEntry: 'worker/maintenance-worker.js',
+      files: {
+        'worker/worker.js': 'f'.repeat(64),
+        'worker/maintenance-worker.js': 'e'.repeat(64),
+      },
+    },
+    digest: reference.sourceSha === source ? candidateDigest : previousDigest,
+    qualification:
+      reference.sourceSha === source ? preservingReport : documentBaseline.qualification,
+  });
+  let uploadCount = 0;
+  f.options.execute = (binary, args) => {
+    if (args.includes('upload')) {
+      uploadCount += 1;
+      const uploaded = uploadCount === 1 ? maintenanceVersionId : versionId;
+      f.effects.push(`upload:${uploaded === maintenanceVersionId ? 'maintenance' : 'candidate'}`);
+      return `Worker Version ID: ${uploaded}\n`;
+    }
+    if (args.includes('--inspect-cutover')) {
+      f.effects.push(`inspect:${currentDbPhase}`);
+      return `${JSON.stringify({
+        phase: currentDbPhase,
+        operationId: currentDbPhase === 'untouched' ? null : operationId,
+      })}\n`;
+    }
+    if (args.includes('--preserving-cutover')) {
+      f.effects.push('preserving-cutover');
+      currentDbPhase = 'completed';
+      return `${JSON.stringify({ phase: 'completed', operationId })}\n`;
+    }
+    if (args.includes('deploy')) {
+      const spec = args.find((arg) => arg.endsWith('@100%'));
+      liveVersion = spec.slice(0, -5);
+      f.effects.push(
+        `deploy:${liveVersion === maintenanceVersionId ? 'maintenance' : liveVersion === versionId ? 'candidate' : 'original'}`,
+      );
+      return '';
+    }
+    throw new Error(`Unexpected command: ${binary} ${args.join(' ')}`);
+  };
+  f.options.cf = async (path, { missing = false } = {}) => {
+    if (missing) return null;
+    if (path.endsWith('/settings'))
+      return {
+        bindings: [
+          'DATABASE_URL',
+          'NEON_AUTH_BASE_URL',
+          'BETTER_AUTH_SECRET',
+          'CORNER_TOKEN_ENCRYPTION_KEY',
+        ].map((name) => ({ name, type: 'secret_text' })),
+      };
+    return {
+      deployments: [{ versions: [{ version_id: liveVersion, percentage: 100 }] }],
+    };
+  };
+  f.options.qualify = async () => preservingReport;
+  f.options.checkMaintenance = async () => {
+    f.effects.push('maintenance-checked');
+  };
+  f.setDbPhase = (next) => {
+    currentDbPhase = next;
+  };
+  f.setLiveVersion = (next) => {
+    liveVersion = next;
+  };
+  f.getLiveVersion = () => liveVersion;
+  const migrationFile = join(work, source, manifest.migrationEntry);
+  return {
+    ...f,
+    preservingReport,
+    operationId,
+    setupMigratorFile: async (customCode) => {
+      await mkdir(dirname(migrationFile), { recursive: true });
+      await writeFile(
+        migrationFile,
+        customCode ??
+          `export const storageGeneration = 'relational-v1';
+export function createDatabase() {
+  let checkedOut = false;
+  return {
+    __isPool: true,
+    async connect() {
+      if (checkedOut) throw new Error('Pool max 1 deadlock');
+      checkedOut = true;
+      return {
+        async query() { return { rows: [] }; },
+        release() { checkedOut = false; },
+      };
+    },
+    async end() {},
+  };
+}
+export function directDatabaseUrl(u) { return u; }
+export async function currentSchema() { return 'public'; }
+export async function migrationHistory() {}
+export async function validatePersistedRecords() {}
+export async function inspectDocumentCutover(pool, opId) {
+  if (!pool || !pool.__isPool) throw new Error('inspectDocumentCutover must receive Pool');
+  const client = await pool.connect();
+  client.release();
+  return { phase: 'completed', operationId: opId ?? ${JSON.stringify(operationId)} };
+}
+`,
+      );
+    },
+  };
+}
+
+test('automatic release never invokes preserving cutover or maintenance implicitly', async () => {
+  const f = cutoverFixture();
+  await assert.rejects(
+    plan({
+      ...f.options,
+      runId: '1',
+      sourceSha: source,
+      automatic: true,
+      preservingCutover: true,
+      operationId: f.operationId,
+    }),
+    /Automatic production cannot bootstrap, adopt, or roll back a Worker, or run a preserving cutover/,
+  );
+  f.payload.automatic = true;
+  await assert.rejects(
+    promote({ ...f.options, automatic: true }),
+    /Automatic production cannot execute an operator release plan/,
+  );
+});
+
+test('preserving cutover sequences maintenance upload, gate probe, journaled cutover, candidate validation, and completion without corrupting baseline', async () => {
+  const f = cutoverFixture();
+  await f.setupMigratorFile();
+  const planned = await plan({
+    ...f.options,
+    runId: '1',
+    sourceSha: source,
+    preservingCutover: true,
+    operationId: f.operationId,
+  });
+  assert.equal(planned.payload.preservingCutover, true);
+  assert.equal(planned.payload.operationId, f.operationId);
+  assert.equal(planned.payload.qualification.recovery, 'preserving');
+
+  const completed = await promote(f.options);
+  assert.equal(completed.payload.phase, 'complete');
+  assert.equal(completed.payload.versionId, versionId);
+  assert.equal(f.getLiveVersion(), versionId);
+  assert.deepEqual(f.effects, [
+    'planned',
+    'inspect:untouched',
+    'upload:maintenance',
+    'upload:candidate',
+    'maintenance-uploaded',
+    'inspect:untouched',
+    'deploy:maintenance',
+    'maintenance-checked',
+    'maintenance-active',
+    'inspect:untouched',
+    'schema-attempted',
+    'preserving-cutover',
+    'inspect:completed',
+    'cutover-validated',
+    'deploy:candidate',
+    'deployed',
+    'public',
+    'public-passed',
+    'complete',
+    'maintenance-complete',
+  ]);
+});
+
+test('first preserving cutover run succeeds and pre-cutover abort remains allowed when a preexisting failed schema-attempted journal is pinned', async () => {
+  const f = cutoverFixture();
+  await f.setupMigratorFile();
+  const priorFailedSchema = {
+    ...receipt,
+    phase: 'schema-attempted',
+    planId: '9',
+    sourceSha: '9'.repeat(40),
+    candidateDigest: '8'.repeat(64),
+  };
+  let currentSchemaRecord = { id: 15, payload: priorFailedSchema };
+  f.github.schema = async () => {
+    const latestSchema = [...f.records]
+      .reverse()
+      .find((row) => row.phase === 'schema-attempted');
+    return latestSchema
+      ? { id: 21 + f.records.lastIndexOf(latestSchema), payload: latestSchema }
+      : currentSchemaRecord;
+  };
+  const origArtifact = f.github.artifact;
+  f.github.artifact = async (reference) => {
+    if (reference.sourceSha === priorFailedSchema.sourceSha) {
+      return {
+        generation: 'relational-v1',
+        directory: join(work, source),
+        manifest: { ...manifest, sourceSha: reference.sourceSha },
+        digest: priorFailedSchema.candidateDigest,
+        qualification: f.preservingReport,
+      };
+    }
+    return origArtifact(reference);
+  };
+  const planned = await plan({
+    ...f.options,
+    runId: '1',
+    sourceSha: source,
+    preservingCutover: true,
+    operationId: f.operationId,
+  });
+  assert.equal(planned.payload.schemaId, '15');
+  f.payload.schemaId = '15';
+  f.options.checkMaintenance = async () => {
+    f.effects.push('maintenance-checked');
+  };
+
+  // First verify pre-cutover abort with untouched DB is not blocked by preexisting schemaId 15
+  const origExecute = f.options.execute;
+  f.options.execute = (binary, args) => {
+    if (args.includes('--preserving-cutover')) throw new Error('halt before cutover');
+    return origExecute(binary, args);
+  };
+  await assert.rejects(promote(f.options), /halt before cutover/);
+  assert.equal(f.getLiveVersion(), maintenanceVersionId);
+  const aborted = await resume({
+    ...f.options,
+    planId: '11',
+    operationId: f.operationId,
+    abort: true,
+    checkMaintenance: f.options.checkMaintenance,
+  });
+  assert.equal(aborted.payload.phase, 'maintenance-aborted');
+  assert.equal(f.getLiveVersion(), oldVersion);
+
+  // Now run a fresh preserving cutover with preexisting schemaId 15 all the way to completion
+  const f2 = cutoverFixture();
+  await f2.setupMigratorFile();
+  f2.github.schema = async () => {
+    const latestSchema = [...f2.records]
+      .reverse()
+      .find((row) => row.phase === 'schema-attempted');
+    return latestSchema
+      ? { id: 21 + f2.records.lastIndexOf(latestSchema), payload: latestSchema }
+      : currentSchemaRecord;
+  };
+  f2.payload.schemaId = '15';
+  f2.options.checkMaintenance = async () => {};
+  const completed = await promote(f2.options);
+  assert.equal(completed.payload.phase, 'complete');
+  assert.equal(f2.getLiveVersion(), versionId);
+});
+
+test('public probe failure after candidate traffic switch restores pinned maintenance version and preserves incomplete deployment', async () => {
+  const f = cutoverFixture();
+  await f.setupMigratorFile();
+  f.options.checkPublic = async () => {
+    f.effects.push('public-failed');
+    throw new Error('public probe failed');
+  };
+  f.options.checkMaintenance = async () => {
+    f.effects.push('maintenance-checked');
+  };
+  const origExecute = f.options.execute;
+  await assert.rejects(promote(f.options), /public probe failed/);
+  // Live Worker must be returned to the exact pinned maintenance version, never the old document-v1 Worker.
+  assert.equal(f.getLiveVersion(), maintenanceVersionId);
+  assert.equal((await f.github.baseline()).payload.phase, 'deployed');
+  assert.equal((await f.github.baseline()).payload.versionId, versionId);
+  assert.equal((await f.github.maintenance()).payload.phase, 'cutover-validated');
+  assert(!f.effects.includes('deploy:original'));
+  assert(!f.records.some((row) => row.phase === 'complete'));
+
+  // Subsequent resume across a new workflow execution run ID completes without re-uploading or re-running cutover.
+  process.env.GITHUB_RUN_ID = '999';
+  process.env.GITHUB_RUN_ATTEMPT = '2';
+  try {
+    f.options.checkPublic = async () => {
+      f.effects.push('public-recovered');
+    };
+    const resumed = await resume({
+      ...f.options,
+      planId: '11',
+      operationId: f.operationId,
+      checkMaintenance: f.options.checkMaintenance,
+    });
+    assert.equal(resumed.payload.phase, 'complete');
+    assert.equal(f.getLiveVersion(), versionId);
+    assert(f.effects.includes('public-recovered'));
+  } finally {
+    process.env.GITHUB_RUN_ID = '90';
+    process.env.GITHUB_RUN_ATTEMPT = '1';
+    f.options.execute = origExecute;
+  }
+});
+
+test('resume inspects actual Group1 DB cutover state across crash phases and blocks pre-cutover abort once source is staged', async () => {
+  for (const crashPhase of ['source-staged', 'native-schema-advanced', 'import-partial']) {
+    const f = cutoverFixture({ dbPhase: 'untouched' });
+    await f.setupMigratorFile();
+    const origExecute = f.options.execute;
+    let crashed = false;
+    f.options.execute = (binary, args) => {
+      if (args.includes('--preserving-cutover') && !crashed) {
+        crashed = true;
+        f.setDbPhase(crashPhase);
+        throw new Error(`simulated crash at ${crashPhase}`);
+      }
+      return origExecute(binary, args);
+    };
+    f.options.checkMaintenance = async () => {
+      f.effects.push('maintenance-checked');
+    };
+    await assert.rejects(promote(f.options), new RegExp(`simulated crash at ${crashPhase}`));
+    assert.equal(f.getLiveVersion(), maintenanceVersionId);
+    // Production baseline is still the original document-v1 release; maintenance is tracked separately.
+    assert.equal((await f.github.baseline()).payload.versionId, oldVersion);
+
+    // Attempting to abort after source-staged/native-schema-advanced/import-partial is strictly refused.
+    await assert.rejects(
+      resume({
+        ...f.options,
+        planId: '11',
+        operationId: f.operationId,
+        abort: true,
+        checkMaintenance: f.options.checkMaintenance,
+      }),
+      /abort refused/,
+    );
+    assert.equal(f.getLiveVersion(), maintenanceVersionId);
+
+    // Forward resume continues from the durable phase using the pinned versions and completes.
+    process.env.GITHUB_RUN_ID = '105';
+    try {
+      const completed = await resume({
+        ...f.options,
+        planId: '11',
+        operationId: f.operationId,
+        checkMaintenance: f.options.checkMaintenance,
+      });
+      assert.equal(completed.payload.phase, 'complete');
+      assert.equal(f.getLiveVersion(), versionId);
+    } finally {
+      process.env.GITHUB_RUN_ID = '90';
+    }
+  }
+});
+
+test('pre-cutover abort restores original live Worker only when DB cutover state is untouched', async () => {
+  const f = cutoverFixture({ dbPhase: 'untouched' });
+  await f.setupMigratorFile();
+  const origExecute = f.options.execute;
+  f.options.execute = (binary, args) => {
+    if (args.includes('--preserving-cutover')) {
+      throw new Error('halt before migration');
+    }
+    return origExecute(binary, args);
+  };
+  f.options.checkMaintenance = async () => {
+    f.effects.push('maintenance-checked');
+  };
+  // Simulate failure right after maintenance-active before schema-attempted is recorded:
+  const origRecord = f.github.record;
+  f.github.record = async (payload, state) => {
+    if (payload.phase === 'schema-attempted') throw new Error('halt before schema-attempted');
+    return origRecord(payload, state);
+  };
+  await assert.rejects(promote(f.options), /halt before schema-attempted/);
+  assert.equal(f.getLiveVersion(), maintenanceVersionId);
+  f.github.record = origRecord;
+
+  // If DB is mutated to source-staged even without schema-attempted, abort is still refused!
+  f.setDbPhase('source-staged');
+  await assert.rejects(
+    resume({
+      ...f.options,
+      planId: '11',
+      operationId: f.operationId,
+      abort: true,
+      checkMaintenance: f.options.checkMaintenance,
+    }),
+    /database cutover phase is source-staged/,
+  );
+
+  // When DB is genuinely untouched, abort restores originalVersionId and records maintenance-aborted.
+  f.setDbPhase('untouched');
+  const aborted = await resume({
+    ...f.options,
+    planId: '11',
+    operationId: f.operationId,
+    abort: true,
+    checkMaintenance: f.options.checkMaintenance,
+  });
+  assert.equal(aborted.payload.phase, 'maintenance-aborted');
+  assert.equal(f.getLiveVersion(), oldVersion);
+  assert.equal((await f.github.baseline()).payload.versionId, oldVersion);
+});
+
+test('completion lost-response recovery converges without redeploying maintenance when recordCompletion or maintenance-complete fails partway', async () => {
+  // Case 1: publicChecks pass and complete receipt is recorded, but maintenance-complete journal write fails.
+  const f1 = cutoverFixture();
+  await f1.setupMigratorFile();
+  f1.options.checkMaintenance = async () => {
+    f1.effects.push('maintenance-checked');
+  };
+  const origRecord1 = f1.github.record;
+  let failMaintComplete = true;
+  f1.github.record = async (payload, state) => {
+    if (payload.phase === 'maintenance-complete' && failMaintComplete) {
+      failMaintComplete = false;
+      throw new Error('github maintenance-complete write lost');
+    }
+    return origRecord1(payload, state);
+  };
+  await assert.rejects(promote(f1.options), /github maintenance-complete write lost/);
+  // Public checks already passed, so candidateVersionId stays live (not rolled back to maintenance).
+  assert.equal(f1.getLiveVersion(), versionId);
+  assert.equal((await f1.github.baseline()).payload.phase, 'complete');
+  assert.equal((await f1.github.maintenance()).payload.phase, 'cutover-validated');
+
+  const converged1 = await resume({
+    ...f1.options,
+    planId: '11',
+    operationId: f1.operationId,
+    checkMaintenance: f1.options.checkMaintenance,
+  });
+  assert.equal(converged1.payload.phase, 'complete');
+  assert.equal((await f1.github.maintenance()).payload.phase, 'maintenance-complete');
+  assert.equal(f1.getLiveVersion(), versionId);
+
+  // Case 2: publicChecks pass and public-passed is recorded, but complete receipt write fails.
+  const f2 = cutoverFixture();
+  await f2.setupMigratorFile();
+  f2.options.checkMaintenance = async () => {
+    f2.effects.push('maintenance-checked');
+  };
+  const origRecord2 = f2.github.record;
+  let failComplete = true;
+  f2.github.record = async (payload, state) => {
+    if (payload.phase === 'complete' && failComplete) {
+      failComplete = false;
+      throw new Error('github complete write lost');
+    }
+    return origRecord2(payload, state);
+  };
+  await assert.rejects(promote(f2.options), /github complete write lost/);
+  assert.equal(f2.getLiveVersion(), versionId);
+  assert.equal((await f2.github.baseline()).payload.phase, 'public-passed');
+  assert.equal((await f2.github.maintenance()).payload.phase, 'cutover-validated');
+
+  const converged2 = await resume({
+    ...f2.options,
+    planId: '11',
+    operationId: f2.operationId,
+    checkMaintenance: f2.options.checkMaintenance,
+  });
+  assert.equal(converged2.payload.phase, 'complete');
+  assert.equal((await f2.github.maintenance()).payload.phase, 'maintenance-complete');
+  assert.equal(f2.getLiveVersion(), versionId);
+});
+
+test('maintenanceChecks verifies 503, X-Corner-Version, Retry-After, no-store, and JSON/CSP contracts', async () => {
+  const fetcher = async (url) => {
+    const path = new URL(url).pathname;
+    const headers = {
+      'X-Corner-Version': maintenanceVersionId,
+      'Cache-Control': 'private, no-store, max-age=0',
+      'Retry-After': '60',
+      'Content-Security-Policy': "default-src 'none'; frame-ancestors 'none'",
+    };
+    if (path.startsWith('/api/rpc/')) {
+      return Response.json(
+        {
+          json: {
+            defined: true,
+            code: 'SERVICE_UNAVAILABLE',
+            status: 503,
+            message: 'Maintenance',
+            data: { code: 'MAINTENANCE_ACTIVE' },
+          },
+        },
+        { status: 503, headers },
+      );
+    }
+    if (path.startsWith('/api/')) {
+      return Response.json(
+        { ok: false, maintenance: true, code: 'MAINTENANCE_ACTIVE', error: 'Maintenance' },
+        { status: 503, headers },
+      );
+    }
+    return new Response('<html>maintenance</html>', { status: 503, headers });
+  };
+  await maintenanceChecks(config.origin, maintenanceVersionId, fetcher);
+  await assert.rejects(
+    maintenanceChecks(config.origin, versionId, fetcher),
+    /version identity mismatch/,
+  );
+});
+
+test('completed receipt resume closes on failed probes and refuses unknown live drift', async () => {
+  for (const drift of [false, true]) {
+    const f = cutoverFixture();
+    await f.setupMigratorFile();
+    const record = f.github.record;
+    f.github.record = async (payload, state) => {
+      if (payload.phase === 'maintenance-complete') throw new Error('lost closure');
+      return record(payload, state);
+    };
+    await assert.rejects(promote(f.options), /lost closure/);
+    f.github.record = record;
+    const before = f.effects.filter((effect) => effect.startsWith('deploy:')).length;
+    const unknown = '77777777-7777-4777-8777-777777777777';
+    f.options.checkPublic = async () => {
+      if (drift) f.setLiveVersion(unknown);
+      throw new Error('security probe failed');
+    };
+    await assert.rejects(
+      resume({ ...f.options, operationId: f.operationId }),
+      drift ? /restoring the pinned maintenance Worker also failed/ : /security probe failed/,
+    );
+    assert.equal(f.getLiveVersion(), drift ? unknown : maintenanceVersionId);
+    assert.equal(
+      f.effects.filter((effect) => effect.startsWith('deploy:')).length,
+      before + (drift ? 0 : 1),
+    );
+  }
+});
+
+test('candidate traffic switch refuses drift introduced during converted-record validation', async () => {
+  const f = cutoverFixture();
+  await f.setupMigratorFile();
+  const execute = f.options.execute;
+  const unknown = '77777777-7777-4777-8777-777777777777';
+  f.options.execute = (binary, args) => {
+    const result = execute(binary, args);
+    if (args.includes('--inspect-cutover') && f.effects.includes('preserving-cutover'))
+      f.setLiveVersion(unknown);
+    return result;
+  };
+  await assert.rejects(promote(f.options), /Live Worker drifted before pinned traffic transition/);
+  assert.equal(f.getLiveVersion(), unknown);
+  assert(!f.effects.includes('deploy:candidate'));
 });
