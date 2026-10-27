@@ -560,7 +560,11 @@ test('authorization uses fresh PKCE, stable opaque host ID, official endpoints, 
   assert.ok(!stored.includes(first.searchParams.get('state')!));
   assert.ok(!stored.includes(first.searchParams.get('nonce')!));
   assert.ok(!stored.includes('session-a'));
-  h.provider = new SubscriptionProvider({ db: createQueries(h.db), config: h.config, fetch: h.fetcher });
+  h.provider = new SubscriptionProvider({
+    db: createQueries(h.db),
+    config: h.config,
+    fetch: h.fetcher,
+  });
   await h.provider.initialize();
   const second = await start(h);
   assert.equal(
@@ -793,7 +797,11 @@ test('concurrent renewal serializes rotating refresh tokens and persists the rep
     ).includes('synthetic-rotated'),
     false,
   );
-  h.provider = new SubscriptionProvider({ db: createQueries(h.db), config: h.config, fetch: h.fetcher });
+  h.provider = new SubscriptionProvider({
+    db: createQueries(h.db),
+    config: h.config,
+    fetch: h.fetcher,
+  });
   await h.provider.initialize();
   await h.provider.models('corner-user-a');
   assert.equal(h.refreshCount, 1);
@@ -803,7 +811,11 @@ test('independent provider instances share a PostgreSQL refresh lease', async (t
   const h = await harness(t);
   h.expiresIn = 1;
   await connect(h);
-  const other = new SubscriptionProvider({ db: createQueries(h.db), config: h.config, fetch: h.fetcher });
+  const other = new SubscriptionProvider({
+    db: createQueries(h.db),
+    config: h.config,
+    fetch: h.fetcher,
+  });
   await other.initialize();
   await Promise.all([h.provider.models('corner-user-a'), other.models('corner-user-a')]);
   assert.equal(h.refreshCount, 1);

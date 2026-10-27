@@ -480,10 +480,12 @@ test('main requires an actual successful staging deployment without gating stagi
   assert.equal(rule.enforcement, 'active');
   assert.deepEqual(rule.conditions.ref_name, { include: ['refs/heads/main'], exclude: [] });
   assert.deepEqual(rule.bypass_actors, []);
-  assert.deepEqual(rule.rules, [{
-    type: 'required_deployments',
-    parameters: { required_deployment_environments: ['staging'] },
-  }]);
+  assert.deepEqual(rule.rules, [
+    {
+      type: 'required_deployments',
+      parameters: { required_deployment_environments: ['staging'] },
+    },
+  ]);
   assert.deepEqual(fixture.protections.get('staging').required_status_checks.checks, [
     { context: fullContext, app_id: 1 },
   ]);
@@ -496,7 +498,10 @@ test('reapplying deployment protection preserves unrelated rules and updates its
     source_type: 'Repository',
     rules: [
       { type: 'required_signatures' },
-      { type: 'required_deployments', parameters: { required_deployment_environments: ['review'] } },
+      {
+        type: 'required_deployments',
+        parameters: { required_deployment_environments: ['review'] },
+      },
     ],
   };
   const fixture = configurationFixture({ existingRulesets: [existing] });
@@ -504,7 +509,10 @@ test('reapplying deployment protection preserves unrelated rules and updates its
   assert.equal(fixture.rulesets.size, 1);
   assert.deepEqual(fixture.rulesets.get(77).rules, [
     { type: 'required_signatures' },
-    { type: 'required_deployments', parameters: { required_deployment_environments: ['review', 'staging'] } },
+    {
+      type: 'required_deployments',
+      parameters: { required_deployment_environments: ['review', 'staging'] },
+    },
   ]);
 });
 
@@ -518,9 +526,15 @@ test('conflicting deployment-rule targets block all configuration effects', asyn
 
 test('a disabled or bypassable staging-deployment gate fails read-back before changing the default branch', async () => {
   for (const mutate of [
-    (value) => { value.enforcement = 'disabled'; },
-    (value) => { value.bypass_actors = [{ actor_id: 1, actor_type: 'RepositoryRole', bypass_mode: 'always' }]; },
-    (value) => { value.rules[0].parameters.required_deployment_environments = []; },
+    (value) => {
+      value.enforcement = 'disabled';
+    },
+    (value) => {
+      value.bypass_actors = [{ actor_id: 1, actor_type: 'RepositoryRole', bypass_mode: 'always' }];
+    },
+    (value) => {
+      value.rules[0].parameters.required_deployment_environments = [];
+    },
   ]) {
     const fixture = configurationFixture();
     const api = async (path, options = {}) => {
@@ -529,6 +543,9 @@ test('a disabled or bypassable staging-deployment gate fails read-back before ch
       return value;
     };
     await assert.rejects(configure({ api, apply: true }), /ruleset read-back failed/);
-    assert.equal(fixture.writes.some((value) => value.path === ''), false);
+    assert.equal(
+      fixture.writes.some((value) => value.path === ''),
+      false,
+    );
   }
 });

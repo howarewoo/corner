@@ -6,7 +6,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import { packageArtifact, verifyArtifact, qualifyArtifact, qualificationRecovery, assertQualificationGeneration } from '../release-artifact.mjs';
+import {
+  packageArtifact,
+  verifyArtifact,
+  qualifyArtifact,
+  qualificationRecovery,
+  assertQualificationGeneration,
+} from '../release-artifact.mjs';
 
 const hash = (bytes) => createHash('sha256').update(bytes).digest('hex');
 

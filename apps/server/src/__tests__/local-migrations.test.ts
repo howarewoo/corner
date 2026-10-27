@@ -12,13 +12,17 @@ async function fixture(emptyLedger = false) {
   const database = await testDatabase();
   try {
     // Recreate the immutable legacy schema only inside this owned disposable fixture.
-    const tables = (await database.query(
-      'SELECT tablename FROM pg_tables WHERE schemaname=current_schema()',
-    )).rows;
+    const tables = (
+      await database.query('SELECT tablename FROM pg_tables WHERE schemaname=current_schema()')
+    ).rows;
     for (const { tablename } of tables)
       await database.query(`DROP TABLE "${tablename.replaceAll('"', '""')}" CASCADE`);
-    await database.query(await readFile(new URL('../../migrations/0000_corner.sql', import.meta.url), 'utf8'));
-    await database.query('CREATE TABLE __drizzle_migrations (id SERIAL PRIMARY KEY, hash TEXT NOT NULL, created_at BIGINT)');
+    await database.query(
+      await readFile(new URL('../../migrations/0000_corner.sql', import.meta.url), 'utf8'),
+    );
+    await database.query(
+      'CREATE TABLE __drizzle_migrations (id SERIAL PRIMARY KEY, hash TEXT NOT NULL, created_at BIGINT)',
+    );
     await database.query('CREATE TABLE corner_local_identity (instance TEXT PRIMARY KEY)');
     await database.query('INSERT INTO corner_local_identity VALUES ($1)', [instance]);
     await initializeLocalDatabase(database, instance);
@@ -100,9 +104,18 @@ test('empty legacy local workspace adopts the baseline and applies the complete 
     await f.database.query('DELETE FROM workspace_state');
     await migrateLocalDatabase(f.database, instance);
     await migrateLocalDatabase(f.database, instance);
-    assert.equal((await f.database.query("SELECT to_regclass('workspace_state') AS name")).rows[0].name, null);
-    assert.ok((await f.database.query("SELECT to_regclass('workspace_metadata') AS name")).rows[0].name);
-    assert.equal((await f.database.query('SELECT encrypted FROM corner_subscription_accounts')).rows[0].encrypted, 'retained encrypted local credential');
+    assert.equal(
+      (await f.database.query("SELECT to_regclass('workspace_state') AS name")).rows[0].name,
+      null,
+    );
+    assert.ok(
+      (await f.database.query("SELECT to_regclass('workspace_metadata') AS name")).rows[0].name,
+    );
+    assert.equal(
+      (await f.database.query('SELECT encrypted FROM corner_subscription_accounts')).rows[0]
+        .encrypted,
+      'retained encrypted local credential',
+    );
   } finally {
     await closeTestDatabase(f.database);
   }

@@ -6,7 +6,11 @@ import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
 import { createRequire } from 'node:module';
-import { verifyArtifact, qualifyArtifact, assertQualificationGeneration } from './release-artifact.mjs';
+import {
+  verifyArtifact,
+  qualifyArtifact,
+  assertQualificationGeneration,
+} from './release-artifact.mjs';
 import { releaseTarget } from './release-target.mjs';
 import { loadCiArtifact } from './ci-artifact.mjs';
 
@@ -437,8 +441,10 @@ export async function plan({
     reference = target.payload;
     candidate = await github.artifact(reference, join(work, 'candidate'));
     const current = await github.artifact(schemaReference, join(work, 'current'));
-    need(candidate.generation === 'relational-v1' && current.generation === 'relational-v1',
-      'Rollback target is not compatible with CURRENT storage generation; forward repair required');
+    need(
+      candidate.generation === 'relational-v1' && current.generation === 'relational-v1',
+      'Rollback target is not compatible with CURRENT storage generation; forward repair required',
+    );
     qualification = await qualify({
       candidate: current.directory,
       previous: candidate.directory,
@@ -642,7 +648,10 @@ export async function publicChecks(origin, versionId, fetcher = fetch, access = 
       'Public anonymous RPC authentication boundary failed',
     );
     for (const path of ['/.env', '/assets/not-found.js'])
-      check((await call(path)).status === 404, 'Public private-file or missing-asset boundary failed');
+      check(
+        (await call(path)).status === 404,
+        'Public private-file or missing-asset boundary failed',
+      );
     for (const path of ['/', '/account/reset-password']) {
       const response = await call(path);
       check(
@@ -1165,9 +1174,10 @@ export async function validateLiveRollback(
 ) {
   let database;
   let connection;
-  const refused = () => new ReleaseError(
-    'Rollback blocked by CURRENT production schema/data validation (private details withheld)',
-  );
+  const refused = () =>
+    new ReleaseError(
+      'Rollback blocked by CURRENT production schema/data validation (private details withheld)',
+    );
   try {
     const { createDatabase, storageGeneration, validatePersistedRecords } = await load(
       join(target.directory, target.manifest.migrationEntry),
@@ -1196,7 +1206,11 @@ export async function validateLiveRollback(
     await connection.query('COMMIT');
   } catch {
     if (connection) {
-      try { await connection.query('ROLLBACK'); } catch { /* Keep private details withheld. */ }
+      try {
+        await connection.query('ROLLBACK');
+      } catch {
+        /* Keep private details withheld. */
+      }
     }
     throw refused();
   } finally {
@@ -1206,7 +1220,11 @@ export async function validateLiveRollback(
       throw refused();
     } finally {
       if (database) {
-        try { await database.end(); } catch { throw refused(); }
+        try {
+          await database.end();
+        } catch {
+          throw refused();
+        }
       }
     }
   }
@@ -1456,8 +1474,10 @@ export async function promote({
       schemaState?.payload ?? baseline.payload,
       join(work, 'current'),
     );
-    need(candidate.generation === 'relational-v1' && current.generation === 'relational-v1',
-      'Rollback target is not compatible with CURRENT storage generation; forward repair required');
+    need(
+      candidate.generation === 'relational-v1' && current.generation === 'relational-v1',
+      'Rollback target is not compatible with CURRENT storage generation; forward repair required',
+    );
     const qualification = await qualify({
       candidate: current.directory,
       previous: candidate.directory,

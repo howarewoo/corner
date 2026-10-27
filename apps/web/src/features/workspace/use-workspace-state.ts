@@ -19,12 +19,20 @@ export function useWorkspaceState({
   const workspace = useWorkspace(!preview);
   const saveMutation = useMutation({
     mutationFn: (input: WorkspaceMutationInput) =>
-      writeWorkspace(() => rpc.workspace.mutate(input), generation, mutationFamilies(input.mutation)),
+      writeWorkspace(
+        () => rpc.workspace.mutate(input),
+        generation,
+        mutationFamilies(input.mutation),
+      ),
     retry: false,
   });
   const state = preview ? previewState : undefined;
-  const settings = preview ? previewState!.settings : (workspace.data?.settings ?? initialSettings!);
-  const revision = preview ? initialRevision : Math.max(workspace.observedRevision, workspace.data?.revision ?? initialRevision);
+  const settings = preview
+    ? previewState!.settings
+    : (workspace.data?.settings ?? initialSettings!);
+  const revision = preview
+    ? initialRevision
+    : Math.max(workspace.observedRevision, workspace.data?.revision ?? initialRevision);
   const [notifications] = useState(() => createToastManager());
   const [busy, setBusy] = useState(false);
   const loading = !preview && workspace.isFetching;

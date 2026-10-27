@@ -45,15 +45,26 @@ export default function RecipeCollection({
   filters: ReturnType<typeof useRecipeFilters>;
 }) {
   const { search, setSearch, category, setCategory, favoritesOnly, setFavoritesOnly } = filters;
-  const page = useRecordPage({ resource: 'recipes', search, category: category === 'all' ? undefined : category as Recipe['category'], favorite: favoritesOnly || undefined, limit: 24 }, !state);
-  const filteredRecipes = state ? state.recipes.filter(
-    (recipe) =>
-      (!favoritesOnly || recipe.favorite) &&
-      (category === 'all' || recipe.category === category) &&
-      `${recipe.name} ${recipe.tags.join(' ')} ${recipe.ingredients.map((i) => i.name).join(' ')}`
-        .toLowerCase()
-        .includes(search.toLowerCase()),
-  ) : (page.data?.items ?? []);
+  const page = useRecordPage(
+    {
+      resource: 'recipes',
+      search,
+      category: category === 'all' ? undefined : (category as Recipe['category']),
+      favorite: favoritesOnly || undefined,
+      limit: 24,
+    },
+    !state,
+  );
+  const filteredRecipes = state
+    ? state.recipes.filter(
+        (recipe) =>
+          (!favoritesOnly || recipe.favorite) &&
+          (category === 'all' || recipe.category === category) &&
+          `${recipe.name} ${recipe.tags.join(' ')} ${recipe.ingredients.map((i) => i.name).join(' ')}`
+            .toLowerCase()
+            .includes(search.toLowerCase()),
+      )
+    : (page.data?.items ?? []);
   return (
     <>
       <WorkspaceHeader
@@ -114,11 +125,14 @@ export default function RecipeCollection({
       </div>
       <div className="collection-meta">
         <span>
-          {filteredRecipes.length} {filteredRecipes.length === 1 ? 'recipe' : 'recipes'}{!state ? ' on this page' : ''}
+          {filteredRecipes.length} {filteredRecipes.length === 1 ? 'recipe' : 'recipes'}
+          {!state ? ' on this page' : ''}
         </span>
         <span>Nutrition is approximate, per serving</span>
       </div>
-      {!state && (!page.data || page.isError) ? <ResourceStatus error={page.error} loading={page.isPending} retry={page.reload} /> : filteredRecipes.length ? (
+      {!state && (!page.data || page.isError) ? (
+        <ResourceStatus error={page.error} loading={page.isPending} retry={page.reload} />
+      ) : filteredRecipes.length ? (
         <div className="recipe-grid">
           {filteredRecipes.map((recipe) => (
             <Card key={recipe.id} className="recipe-card">

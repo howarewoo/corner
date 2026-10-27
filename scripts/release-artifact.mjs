@@ -150,7 +150,11 @@ export async function verifyArtifact(directory) {
     throw new Error('Artifact migration inventory differs from validated Kit metadata.');
   const snapshot = JSON.parse(
     await readFile(
-      join(directory, 'migration/migrations/meta', `${String(migrations.length - 1).padStart(4, '0')}_snapshot.json`),
+      join(
+        directory,
+        'migration/migrations/meta',
+        `${String(migrations.length - 1).padStart(4, '0')}_snapshot.json`,
+      ),
       'utf8',
     ),
   );
@@ -158,7 +162,11 @@ export async function verifyArtifact(directory) {
   const relational = Object.hasOwn(tables, 'public.workspace_metadata');
   if (relational && Object.hasOwn(tables, 'public.workspace_state'))
     throw new Error('Ambiguous artifact storage generation.');
-  return { manifest, digest: hash(bytes), generation: relational ? 'relational-v1' : 'document-v1' };
+  return {
+    manifest,
+    digest: hash(bytes),
+    generation: relational ? 'relational-v1' : 'document-v1',
+  };
 }
 
 export function qualificationRecovery(current, prior, preserving = false) {
@@ -181,7 +189,8 @@ export function assertQualificationGeneration(report, current, prior, preserving
     report.generation !== current.generation ||
     report.previousGeneration !== (prior?.generation ?? null) ||
     report.recovery !== qualificationRecovery(current, prior, preserving)
-  ) throw new Error('Qualification storage generation mismatch.');
+  )
+    throw new Error('Qualification storage generation mismatch.');
 }
 
 
@@ -325,15 +334,17 @@ export async function qualifyArtifact({
       (receipt.bootstrap ? receipt.previousDigest !== null : !sha(receipt.previousDigest))
     )
       throw new Error('Previous artifact has no matching successful qualification.');
-    if (prior.generation === 'relational-v1' &&
-        (receipt.generation !== prior.generation ||
-          !['bootstrap', 'forward-only', 'preserving', 'compatible'].includes(receipt.recovery) ||
-          (receipt.bootstrap
-            ? receipt.previousGeneration !== null || receipt.recovery !== 'bootstrap'
-            : receipt.previousGeneration !==
-              (['forward-only', 'preserving'].includes(receipt.recovery)
-                ? 'document-v1'
-                : 'relational-v1'))))
+    if (
+      prior.generation === 'relational-v1' &&
+      (receipt.generation !== prior.generation ||
+        !['bootstrap', 'forward-only', 'preserving', 'compatible'].includes(receipt.recovery) ||
+        (receipt.bootstrap
+          ? receipt.previousGeneration !== null || receipt.recovery !== 'bootstrap'
+          : receipt.previousGeneration !==
+            (['forward-only', 'preserving'].includes(receipt.recovery)
+              ? 'document-v1'
+              : 'relational-v1')))
+    )
       throw new Error('Previous artifact has no matching storage generation qualification.');
     for (const [index, item] of prior.manifest.migrations.entries()) {
       const candidateMigration = current.manifest.migrations[index];

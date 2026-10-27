@@ -109,8 +109,14 @@ async function scenario(t, overrides = {}) {
     work,
     environment: environment(),
     loadArtifact: async () => candidate,
-    qualify: async () => ({ passed: true, candidateDigest: digest, previousDigest: null,
-      generation: 'relational-v1', previousGeneration: null, recovery: 'bootstrap' }),
+    qualify: async () => ({
+      passed: true,
+      candidateDigest: digest,
+      previousDigest: null,
+      generation: 'relational-v1',
+      previousGeneration: null,
+      recovery: 'bootstrap',
+    }),
     verify: async () => ({ digest }),
     cf: async (path) => {
       if (path.endsWith('/deployments/latest')) return null;
@@ -292,8 +298,14 @@ test('interrupted B schema attempt preserves A as C compatibility baseline', asy
     assert.equal(candidate, f.candidate.directory);
     assert.equal(previous, f.serving.directory);
     assert.equal(bootstrap, false);
-    return { passed: true, candidateDigest: digest, previousDigest: f.serving.digest,
-      generation: 'relational-v1', previousGeneration: 'relational-v1', recovery: 'compatible' };
+    return {
+      passed: true,
+      candidateDigest: digest,
+      previousDigest: f.serving.digest,
+      generation: 'relational-v1',
+      previousGeneration: 'relational-v1',
+      recovery: 'compatible',
+    };
   };
   await assert.rejects(deployPreview(f.options), /migration failed/);
   assert.equal(qualified, true);
@@ -381,14 +393,25 @@ test('Preview readiness waits for the exact version and never retries a security
   let healthy = false;
   let waits = 0;
   const check = async (url, version, _fetcher, access) =>
-    publicChecks(url, version, async (request) => {
-      if (new URL(request).pathname === '/api/health')
-        return Response.json({ ok: true }, { headers: { 'X-Corner-Version': healthy ? version : 'old' } });
-      return Response.json({ code: 'ORIGIN_NOT_ALLOWED' }, { status: 403 });
-    }, access);
+    publicChecks(
+      url,
+      version,
+      async (request) => {
+        if (new URL(request).pathname === '/api/health')
+          return Response.json(
+            { ok: true },
+            { headers: { 'X-Corner-Version': healthy ? version : 'old' } },
+          );
+        return Response.json({ code: 'ORIGIN_NOT_ALLOWED' }, { status: 403 });
+      },
+      access,
+    );
   // The first stale health response must wait; the subsequent RPC-shaped mismatch must fail closed.
   await assert.rejects(
-    verifyPreviewPublic(origin, 'current', {}, check, async () => { waits++; healthy = true; }),
+    verifyPreviewPublic(origin, 'current', {}, check, async () => {
+      waits++;
+      healthy = true;
+    }),
     (error) => error instanceof PublicCheckError && !error.retryable,
   );
   assert.equal(waits, 1);
@@ -397,10 +420,19 @@ test('Preview readiness waits for the exact version and never retries a security
 test('a Preview that never serves its recorded version exhausts the readiness bound', async () => {
   let waits = 0;
   await assert.rejects(
-    verifyPreviewPublic(origin, 'current', {}, async (url, version) =>
-      publicChecks(url, version, async () =>
-        Response.json({ ok: true }, { headers: { 'X-Corner-Version': 'old' } })),
-    async () => { waits++; assert.ok(waits <= 11); }),
+    verifyPreviewPublic(
+      origin,
+      'current',
+      {},
+      async (url, version) =>
+        publicChecks(url, version, async () =>
+          Response.json({ ok: true }, { headers: { 'X-Corner-Version': 'old' } }),
+        ),
+      async () => {
+        waits++;
+        assert.ok(waits <= 11);
+      },
+    ),
     (error) => error instanceof PublicCheckError && error.retryable,
   );
   assert.equal(waits, 11);
@@ -408,7 +440,10 @@ test('a Preview that never serves its recorded version exhausts the readiness bo
 
 async function completionScenario(t) {
   const f = await scenario(t);
-  const config = previewConfiguration(f.options.environment.CORNER_STAGING_CONFIG_JSON, f.options.environment);
+  const config = previewConfiguration(
+    f.options.environment.CORNER_STAGING_CONFIG_JSON,
+    f.options.environment,
+  );
   const p = {
     format: 4,
     kind: 'corner-staging-preview',
@@ -424,7 +459,12 @@ async function completionScenario(t) {
     deploymentId: 'recorded-live',
     versionId: 'recorded-live',
     phase: 'deployed',
-    qualification: { passed: true, candidateDigest: digest, sourceSha, generation: 'relational-v1' },
+    qualification: {
+      passed: true,
+      candidateDigest: digest,
+      sourceSha,
+      generation: 'relational-v1',
+    },
   };
   const current = { id: 9, payload: p };
   const schema = { id: 8, payload: { ...p, phase: 'schema-attempted' } };
@@ -447,11 +487,17 @@ async function completionScenario(t) {
   const live = {
     id: p.deploymentId,
     env: {
-      ...Object.fromEntries(Object.entries(config.value).map(([name, text]) => [name, { type: 'plain_text', text }])),
+      ...Object.fromEntries(
+        Object.entries(config.value).map(([name, text]) => [name, { type: 'plain_text', text }]),
+      ),
       CF_VERSION_METADATA: { type: 'version_metadata' },
       ...Object.fromEntries(
-        ['DATABASE_URL', 'NEON_AUTH_BASE_URL', 'BETTER_AUTH_SECRET', 'CORNER_TOKEN_ENCRYPTION_KEY']
-          .map((name) => [name, { type: 'secret_text' }]),
+        [
+          'DATABASE_URL',
+          'NEON_AUTH_BASE_URL',
+          'BETTER_AUTH_SECRET',
+          'CORNER_TOKEN_ENCRYPTION_KEY',
+        ].map((name) => [name, { type: 'secret_text' }]),
       ),
     },
   };
@@ -483,7 +529,9 @@ test('completion refuses a wrong pin, changed configuration, schema advance, art
     if (change === 'schema') f.schema.payload.candidateDigest = 'c'.repeat(64);
     if (change === 'artifact') f.options.verify = async () => ({ digest: 'c'.repeat(64) });
     if (change === 'live') f.live.id = 'unrecorded';
-    await assert.rejects(completePreview({ ...f.options, deploymentId: change === 'pin' ? '7' : '9' }));
+    await assert.rejects(
+      completePreview({ ...f.options, deploymentId: change === 'pin' ? '7' : '9' }),
+    );
     assert.deepEqual(f.effects, []);
     assert.deepEqual(f.statuses, []);
   }
@@ -491,7 +539,9 @@ test('completion refuses a wrong pin, changed configuration, schema advance, art
 
 test('a failing security probe keeps the Preview incomplete and marks its receipt failed', async (t) => {
   const f = await completionScenario(t);
-  f.options.checkPublic = async () => { throw new PublicCheckError('Public cross-origin authentication boundary failed'); };
+  f.options.checkPublic = async () => {
+    throw new PublicCheckError('Public cross-origin authentication boundary failed');
+  };
   f.options.wait = async () => assert.fail('Security failures must not be retried');
   await assert.rejects(completePreview({ ...f.options, deploymentId: '9' }), /cross-origin/);
   assert.deepEqual(f.effects, []);
@@ -501,9 +551,14 @@ test('a failing security probe keeps the Preview incomplete and marks its receip
 test('schema or serving journal changes during public validation prevent a completed receipt', async (t) => {
   for (const target of ['schema', 'current']) {
     const f = await completionScenario(t);
-    f.options.checkPublic = async () => { f[target].id++; };
+    f.options.checkPublic = async () => {
+      f[target].id++;
+    };
     await assert.rejects(completePreview({ ...f.options, deploymentId: '9' }), /journal changed/);
     assert.deepEqual(f.effects, []);
-    assert.equal(f.statuses.some((value) => value.state === 'success'), false);
+    assert.equal(
+      f.statuses.some((value) => value.state === 'success'),
+      false,
+    );
   }
 });

@@ -16,7 +16,12 @@ import { SubscriptionError, type SubscriptionProvider } from './subscription.js'
 import type { WorkspaceStore } from './store.js';
 import { recordDetails, recordPage } from './workspace-queries.js';
 import { groceries } from './grocery-queries.js';
-import { exerciseChoices, exerciseHistoryPage, prefillHistory, progress } from './training-queries.js';
+import {
+  exerciseChoices,
+  exerciseHistoryPage,
+  prefillHistory,
+  progress,
+} from './training-queries.js';
 
 export type RPCServices = {
   config: Config;
@@ -135,36 +140,59 @@ export function createRPCHandler({ config, auth, store, aiAvailable, ai }: RPCSe
     workspace: {
       get: api.workspace.get.handler(async ({ context }) => {
         const owner = principal(context);
-        return { ...await store.bootstrap(owner.userId, owner.name), aiAvailable: Boolean(await aiAvailable?.(owner)) };
+        return {
+          ...(await store.bootstrap(owner.userId, owner.name)),
+          aiAvailable: Boolean(await aiAvailable?.(owner)),
+        };
       }),
       foodWindow: api.workspace.foodWindow.handler(({ input, context }) =>
-        store.foodWindow(principal(context).userId, input)),
+        store.foodWindow(principal(context).userId, input),
+      ),
       page: api.workspace.page.handler(({ input, context }) =>
-        recordPage(store.db, principal(context).userId, input)),
+        recordPage(store.db, principal(context).userId, input),
+      ),
       details: api.workspace.details.handler(({ input, context }) =>
-        recordDetails(store.db, principal(context).userId, input)),
+        recordDetails(store.db, principal(context).userId, input),
+      ),
       groceries: api.workspace.groceries.handler(({ input, context }) =>
-        groceries(store.db, principal(context).userId, input)),
+        groceries(store.db, principal(context).userId, input),
+      ),
       progress: api.workspace.progress.handler(({ input, context }) =>
-        progress(store.db, principal(context).userId, input)),
+        progress(store.db, principal(context).userId, input),
+      ),
       exerciseHistory: api.workspace.exerciseHistory.handler(({ input, context }) =>
-        exerciseHistoryPage(store.db, principal(context).userId, input)),
+        exerciseHistoryPage(store.db, principal(context).userId, input),
+      ),
       exerciseChoices: api.workspace.exerciseChoices.handler(({ input, context }) =>
-        exerciseChoices(store.db, principal(context).userId, input)),
+        exerciseChoices(store.db, principal(context).userId, input),
+      ),
       prefill: api.workspace.prefill.handler(({ input, context }) =>
-        prefillHistory(store.db, principal(context).userId, input)),
+        prefillHistory(store.db, principal(context).userId, input),
+      ),
       export: api.workspace.export.handler(({ context }) => {
         const owner = principal(context);
         return store.exportSnapshot(owner.userId, owner.name);
       }),
       mutate: api.workspace.mutate.handler(({ input, context }) => {
         const raw = mutationInputSchema.parse(input);
-        return store.mutate(principal(context).userId, raw.requestId, raw.mutation, raw.expectedRevision);
+        return store.mutate(
+          principal(context).userId,
+          raw.requestId,
+          raw.mutation,
+          raw.expectedRevision,
+        );
       }),
       previewImport: api.workspace.previewImport.handler(({ input, context }) =>
-        store.importPreview(principal(context).userId, input.state)),
+        store.importPreview(principal(context).userId, input.state),
+      ),
       import: api.workspace.import.handler(({ input, context }) =>
-        store.replaceImport(principal(context).userId, input.requestId, input.state, input.expectedRevision)),
+        store.replaceImport(
+          principal(context).userId,
+          input.requestId,
+          input.state,
+          input.expectedRevision,
+        ),
+      ),
     },
     ai: {
       connection: api.ai.connection.handler(async ({ context }) => {
@@ -235,7 +263,8 @@ export function createRPCHandler({ config, auth, store, aiAvailable, ai }: RPCSe
         run: await services().agent.cancel(principal(context).userId, input.id),
       })),
       apply: api.agent.apply.handler(({ input, context }) =>
-        services().agent.apply(principal(context).userId, input.id, input.requestId)),
+        services().agent.apply(principal(context).userId, input.id, input.requestId),
+      ),
     },
   });
   const handler = new StandardRPCHandler(router, {

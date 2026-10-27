@@ -111,7 +111,6 @@ sequenceDiagram
 
 Planning context, dependency/detail tools, and history summaries use bounded records or complete date aggregates in consistent snapshots. Tools recheck the original captured revision in short read-only transactions; revision drift fails the request rather than silently rebasing. No database transaction spans inference. Proposal validation accepts addressed dependency records, not a fabricated lifetime `AppState`; application rechecks the original base under the owner lock.
 
-
 Overlapping Apply requests replay a completed application rather than treating its own committed revision as a stale proposal. Administrative timestamps for proposal mutations use the run's completion time, making their receipt fingerprint deterministic across concurrent requests; activity dates and actual recorded training/food remain user-controlled.
 
 Recipe generation returns a draft; food estimation returns clarification or an editable estimate. Neither saves a recipe or food log automatically. Planning results may also be questions or advice with no mutations.

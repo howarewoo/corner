@@ -35,8 +35,16 @@ export default function Groceries({
   copyText: (text: string, success?: string) => Promise<void>;
 }) {
   const weekStart = mondayOf(selectedDate);
-  const query = useResource('groceries', { weekStart }, (signal) => groceryWeek(weekStart, signal), !state);
-  const groceries = useMemo(() => state ? groceryList(state, weekStart) : (query.data?.items ?? []), [state, weekStart, query.data]);
+  const query = useResource(
+    'groceries',
+    { weekStart },
+    (signal) => groceryWeek(weekStart, signal),
+    !state,
+  );
+  const groceries = useMemo(
+    () => (state ? groceryList(state, weekStart) : (query.data?.items ?? [])),
+    [state, weekStart, query.data],
+  );
   const groceryChecks = state?.groceryChecks ?? query.data?.checks ?? {};
   const groceryGroups = useMemo(() => {
     const groups: Record<string, typeof groceries> = {};
@@ -49,7 +57,14 @@ export default function Groceries({
     (item) => groceryChecks[`${weekStart}|${item.key}`],
   ).length;
   const groceryText = `CORNER · WEEKLY GROCERY LIST\n${formatDate(weekStart, { month: 'long', day: 'numeric', year: 'numeric' })}\n\n${groceryGroups.map(([aisle, items]) => `${aisle.toUpperCase()}\n${items.map((item) => `${groceryChecks[`${weekStart}|${item.key}`] ? '[x]' : '[ ]'} ${item.name} — ${num(item.quantity, 2)} ${item.unit}${item.notes.length ? ` (${item.notes.join('; ')})` : ''}`).join('\n')}`).join('\n\n')}\n\nAmounts reflect the recipes and portions in your meal plan. Check your pantry and package sizes before shopping.`;
-  if (!state && (!query.data || query.isError)) return <ResourceStatus error={query.error} loading={query.isPending} retry={() => void query.refetch()} />;
+  if (!state && (!query.data || query.isError))
+    return (
+      <ResourceStatus
+        error={query.error}
+        loading={query.isPending}
+        retry={() => void query.refetch()}
+      />
+    );
   return (
     <>
       <WorkspaceHeader

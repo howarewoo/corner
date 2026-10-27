@@ -97,7 +97,11 @@ test('a completed proposal is private and changes nothing until Apply; applying 
     assert.equal(run.status, 'running');
     await agent.settled(run.id);
     assert.equal((await agent.get('alice', run.id)).status, 'completed');
-    assert.equal((await recordPage(createQueries(db), 'alice', { resource: 'recipes', limit: 100 })).items.length, 0);
+    assert.equal(
+      (await recordPage(createQueries(db), 'alice', { resource: 'recipes', limit: 100 })).items
+        .length,
+      0,
+    );
     await assert.rejects(async () => await agent.get('bob', run.id), /not found/);
     assert.equal((await agent.list('bob')).length, 0);
     const saved = await agent.apply('alice', run.id, 'apply-one');
@@ -109,7 +113,11 @@ test('a completed proposal is private and changes nothing until Apply; applying 
     assert.equal(snapshot.state.training.sessions.length, 0);
     assert.equal(saved.run.status, 'applied');
     assert.equal((await agent.apply('alice', run.id, 'apply-two')).revision, saved.revision);
-    assert.equal((await recordPage(createQueries(db), 'bob', { resource: 'recipes', limit: 100 })).items.length, 0);
+    assert.equal(
+      (await recordPage(createQueries(db), 'bob', { resource: 'recipes', limit: 100 })).items
+        .length,
+      0,
+    );
     assert.equal(calls, 1);
   } finally {
     await agent.close();
@@ -172,7 +180,11 @@ test('a workspace edit makes a prior proposal stale without partially applying i
       async () => await agent.apply('alice', run.id, 'apply-one'),
       /workspace changed/,
     );
-    assert.equal((await recordPage(createQueries(db), 'alice', { resource: 'recipes', limit: 100 })).items.length, 0);
+    assert.equal(
+      (await recordPage(createQueries(db), 'alice', { resource: 'recipes', limit: 100 })).items
+        .length,
+      0,
+    );
     assert.equal((await store.exportSnapshot('alice')).state.groceryChecks['oats|g'], true);
   } finally {
     await agent.close();
@@ -223,9 +235,16 @@ test('a concurrent Apply that commits first makes the other Apply replay instead
       assert.deepEqual(saved, second);
       assert.equal(saved.run.status, 'applied');
       assert.equal(saved.run.id, run.id);
-      assert.equal((await recordPage(createQueries(db), 'alice', { resource: 'recipes', limit: 100 })).items.length, 1);
+      assert.equal(
+        (await recordPage(createQueries(db), 'alice', { resource: 'recipes', limit: 100 })).items
+          .length,
+        1,
+      );
       assert.equal((await store.exportSnapshot('alice')).state.plan.length, 1);
-      assert.equal((await store.foodWindow('alice', { from: date, through: date })).entries.length, 0);
+      assert.equal(
+        (await store.foodWindow('alice', { from: date, through: date })).entries.length,
+        0,
+      );
     } finally {
       // Release and settle the parked continuation so teardown never races it.
       releaseStall?.();
@@ -288,7 +307,11 @@ test('duplicated applies racing past one revision read share one receipt and bot
       assert.equal(saved.revision, run.baseRevision + 1);
       assert.deepEqual(saved, second);
       assert.equal(saved.run.status, 'applied');
-      assert.equal((await recordPage(createQueries(db), 'alice', { resource: 'recipes', limit: 100 })).items.length, 1);
+      assert.equal(
+        (await recordPage(createQueries(db), 'alice', { resource: 'recipes', limit: 100 })).items
+          .length,
+        1,
+      );
       assert.equal((await store.exportSnapshot('alice')).state.plan.length, 1);
     } finally {
       // Release and settle the parked commit so teardown never races it.
@@ -439,7 +462,10 @@ test('food estimation can ask for details and never writes a food log', async ()
     assert.equal((result.estimate as any).status, 'needs_details');
     await agent.estimateFood('alice', input);
     assert.equal(calls, 1);
-    assert.equal((await store.foodWindow('alice', { from: date, through: date })).entries.length, 0);
+    assert.equal(
+      (await store.foodWindow('alice', { from: date, through: date })).entries.length,
+      0,
+    );
   } finally {
     await agent.close();
     await closeTestDatabase(db);
@@ -463,7 +489,11 @@ test('recipe generation returns a draft tied to the requesting account and stays
     });
     assert.equal((result.recipe as Recipe).source, 'ai');
     assert.equal(result.draft, true);
-    assert.equal((await recordPage(createQueries(db), 'alice', { resource: 'recipes', limit: 100 })).items.length, 0);
+    assert.equal(
+      (await recordPage(createQueries(db), 'alice', { resource: 'recipes', limit: 100 })).items
+        .length,
+      0,
+    );
   } finally {
     await agent.close();
     await closeTestDatabase(db);
@@ -544,10 +574,17 @@ test('context records incomplete days honestly with bounded owner-scoped depende
   try {
     const state = createInitialState('Casey');
     state.recipes = Array.from({ length: 65 }, (_, index) => recipe(`context-${index}`));
-    state.logs = [{
-      id: 'old-intake', name: 'Old private intake', date: '2025-01-01', slot: 'lunch',
-      servings: 1, nutrition: { calories: 100, protein: 1, carbs: 2, fat: 3 }, createdAt: at,
-    }];
+    state.logs = [
+      {
+        id: 'old-intake',
+        name: 'Old private intake',
+        date: '2025-01-01',
+        slot: 'lunch',
+        servings: 1,
+        nutrition: { calories: 100, protein: 1, carbs: 2, fat: 3 },
+        createdAt: at,
+      },
+    ];
     await store.replaceImport('alice', 'context-import-alice', state, 0);
     const other = createInitialState('BOB_ONLY_PRIVATE_NAME');
     other.recipes = [recipe('bob-only-recipe')];

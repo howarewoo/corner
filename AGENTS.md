@@ -38,10 +38,10 @@ All commands below run from the repository root with dependencies installed:
 | `pnpm run lint`                                  | Repository-wide Oxlint checks with `@shadcn/lint` registered; configure rules in `.oxlintrc.json`                                                |
 | `pnpm test`                                      | Native Node server and Vitest web suites through Turbo; no separate domain-package test task exists                                              |
 | `pnpm test --filter=server`                      | Server suite, retaining Turbo's shared-build prerequisite                                                                                        |
-| `pnpm test --filter=web`                         | Vitest component/logic and Vite configuration suite, retaining Turbo's shared-build prerequisite                                                  |
+| `pnpm test --filter=web`                         | Vitest component/logic and Vite configuration suite, retaining Turbo's shared-build prerequisite                                                 |
 | `pnpm run verify -- --plan --base origin/main`   | Inspect conservative branch selection; omit `--plan` to run it, or use `--full` in a credential-free checkout                                    |
 | `pnpm run test:ci`                               | Native Node regressions colocated in `scripts/__tests__` for verification, release controls, and artifacts                                       |
-| `pnpm run test:browser`                          | After a full build: Playwright Chromium desktop/WebKit phone journeys on port `43141`; disposable `CORNER_TEST_DATABASE_URL` required             |
+| `pnpm run test:browser`                          | After a full build: Playwright Chromium desktop/WebKit phone journeys on port `43141`; disposable `CORNER_TEST_DATABASE_URL` required            |
 | `pnpm run build`                                 | Compile shared/server outputs and type-check/build the web app                                                                                   |
 | `pnpm run db:generate`                           | Generate reviewed Drizzle SQL/snapshots from the server schema without connecting to a database                                                  |
 | `pnpm run db:check`                              | Check Drizzle Kit migration snapshot consistency                                                                                                 |
