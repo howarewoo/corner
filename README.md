@@ -35,6 +35,8 @@ Local children ignore root environment files and inherited database/Auth, Compos
 
 The account form uses Neon's `@neondatabase/auth` SDK (`signUp.email` and `signIn.email`) through Corner's same-origin `/api/auth` proxy. After authentication, native oRPC `account.session` reads the current user server-side. Session tokens stay in HttpOnly cookies; no browser Auth URL or `VITE_` credentials are needed.
 
+An Auth HTTP `200` alone does not establish a Corner session. The account form stays mounted until the server confirms a signed-in user; a missing session shows cookie/retry guidance and retains the submitted email without retaining the password. Required verification offers code entry, while conflicting Auth/application verification settings explain when administrator help is needed.
+
 The SDK is pinned to `0.6.0-beta` to satisfy its bundled `@neondatabase/auth-ui` peer contract; the `0.7.0-beta` release still pulls UI that requires `0.6.0-beta`. Workspace pnpm overrides align Better Auth/core at `1.7.12` and `better-call` at `1.4.4`, avoiding conflicting legacy-UI plugin peers. Corner uses only the programmatic SDK, not those UI components. Revisit these pins together when Neon's published dependency graph is compatible without overrides.
 
 Application calls use the shared `@packages/api` contract and native oRPC at `/api/rpc`; TanStack Query owns browser server state. Old application REST URLs are not supported. Managed Auth `/api/auth`, OAuth `/auth/callback`, and `GET /api/health` retain their separate protocols.

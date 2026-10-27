@@ -113,6 +113,46 @@ test('verified signup requires verification rather than reporting a session', as
   expect(screen.getByLabelText('Password', { exact: true })).toHaveValue('');
 });
 
+test('sign-in by an unverified user explains the required verification even when Auth returns success', async () => {
+  const view = await account(hosted, {
+    handler: (call) =>
+      call.path === '/api/auth/sign-in/email'
+        ? json({ user: { id: 'unverified-user', emailVerified: false } })
+        : undefined,
+  });
+  await credentials(view.user);
+  await view.user.click(signInButton());
+  expect(await screen.findByLabelText('Verification code')).toBeEnabled();
+  expect(screen.getByText('person@example.test')).toBeVisible();
+  await view.user.click(screen.getByRole('button', { name: 'Return to sign in' }));
+  expect(screen.getByLabelText('Email', { exact: true })).toHaveValue('person@example.test');
+});
+
+test('signup without a session returns to sign-in and conflicting verification policies explain the next step', async () => {
+  const view = await account(local, {
+    handler: (call) => {
+      if (call.path === '/api/auth/sign-up/email')
+        return json({ token: null, user: { emailVerified: false } });
+      if (call.path === '/api/auth/sign-in/email')
+        return json({ code: 'EMAIL_NOT_VERIFIED', message: 'Email not verified' }, 403);
+    },
+  });
+  await view.user.click(screen.getByRole('button', { name: 'Create account' }));
+  await view.user.type(screen.getByLabelText('Your name'), 'Test User');
+  await credentials(view.user);
+  await view.user.click(screen.getByRole('button', { name: 'Create my account' }));
+  await waitFor(() => expect(signInButton()).toBeEnabled());
+  expect(screen.queryByLabelText('Verification code')).not.toBeInTheDocument();
+  expect(screen.getByLabelText('Email', { exact: true })).toHaveValue('person@example.test');
+  expect(screen.getByLabelText('Password', { exact: true })).toHaveValue('');
+  await view.user.type(screen.getByLabelText('Password', { exact: true }), password);
+  await view.user.click(signInButton());
+  expect(await screen.findByRole('alert')).toHaveTextContent(/email verification.*settings/i);
+  expect(screen.queryByLabelText('Verification code')).not.toBeInTheDocument();
+  expect(screen.getByLabelText('Email', { exact: true })).toHaveValue('person@example.test');
+  expect(signInButton()).toBeEnabled();
+});
+
 test('rejected verification cannot authenticate; verification still requires sign-in', async () => {
   let verified = false;
   const view = await account(hosted, {
