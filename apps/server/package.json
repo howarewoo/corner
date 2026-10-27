@@ -37,6 +37,6 @@
     "tsx": "4.22.1",
     "typescript": "5.9.3",
     "undici": "8.12.3",
-    "wrangler": "4.152.0"
+    "wrangler": "4.153.0"
   }
 }
