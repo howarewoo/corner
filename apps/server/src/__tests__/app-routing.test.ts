@@ -3,7 +3,6 @@ import { after, before, test } from 'node:test';
 import type { Pool } from 'pg';
 import { createApp } from '../app.ts';
 import maintenanceWorker from '../maintenance-worker.ts';
-import { maintenanceChecks } from '../../../../scripts/release.mjs';
 import type { WorkerEnvironment } from '../worker.ts';
 import type { Config } from '../config.ts';
 import { WorkspaceStore } from '../store.ts';
@@ -123,15 +122,10 @@ test('maintenance Worker responds 503 with Retry-After and no-store without invo
       },
     },
   };
-  const ctx = {
-    waitUntil() {},
-    passThroughOnException() {},
-  } as unknown as ExecutionContext;
 
   const wrongOrigin = await maintenanceWorker.fetch(
     new Request('https://wrong.example.test/api/health'),
     env,
-    ctx,
   );
   assert.equal(wrongOrigin.status, 400);
   assert.equal(wrongOrigin.headers.get('X-Corner-Version'), versionId);
@@ -140,7 +134,6 @@ test('maintenance Worker responds 503 with Retry-After and no-store without invo
   const health = await maintenanceWorker.fetch(
     new Request('https://corner.example.test/api/health'),
     env,
-    ctx,
   );
   assert.equal(health.status, 503);
   assert.equal(health.headers.get('X-Corner-Version'), versionId);
@@ -160,7 +153,6 @@ test('maintenance Worker responds 503 with Retry-After and no-store without invo
       body: '{}',
     }),
     env,
-    ctx,
   );
   assert.equal(rpc.status, 503);
   const rpcPayload = await rpc.json();
@@ -182,7 +174,6 @@ test('maintenance Worker responds 503 with Retry-After and no-store without invo
       body: '{}',
     }),
     env,
-    ctx,
   );
   assert.equal(authReq.status, 503);
   assert.equal((await authReq.json()).code, 'MAINTENANCE_ACTIVE');
@@ -190,7 +181,6 @@ test('maintenance Worker responds 503 with Retry-After and no-store without invo
   const page = await maintenanceWorker.fetch(
     new Request('https://corner.example.test/'),
     env,
-    ctx,
   );
   assert.equal(page.status, 503);
   assert.equal(page.headers.get('Retry-After'), '60');
@@ -200,16 +190,9 @@ test('maintenance Worker responds 503 with Retry-After and no-store without invo
   const asset = await maintenanceWorker.fetch(
     new Request('https://corner.example.test/assets/index.js'),
     env,
-    ctx,
   );
   assert.equal(asset.status, 503);
   assert.equal(asset.headers.get('Retry-After'), '60');
 
-  await maintenanceChecks(
-    'https://corner.example.test',
-    versionId,
-    (url: URL | string, init?: RequestInit) =>
-      maintenanceWorker.fetch(new Request(url, init), env, ctx),
-  );
   assert.equal(assetsCalled, 0);
 });

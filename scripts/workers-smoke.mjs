@@ -313,14 +313,15 @@ try {
         signal: AbortSignal.timeout(20_000),
       });
       assert.equal(previousWrite.status, 200, await previousWrite.clone().text());
-      const response = await worker.fetch(new URL('/api/rpc/workspace/export', origin), {
+      const response = await worker.fetch(new URL('/api/rpc/workspace/get', origin), {
         method: 'POST',
         headers: { Origin: origin, 'Content-Type': 'application/json', Cookie: priorCookie },
         body: '{}',
         signal: AbortSignal.timeout(20_000),
       });
       assert.equal(response.status, 200, await response.clone().text());
-      priorState = (await response.json()).json;
+      const previousSnapshot = (await response.json()).json;
+      priorState = { state: previousSnapshot.state, revision: previousSnapshot.revision };
     }
     await worker.dispose();
     if (preserving) {
@@ -365,9 +366,19 @@ try {
       );
       assert.equal(replayResult.phase, 'completed');
       const previousUnpooled = process.env.DATABASE_URL_UNPOOLED;
-      process.env.DATABASE_URL_UNPOOLED = backend.databaseUrl;
+      const validationUrl = new URL(backend.databaseUrl);
+      validationUrl.searchParams.delete('options');
+      process.env.DATABASE_URL_UNPOOLED = validationUrl.href;
       try {
-        await validateCutoverCandidate(candidateArtifact, operationId);
+        await validateCutoverCandidate({
+          ...candidateArtifact,
+          directory: dirname(options['--config']),
+        }, operationId, async () => ({
+          ...candidateMigrator,
+          // The existing disposable fixture isolates schemas through libpq options,
+          // forbidden on production unpooled URLs. Keep its real pool factory here.
+          createDatabase: () => candidateMigrator.createDatabase(backend.databaseUrl),
+        }));
       } finally {
         if (previousUnpooled === undefined) delete process.env.DATABASE_URL_UNPOOLED;
         else process.env.DATABASE_URL_UNPOOLED = previousUnpooled;
