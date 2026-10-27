@@ -576,7 +576,11 @@ async function main() {
           sourceSha: process.env.PREVIEW_SOURCE_SHA,
         });
     if (process.env.GITHUB_OUTPUT)
-      await writeFile(process.env.GITHUB_OUTPUT, `deployment_id=${result.id}\n`, { flag: 'a' });
+      await writeFile(
+        process.env.GITHUB_OUTPUT,
+        `deployment_id=${result.id}\nsource_sha=${result.payload.sourceSha}\n`,
+        { flag: 'a' },
+      );
     console.log(
       `Corner native staging Preview verified: ${result.payload.origin}; deployment ${result.id}; source ${result.payload.sourceSha}`,
     );
