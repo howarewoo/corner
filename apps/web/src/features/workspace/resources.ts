@@ -1,6 +1,11 @@
 import type { Settings } from '@packages/workspace/types';
 import type { FoodEntry, Macros, PlanEntry, Recipe } from '@packages/nutrition/types';
-import type { GroceryWindow, RecordPage, RecordPageInput, Resources } from '@packages/api/workspace-data';
+import type {
+  GroceryWindow,
+  RecordPage,
+  RecordPageInput,
+  Resources,
+} from '@packages/api/workspace-data';
 import { useState } from 'react';
 import { rpc, useObservedRevision, useResource, workspaceRevision } from '../../rpc';
 
@@ -16,14 +21,20 @@ export function requireRevision(expected: number, actual: number) {
   if (expected !== actual) throw new Error('Your data changed while loading. Please retry.');
 }
 export async function calendarPage<K extends 'plan' | 'sessions' | 'scheduledDates'>(
-  resource: K, from: string, through: string, signal: AbortSignal,
+  resource: K,
+  from: string,
+  through: string,
+  signal: AbortSignal,
 ) {
   const items: Resources[K][] = [];
   const loggedPlanIds: string[] = [];
   let cursor: RecordPageInput['cursor'];
   let revision: number | undefined;
   do {
-    const page = await rpc.workspace.page({ resource, from, through, limit: 100, cursor }, { signal }) as RecordPage<K>;
+    const page = (await rpc.workspace.page(
+      { resource, from, through, limit: 100, cursor },
+      { signal },
+    )) as RecordPage<K>;
     if (revision !== undefined) requireRevision(revision, page.revision);
     revision = page.revision;
     items.push(...page.items);
@@ -32,21 +43,37 @@ export async function calendarPage<K extends 'plan' | 'sessions' | 'scheduledDat
   } while (cursor);
   return { revision: revision!, items, loggedPlanIds };
 }
-export async function nutritionWindow(from: string, through: string, signal: AbortSignal): Promise<NutritionWindow> {
+export async function nutritionWindow(
+  from: string,
+  through: string,
+  signal: AbortSignal,
+): Promise<NutritionWindow> {
   const [bootstrap, plan, sessions, scheduledDates] = await Promise.all([
-    rpc.workspace.get(undefined, { signal }), calendarPage('plan', from, through, signal),
-    calendarPage('sessions', from, through, signal), calendarPage('scheduledDates', from, through, signal),
+    rpc.workspace.get(undefined, { signal }),
+    calendarPage('plan', from, through, signal),
+    calendarPage('sessions', from, through, signal),
+    calendarPage('scheduledDates', from, through, signal),
   ]);
-  for (const result of [plan, sessions, scheduledDates]) requireRevision(bootstrap.revision, result.revision);
+  for (const result of [plan, sessions, scheduledDates])
+    requireRevision(bootstrap.revision, result.revision);
   const ids = [...new Set(plan.items.map((entry) => entry.recipeId))];
   const recipes: Recipe[] = [];
   for (let index = 0; index < ids.length; index += 100) {
-    const details = await rpc.workspace.details({ recipeIds: ids.slice(index, index + 100) }, { signal });
+    const details = await rpc.workspace.details(
+      { recipeIds: ids.slice(index, index + 100) },
+      { signal },
+    );
     requireRevision(bootstrap.revision, details.revision);
     recipes.push(...details.recipes);
   }
-  return { revision: bootstrap.revision, settings: bootstrap.settings, plan: plan.items, recipes,
-    training: { sessions: sessions.items, scheduledDates: scheduledDates.items }, loggedPlanIds: plan.loggedPlanIds };
+  return {
+    revision: bootstrap.revision,
+    settings: bootstrap.settings,
+    plan: plan.items,
+    recipes,
+    training: { sessions: sessions.items, scheduledDates: scheduledDates.items },
+    loggedPlanIds: plan.loggedPlanIds,
+  };
 }
 export async function foodDay(date: string, signal: AbortSignal) {
   const entries: FoodEntry[] = [];
@@ -54,7 +81,10 @@ export async function foodDay(date: string, signal: AbortSignal) {
   let revision: number | undefined;
   let totals: Macros | undefined;
   do {
-    const page = await rpc.workspace.foodWindow({ from: date, through: date, limit: 200, cursor }, { signal });
+    const page = await rpc.workspace.foodWindow(
+      { from: date, through: date, limit: 200, cursor },
+      { signal },
+    );
     if (revision !== undefined) requireRevision(revision, page.revision);
     revision = page.revision;
     totals = page.totals;
@@ -65,18 +95,31 @@ export async function foodDay(date: string, signal: AbortSignal) {
 }
 
 export function useRecordPage<K extends keyof Resources>(
-  input: Omit<RecordPageInput, 'resource' | 'cursor'> & { resource: K }, enabled = true,
+  input: Omit<RecordPageInput, 'resource' | 'cursor'> & { resource: K },
+  enabled = true,
 ) {
   const revision = useObservedRevision();
   const signature = JSON.stringify([input, revision]);
-  const [navigation, setNavigation] = useState<{ signature: string; cursors: Array<RecordPageInput['cursor']> }>({ signature, cursors: [undefined] });
+  const [navigation, setNavigation] = useState<{
+    signature: string;
+    cursors: Array<RecordPageInput['cursor']>;
+  }>({ signature, cursors: [undefined] });
   const cursors = navigation.signature === signature ? navigation.cursors : [undefined];
   const cursor = cursors[cursors.length - 1];
-  const query = useResource(input.resource, { ...input, cursor },
+  const query = useResource(
+    input.resource,
+    { ...input, cursor },
     // Invalidation can refetch before React has rendered the reset navigation.
-    (signal) => rpc.workspace.page({ ...input, cursor: cursor && cursor.revision >= workspaceRevision() ? cursor : undefined }, { signal }) as Promise<RecordPage<K>>, enabled);
+    (signal) =>
+      rpc.workspace.page(
+        { ...input, cursor: cursor && cursor.revision >= workspaceRevision() ? cursor : undefined },
+        { signal },
+      ) as Promise<RecordPage<K>>,
+    enabled,
+  );
   const reset = () => setNavigation({ signature, cursors: [undefined] });
-  return { ...query,
+  return {
+    ...query,
     paging: {
       hasPrevious: cursors.length > 1,
       hasNext: Boolean(query.data?.nextCursor),
@@ -87,7 +130,10 @@ export function useRecordPage<K extends keyof Resources>(
           setNavigation({ signature, cursors: [...cursors, query.data.nextCursor] });
       },
     },
-    reload: () => { reset(); if (!cursor) void query.refetch(); },
+    reload: () => {
+      reset();
+      if (!cursor) void query.refetch();
+    },
   };
 }
 
@@ -108,28 +154,48 @@ export async function groceryWeek(weekStart: string, signal: AbortSignal): Promi
   return { revision: revision!, items, checks, nextCursor: null };
 }
 
-export function useCursorResource<T extends { revision: number; nextCursor?: { revision: number } | null }>(
-  family: string, parameters: unknown,
+export function useCursorResource<
+  T extends { revision: number; nextCursor?: { revision: number } | null },
+>(
+  family: string,
+  parameters: unknown,
   operation: (cursor: NonNullable<T['nextCursor']> | undefined, signal: AbortSignal) => Promise<T>,
   enabled = true,
 ) {
   type Cursor = NonNullable<T['nextCursor']> | undefined;
   const revision = useObservedRevision();
   const signature = JSON.stringify([parameters, revision]);
-  const [navigation, setNavigation] = useState<{ signature: string; cursors: Cursor[] }>({ signature, cursors: [undefined] });
+  const [navigation, setNavigation] = useState<{ signature: string; cursors: Cursor[] }>({
+    signature,
+    cursors: [undefined],
+  });
   const cursors: Cursor[] = navigation.signature === signature ? navigation.cursors : [undefined];
   const cursor = cursors[cursors.length - 1];
-  const query = useResource(family, { parameters, cursor },
-    (signal) => operation(cursor && cursor.revision >= workspaceRevision() ? cursor : undefined, signal), enabled);
-  return { ...query, paging: {
-    hasPrevious: cursors.length > 1, hasNext: Boolean(query.data?.nextCursor), busy: query.isFetching,
-    previous: () => setNavigation({ signature, cursors: cursors.slice(0, -1) }),
-    next: () => {
-      if (query.data?.nextCursor)
-        setNavigation({ signature, cursors: [...cursors, query.data.nextCursor as NonNullable<T['nextCursor']>] });
+  const query = useResource(
+    family,
+    { parameters, cursor },
+    (signal) =>
+      operation(cursor && cursor.revision >= workspaceRevision() ? cursor : undefined, signal),
+    enabled,
+  );
+  return {
+    ...query,
+    paging: {
+      hasPrevious: cursors.length > 1,
+      hasNext: Boolean(query.data?.nextCursor),
+      busy: query.isFetching,
+      previous: () => setNavigation({ signature, cursors: cursors.slice(0, -1) }),
+      next: () => {
+        if (query.data?.nextCursor)
+          setNavigation({
+            signature,
+            cursors: [...cursors, query.data.nextCursor as NonNullable<T['nextCursor']>],
+          });
+      },
     },
-  }, reload: () => {
-    setNavigation({ signature, cursors: [undefined] });
-    if (!cursor) void query.refetch();
-  } };
+    reload: () => {
+      setNavigation({ signature, cursors: [undefined] });
+      if (!cursor) void query.refetch();
+    },
+  };
 }

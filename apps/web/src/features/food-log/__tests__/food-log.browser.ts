@@ -20,7 +20,8 @@ test('manual food entries persist their servings and nutrition after reload with
   await page.reload();
   await expect(page.getByRole('heading', { name: 'Synthetic oats' })).toBeVisible();
   const date = dateKey(new Date(), (await account.api.workspace.get()).settings.timezone);
-  const saved = (await account.api.workspace.foodWindow({ from: date, through: date, limit: 200 })).entries;
+  const saved = (await account.api.workspace.foodWindow({ from: date, through: date, limit: 200 }))
+    .entries;
   expect(saved).toHaveLength(1);
   expect(saved[0]).toMatchObject({
     name: 'Synthetic oats',

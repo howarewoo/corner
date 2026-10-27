@@ -140,13 +140,17 @@ test('unverified managed sign-in resolves only when application verification is 
   const payload = await readResponse(signIn);
   assert.equal(payload.user.emailVerified, false);
   assert.equal(payload.token, undefined);
-  const cookie = signIn.headers.getSetCookie().map((value) => value.split(';', 1)[0]).join('; ');
+  const cookie = signIn.headers
+    .getSetCookie()
+    .map((value) => value.split(';', 1)[0])
+    .join('; ');
   assert.match(cookie, /neon-auth.session_token=/);
-  const lookup = (path: string) => requiredApp.request(config.origin + path, {
-    method: 'POST',
-    headers: { Origin: config.origin, 'Content-Type': 'application/json', Cookie: cookie },
-    body: JSON.stringify({}),
-  });
+  const lookup = (path: string) =>
+    requiredApp.request(config.origin + path, {
+      method: 'POST',
+      headers: { Origin: config.origin, 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({}),
+    });
   const denied = await lookup('/api/rpc/account/session');
   assert.equal(denied.status, 200);
   assert.deepEqual(await readResponse(denied), { user: null });
@@ -377,7 +381,8 @@ test('real sign-out revokes the cookie session while password sign-in creates a 
     .map((value) => value.split(';', 1)[0])
     .join('; ');
   const state = await request('/api/rpc/workspace/foodWindow', {
-    cookie, body: { from: '2026-10-21', through: '2026-10-21' },
+    cookie,
+    body: { from: '2026-10-21', through: '2026-10-21' },
   });
   assert.equal(state.status, 200);
   assert.equal((await readResponse(state)).entries[0].id, 'past-log');

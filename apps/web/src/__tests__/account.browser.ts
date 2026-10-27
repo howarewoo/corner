@@ -41,7 +41,9 @@ test('deep-link sign-in survives logout and a different account cannot see priva
   expect(signup.status()).toBe(200);
   await signIn(page, other);
   await expect(page.getByRole('button', { name: 'Add food', exact: true })).toBeVisible();
-  expect((await other.api.workspace.foodWindow({ from: date, through: date, limit: 200 })).entries).toEqual([]);
+  expect(
+    (await other.api.workspace.foodWindow({ from: date, through: date, limit: 200 })).entries,
+  ).toEqual([]);
   await expect(page.getByRole('heading', { name: privateFood })).not.toBeVisible();
   await page.reload();
   await expect(page.getByRole('button', { name: 'Add food', exact: true })).toBeVisible();
@@ -52,9 +54,13 @@ test.describe('account session handoff', () => {
   test.use({ serviceWorkers: 'block' });
 
   test('dashboard refresh recovers account-service failures without another sign-in', async ({
-    page, account,
+    page,
+    account,
   }, testInfo) => {
-    await page.setViewportSize({ width: testInfo.project.name === 'webkit-phone' ? 320 : 1280, height: 844 });
+    await page.setViewportSize({
+      width: testInfo.project.name === 'webkit-phone' ? 320 : 1280,
+      height: 844,
+    });
     await signIn(page, account);
     await expect(page.getByRole('button', { name: 'Add food', exact: true })).toBeVisible();
     const attempts = new Map<string, number>();
@@ -65,15 +71,25 @@ test.describe('account session handoff', () => {
       const attempt = (attempts.get(path) ?? 0) + 1;
       attempts.set(path, attempt);
       if (attempt > 2) return route.continue();
-      return route.fulfill({ status: 503, json: { json: {
-        defined: true, code: 'CORNER_ERROR', status: 503,
-        message: 'The account service is temporarily unavailable. Try again later.',
-        data: { code: 'ACCOUNT_SERVICE_UNAVAILABLE' },
-      } } });
+      return route.fulfill({
+        status: 503,
+        json: {
+          json: {
+            defined: true,
+            code: 'CORNER_ERROR',
+            status: 503,
+            message: 'The account service is temporarily unavailable. Try again later.',
+            data: { code: 'ACCOUNT_SERVICE_UNAVAILABLE' },
+          },
+        },
+      });
     });
     const session = page.waitForResponse('**/api/rpc/account/session');
-    const failures = transientPaths.map((path) => page.waitForResponse((response) =>
-      new URL(response.url()).pathname === path && response.status() === 503));
+    const failures = transientPaths.map((path) =>
+      page.waitForResponse(
+        (response) => new URL(response.url()).pathname === path && response.status() === 503,
+      ),
+    );
     await page.reload();
     expect((await session).status()).toBe(200);
     await Promise.all(failures);
@@ -101,7 +117,9 @@ test.describe('account session handoff', () => {
       await expect(page.getByLabel('Email', { exact: true })).toHaveValue(account.email);
       await expect(page.getByLabel('Password', { exact: true })).toHaveValue('');
       await expect(page.getByRole('button', { name: 'Show password' })).toBeEnabled();
-      await expect(page.getByRole('button', { name: 'Add workout', exact: true })).not.toBeVisible();
+      await expect(
+        page.getByRole('button', { name: 'Add workout', exact: true }),
+      ).not.toBeVisible();
     }
     await page.unroute('**/api/rpc/account/session');
     await page.getByLabel('Password', { exact: true }).fill(account.password);

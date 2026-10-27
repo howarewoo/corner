@@ -6,7 +6,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import { packageArtifact, verifyArtifact, qualifyArtifact, qualificationRecovery, assertQualificationGeneration } from '../release-artifact.mjs';
+import {
+  packageArtifact,
+  verifyArtifact,
+  qualifyArtifact,
+  qualificationRecovery,
+  assertQualificationGeneration,
+} from '../release-artifact.mjs';
 
 const hash = (bytes) => createHash('sha256').update(bytes).digest('hex');
 
@@ -28,10 +34,22 @@ test('storage transition is artifact-derived, distinct from bootstrap, and canno
     { generation: 'relational-v1', previousGeneration: 'document-v1', recovery: 'compatible' },
     { generation: 'relational-v1', previousGeneration: null, recovery: 'bootstrap' },
     { generation: 'document-v1', previousGeneration: 'document-v1', recovery: 'compatible' },
-  ]) assert.throws(() => assertQualificationGeneration(report, relational, document), /generation mismatch/);
-  assert.doesNotThrow(() => assertQualificationGeneration({
-    generation: 'relational-v1', previousGeneration: 'document-v1', recovery: 'forward-only',
-  }, relational, document));
+  ])
+    assert.throws(
+      () => assertQualificationGeneration(report, relational, document),
+      /generation mismatch/,
+    );
+  assert.doesNotThrow(() =>
+    assertQualificationGeneration(
+      {
+        generation: 'relational-v1',
+        previousGeneration: 'document-v1',
+        recovery: 'forward-only',
+      },
+      relational,
+      document,
+    ),
+  );
 });
 
 async function fixture(t, migration = 'CREATE TABLE example (id int);') {

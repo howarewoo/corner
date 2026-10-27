@@ -94,41 +94,89 @@ test('session renewal cookies remain host-only and valid on HTTP and HTTPS witho
 
 test('managed session failures keep the public 503 but emit correlated, sanitized categories', async (t) => {
   const cases = [
-    { category: 'network', status: null, fetcher: async () => { throw new Error('private-service-details'); } },
-    { category: 'timeout', status: null, fetcher: async () => { throw new DOMException('private-timeout', 'TimeoutError'); } },
-    { category: 'upstream_status', status: 429, fetcher: async () => new Response('private-rate-limit', { status: 429 }) },
-    { category: 'upstream_status', status: 502, fetcher: async () => new Response('private-upstream', { status: 502 }) },
-    { category: 'invalid_json', status: 200, fetcher: async () => new Response('private-invalid-json') },
-    { category: 'invalid_session', status: 200, fetcher: async () => Response.json({ user: valid.user }) },
+    {
+      category: 'network',
+      status: null,
+      fetcher: async () => {
+        throw new Error('private-service-details');
+      },
+    },
+    {
+      category: 'timeout',
+      status: null,
+      fetcher: async () => {
+        throw new DOMException('private-timeout', 'TimeoutError');
+      },
+    },
+    {
+      category: 'upstream_status',
+      status: 429,
+      fetcher: async () => new Response('private-rate-limit', { status: 429 }),
+    },
+    {
+      category: 'upstream_status',
+      status: 502,
+      fetcher: async () => new Response('private-upstream', { status: 502 }),
+    },
+    {
+      category: 'invalid_json',
+      status: 200,
+      fetcher: async () => new Response('private-invalid-json'),
+    },
+    {
+      category: 'invalid_session',
+      status: 200,
+      fetcher: async () => Response.json({ user: valid.user }),
+    },
   ] as const;
   for (const scenario of cases) {
     await t.test(`${scenario.category} ${scenario.status}`, async (t) => {
       const events: Array<Record<string, unknown>> = [];
       t.mock.method(console, 'warn', (message: string) => events.push(JSON.parse(message)));
       if (scenario.category === 'timeout')
-        t.mock.method(AbortSignal, 'timeout', () => AbortSignal.abort(new DOMException('Timed out', 'TimeoutError')));
+        t.mock.method(AbortSignal, 'timeout', () =>
+          AbortSignal.abort(new DOMException('Timed out', 'TimeoutError')),
+        );
       const request = new Request(config.origin + '/api/rpc/workspace/get?email=private-query', {
-        headers: { Cookie: 'neon-auth.session_token=opaque; unrelated=private-cookie',
-          Authorization: 'Bearer private-token', 'X-Corner-Request-Id': 'private-client-id' },
+        headers: {
+          Cookie: 'neon-auth.session_token=opaque; unrelated=private-cookie',
+          Authorization: 'Bearer private-token',
+          'X-Corner-Request-Id': 'private-client-id',
+        },
       });
       const auth = createAuth(config, scenario.fetcher, 'synthetic-version');
-      await assert.rejects(auth.principal(request), (error) =>
-        error instanceof ApiError && error.status === 503 && error.code === 'ACCOUNT_SERVICE_UNAVAILABLE');
+      await assert.rejects(
+        auth.principal(request),
+        (error) =>
+          error instanceof ApiError &&
+          error.status === 503 &&
+          error.code === 'ACCOUNT_SERVICE_UNAVAILABLE',
+      );
       const response = auth.withCookies(request, Response.json({}, { status: 503 }));
       assert.equal(events.length, 1);
       const event = events[0];
       const requestId = response.headers.get('X-Corner-Request-Id');
       assert.match(requestId!, /^[0-9a-f-]{36}$/);
       assert.deepEqual(event, {
-        event: 'ACCOUNT_SESSION_LOOKUP_FAILED', severity: 'warn', deployment: 'local',
-        requestId, procedure: 'workspace.get', servingVersion: 'synthetic-version',
-        category: scenario.category, upstreamStatus: scenario.status, durationMs: event.durationMs,
-        timestamp: event.timestamp, service: 'managed-auth',
+        event: 'ACCOUNT_SESSION_LOOKUP_FAILED',
+        severity: 'warn',
+        deployment: 'local',
+        requestId,
+        procedure: 'workspace.get',
+        servingVersion: 'synthetic-version',
+        category: scenario.category,
+        upstreamStatus: scenario.status,
+        durationMs: event.durationMs,
+        timestamp: event.timestamp,
+        service: 'managed-auth',
       });
       assert.equal(typeof event.durationMs, 'number');
       assert.ok(Number(event.durationMs) >= 0);
       assert.doesNotMatch(JSON.stringify(event), /private|opaque|Alice|alice|owner-a|session-a/);
-      assert.equal(auth.withCookies(request, Response.json({})).headers.get('X-Corner-Request-Id'), null);
+      assert.equal(
+        auth.withCookies(request, Response.json({})).headers.get('X-Corner-Request-Id'),
+        null,
+      );
     });
   }
 });

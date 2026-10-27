@@ -49,8 +49,8 @@ const candidateArtifact = options['--config']
 const previousArtifact = options['--previous-config']
   ? await verifyArtifact(dirname(options['--previous-config']))
   : undefined;
-const forwardOnly = previousArtifact &&
-  qualificationRecovery(candidateArtifact, previousArtifact) === 'forward-only';
+const forwardOnly =
+  previousArtifact && qualificationRecovery(candidateArtifact, previousArtifact) === 'forward-only';
 const directory = await mkdtemp(join(tmpdir(), 'corner-workers-smoke-'));
 const origin = 'https://corner.example.test';
 const cleanup = new AsyncDisposableStack();
@@ -65,7 +65,9 @@ try {
   cleanup.defer(() => backend.close());
   if (forwardOnly) {
     const retained = await startSmokeServices(
-      directory, origin, previousMigrator.migrate,
+      directory,
+      origin,
+      previousMigrator.migrate,
       candidateMigrator.createDatabase,
     );
     try {
@@ -73,10 +75,18 @@ try {
         "INSERT INTO workspace_state VALUES ('retained-owner','{}',0,'2026-10-22T00:00:00.000Z')",
       );
       const before = (await retained.database.query('SELECT * FROM workspace_state')).rows;
-      const history = (await retained.database.query('SELECT * FROM __drizzle_migrations ORDER BY id')).rows;
+      const history = (
+        await retained.database.query('SELECT * FROM __drizzle_migrations ORDER BY id')
+      ).rows;
       await assert.rejects(candidateMigrator.migrate(retained.database));
-      assert.deepEqual((await retained.database.query('SELECT * FROM workspace_state')).rows, before);
-      assert.deepEqual((await retained.database.query('SELECT * FROM __drizzle_migrations ORDER BY id')).rows, history);
+      assert.deepEqual(
+        (await retained.database.query('SELECT * FROM workspace_state')).rows,
+        before,
+      );
+      assert.deepEqual(
+        (await retained.database.query('SELECT * FROM __drizzle_migrations ORDER BY id')).rows,
+        history,
+      );
     } finally {
       await retained.close();
     }
@@ -233,7 +243,11 @@ try {
         }
         assert.deepEqual(proxyErrors, [], 'Database WebSocket bridge must not fail.');
         if (candidate) {
-          assert.deepEqual(diagnostics, [], 'Candidate database operations and shutdown must be clean.');
+          assert.deepEqual(
+            diagnostics,
+            [],
+            'Candidate database operations and shutdown must be clean.',
+          );
         }
       },
     };
@@ -263,37 +277,37 @@ try {
       .map((cookie) => cookie.split(';', 1)[0])
       .join('; ');
     if (!forwardOnly) {
-    const previousWrite = await worker.fetch(new URL('/api/rpc/workspace/mutate', origin), {
-      method: 'POST',
-      headers: { Origin: origin, 'Content-Type': 'application/json', Cookie: priorCookie },
-      body: JSON.stringify({
-        json: {
-          requestId: 'prior-record-before-migration',
-          mutation: {
-            type: 'log.save',
-            data: {
-              id: 'prior-food-record',
-              date: '2026-10-22',
-              slot: 'dinner',
-              name: 'Recorded before migration',
-              nutrition: { calories: 600, protein: 40, carbs: 65, fat: 20 },
-              servings: 1,
-              createdAt: '2026-10-22T18:00:00.000Z',
+      const previousWrite = await worker.fetch(new URL('/api/rpc/workspace/mutate', origin), {
+        method: 'POST',
+        headers: { Origin: origin, 'Content-Type': 'application/json', Cookie: priorCookie },
+        body: JSON.stringify({
+          json: {
+            requestId: 'prior-record-before-migration',
+            mutation: {
+              type: 'log.save',
+              data: {
+                id: 'prior-food-record',
+                date: '2026-10-22',
+                slot: 'dinner',
+                name: 'Recorded before migration',
+                nutrition: { calories: 600, protein: 40, carbs: 65, fat: 20 },
+                servings: 1,
+                createdAt: '2026-10-22T18:00:00.000Z',
+              },
             },
           },
-        },
-      }),
-      signal: AbortSignal.timeout(20_000),
-    });
-    assert.equal(previousWrite.status, 200, await previousWrite.clone().text());
-    const response = await worker.fetch(new URL('/api/rpc/workspace/export', origin), {
-      method: 'POST',
-      headers: { Origin: origin, 'Content-Type': 'application/json', Cookie: priorCookie },
-      body: '{}',
-      signal: AbortSignal.timeout(20_000),
-    });
-    assert.equal(response.status, 200, await response.clone().text());
-    priorState = (await response.json()).json;
+        }),
+        signal: AbortSignal.timeout(20_000),
+      });
+      assert.equal(previousWrite.status, 200, await previousWrite.clone().text());
+      const response = await worker.fetch(new URL('/api/rpc/workspace/export', origin), {
+        method: 'POST',
+        headers: { Origin: origin, 'Content-Type': 'application/json', Cookie: priorCookie },
+        body: '{}',
+        signal: AbortSignal.timeout(20_000),
+      });
+      assert.equal(response.status, 200, await response.clone().text());
+      priorState = (await response.json()).json;
     }
     await worker.dispose();
     await candidateMigrator.migrate(backend.database);
@@ -414,11 +428,18 @@ try {
   assert.equal((await state(bob)).settings.name, 'Bob');
   const foodMutation = {
     requestId: 'workers-food-record-write',
-    mutation: { type: 'log.save', data: {
-      id: 'workers-food-record', date: '2026-10-23', slot: 'lunch',
-      name: 'Bounded Workers lunch', nutrition: { calories: 400, protein: 30, carbs: 40, fat: 12 },
-      servings: 1.25, createdAt: '2026-10-23T12:00:00.000Z',
-    } },
+    mutation: {
+      type: 'log.save',
+      data: {
+        id: 'workers-food-record',
+        date: '2026-10-23',
+        slot: 'lunch',
+        name: 'Bounded Workers lunch',
+        nutrition: { calories: 400, protein: 30, carbs: 40, fat: 12 },
+        servings: 1.25,
+        createdAt: '2026-10-23T12:00:00.000Z',
+      },
+    },
   };
   const foodResult = await client(alice).workspace.mutate(foodMutation);
   assert.deepEqual(Object.keys(foodResult), ['revision']);
@@ -436,7 +457,12 @@ try {
     try {
       await connection.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
       const schema = await candidateMigrator.currentSchema(connection);
-      await candidateMigrator.migrationHistory(connection, schema, candidateArtifact.manifest.migrations, true);
+      await candidateMigrator.migrationHistory(
+        connection,
+        schema,
+        candidateArtifact.manifest.migrations,
+        true,
+      );
       assert.equal(migrator.storageGeneration, 'relational-v1');
       assert.equal(typeof migrator.validatePersistedRecords, 'function');
       await migrator.validatePersistedRecords(connection, schema);
@@ -539,7 +565,11 @@ try {
     await worker.dispose();
     worker = await startWorker(options['--previous-config'], false);
     await worker.ready;
-    const recoveredFood = await client(alice).workspace.foodWindow({ from: '2026-10-23', through: '2026-10-23', limit: 1 });
+    const recoveredFood = await client(alice).workspace.foodWindow({
+      from: '2026-10-23',
+      through: '2026-10-23',
+      limit: 1,
+    });
     assert.equal(recoveredFood.entries.length, 1);
     assert.equal(recoveredFood.totals.calories, 1062.5);
     assert.ok(recoveredFood.nextCursor);
@@ -565,10 +595,17 @@ try {
       { Cookie: alice },
     );
     assert.equal(oldWrite.status, 200, await oldWrite.clone().text());
-    const recoveredRetry = await rpc('workspace/mutate', {
-      requestId: 'previous-version-write-123',
-      mutation: { type: 'settings.save', data: { ...candidateWritten.state.settings, name: 'Written by previous Worker' } },
-    }, { Cookie: alice });
+    const recoveredRetry = await rpc(
+      'workspace/mutate',
+      {
+        requestId: 'previous-version-write-123',
+        mutation: {
+          type: 'settings.save',
+          data: { ...candidateWritten.state.settings, name: 'Written by previous Worker' },
+        },
+      },
+      { Cookie: alice },
+    );
     assert.equal(recoveredRetry.status, 200, await recoveredRetry.clone().text());
     assert.deepEqual((await recoveredRetry.json()).json, (await oldWrite.json()).json);
     const previousWritten = await snapshot(alice);

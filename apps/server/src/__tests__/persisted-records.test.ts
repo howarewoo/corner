@@ -10,13 +10,22 @@ import { createInitialState } from '@packages/workspace/initial-state';
 function fixture(mode = { readonly: 'on', isolation: 'repeatable read' }) {
   const statements: Array<{ sql: string; parameters: unknown[] }> = [];
   const client = {
-    query: async (input: string | { text: string; values?: unknown[] }, parameters: unknown[] = []) => {
+    query: async (
+      input: string | { text: string; values?: unknown[] },
+      parameters: unknown[] = [],
+    ) => {
       const sql = typeof input === 'string' ? input : input.text;
       if (typeof input !== 'string') parameters = input.values ?? [];
       statements.push({ sql, parameters });
       if (sql.includes('transaction_read_only')) return { rows: [mode] };
       if (sql.includes('workspace_grocery_checks')) {
-        if (!parameters.length) return { rows: Array.from({ length: 100 }, (_, index) => ({ user_id: 'owner', key: `grocery:${String(index).padStart(3, '0')}` })) };
+        if (!parameters.length)
+          return {
+            rows: Array.from({ length: 100 }, (_, index) => ({
+              user_id: 'owner',
+              key: `grocery:${String(index).padStart(3, '0')}`,
+            })),
+          };
         return { rows: [{ user_id: 'owner', key: 'grocery:100' }] };
       }
       return { rows: [] };
@@ -50,9 +59,13 @@ test('persisted validation scans bounded keyset pages, never exports a workspace
 test('persisted validation refuses unsafe stored grocery keys instead of silently normalizing them', async () => {
   const f = fixture();
   const query = f.client.query.bind(f.client);
-  f.client.query = (async (input: string | { text: string; values?: unknown[] }, parameters?: unknown[]) => {
+  f.client.query = (async (
+    input: string | { text: string; values?: unknown[] },
+    parameters?: unknown[],
+  ) => {
     const sql = typeof input === 'string' ? input : input.text;
-    if (sql.includes('workspace_grocery_checks')) return { rows: [{ user_id: 'owner', key: '__proto__' }] };
+    if (sql.includes('workspace_grocery_checks'))
+      return { rows: [{ user_id: 'owner', key: '__proto__' }] };
     return typeof input === 'string' ? query(input, parameters) : query(input);
   }) as typeof f.client.query;
   await assert.rejects(validatePersistedRecords(f.client, 'public'));
@@ -65,22 +78,50 @@ test('real PostgreSQL calendar records validate under a non-UTC timezone without
   try {
     const state = createInitialState();
     state.settings.timezone = 'Pacific/Auckland';
-    state.logs = [{
-      id: 'dated-food', date: '2026-10-22', slot: 'lunch', name: 'Calendar lunch',
-      nutrition: { calories: 200, protein: 20, carbs: 20, fat: 8 }, servings: 1,
-      createdAt: '2026-10-22T01:02:03.456Z',
-    }];
-    state.training.checkIns = [{
-      id: 'dated-checkin', date: '2026-10-22', bodyWeight: 180, waist: null,
-      sleepHours: null, energy: null, soreness: null, boxingQuality: null, notes: '',
-    }];
-    state.training.sessions = [{
-      id: 'dated-session', date: '2026-10-22', name: 'Recovery', kind: 'recovery',
-      status: 'planned', unit: 'kg', exercises: [], plannedMinutes: 20,
-      durationMinutes: null, rounds: null, sessionRpe: null, readiness: null,
-      notes: '', changeReason: '', createdAt: '2026-10-22T01:02:03.456Z',
-      updatedAt: '2026-10-22T01:02:03.457Z',
-    }];
+    state.logs = [
+      {
+        id: 'dated-food',
+        date: '2026-10-22',
+        slot: 'lunch',
+        name: 'Calendar lunch',
+        nutrition: { calories: 200, protein: 20, carbs: 20, fat: 8 },
+        servings: 1,
+        createdAt: '2026-10-22T01:02:03.456Z',
+      },
+    ];
+    state.training.checkIns = [
+      {
+        id: 'dated-checkin',
+        date: '2026-10-22',
+        bodyWeight: 180,
+        waist: null,
+        sleepHours: null,
+        energy: null,
+        soreness: null,
+        boxingQuality: null,
+        notes: '',
+      },
+    ];
+    state.training.sessions = [
+      {
+        id: 'dated-session',
+        date: '2026-10-22',
+        name: 'Recovery',
+        kind: 'recovery',
+        status: 'planned',
+        unit: 'kg',
+        exercises: [],
+        plannedMinutes: 20,
+        durationMinutes: null,
+        rounds: null,
+        sessionRpe: null,
+        readiness: null,
+        notes: '',
+        changeReason: '',
+        createdAt: '2026-10-22T01:02:03.456Z',
+        updatedAt: '2026-10-22T01:02:03.457Z',
+      },
+    ];
     state.training.scheduledDates = ['2026-10-22'];
     const store = new WorkspaceStore(createQueries(database));
     await store.replaceImport('calendar-owner', 'calendar-import', state, 0);

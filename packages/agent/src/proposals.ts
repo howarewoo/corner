@@ -210,10 +210,14 @@ export function proposalMutations(
       parsed.type === 'training.session.save' ||
       parsed.type === 'training.session.delete' ||
       parsed.type === 'training.template.save'
-    ) prepareTrainingCommand(parsed, {
-      sessions: state.training.sessions, templates: state.training.templates,
-      requests: [], reviews: [], scheduledDates: [],
-    });
+    )
+      prepareTrainingCommand(parsed, {
+        sessions: state.training.sessions,
+        templates: state.training.templates,
+        requests: [],
+        reviews: [],
+        scheduledDates: [],
+      });
   }
   return { result, mutations };
 }

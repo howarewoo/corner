@@ -121,13 +121,16 @@ export function validateFoodEntry(
       existing.recipeId === entry.recipeId &&
       existing.date === entry.date;
     if (
-      planned && !keepsHistoricalLink &&
+      planned &&
+      !keepsHistoricalLink &&
       (planned.date !== entry.date || (entry.recipeId && planned.recipeId !== entry.recipeId))
     )
       throw new Error('The logged meal must match the planned date and recipe.');
   }
   if (entry.planEntryId && alreadyLogged)
-    throw new Error('That planned meal has already been logged. Edit its logged portion if needed.');
+    throw new Error(
+      'That planned meal has already been logged. Edit its logged portion if needed.',
+    );
 }
 export function applyMutation(previous: AppState, input: Mutation): AppState {
   const parsed = MutationSchema.safeParse(input);
@@ -195,7 +198,8 @@ export function applyMutation(previous: AppState, input: Mutation): AppState {
       const entry = mutation.data;
       validateFoodEntry(entry, {
         existing: next.logs.find((value) => value.id === entry.id),
-        recipeExists: !entry.recipeId || next.recipes.some((recipe) => recipe.id === entry.recipeId),
+        recipeExists:
+          !entry.recipeId || next.recipes.some((recipe) => recipe.id === entry.recipeId),
         planned: next.plan.find((value) => value.id === entry.planEntryId),
         alreadyLogged: next.logs.some(
           (value) => value.planEntryId === entry.planEntryId && value.id !== entry.id,
