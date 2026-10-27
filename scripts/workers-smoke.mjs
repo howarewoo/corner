@@ -8,9 +8,8 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { startSmokeServices } from './smoke-services.mjs';
-import { publicChecks } from './release.mjs';
+import { publicChecks, maintenanceChecks, validateCutoverCandidate } from './release.mjs';
 import { verifyArtifact, qualificationRecovery } from './release-artifact.mjs';
-
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const require = createRequire(new URL('../apps/server/package.json', import.meta.url));
 const { experimental_readRawConfig, unstable_getMiniflareWorkerOptions } = await import(
@@ -20,8 +19,13 @@ const { Agent, fetch: fixtureFetch } = await import(require.resolve('undici'));
 const { createORPCClient } = await import(require.resolve('@orpc/client'));
 const { RPCLink } = await import(require.resolve('@orpc/client/fetch'));
 const options = {};
-for (let index = 2; index < process.argv.length; index += 2) {
+for (let index = 2; index < process.argv.length; index++) {
   const flag = process.argv[index];
+  if (flag === '--preserving') {
+    if (options[flag]) throw new Error(`Invalid smoke option: ${flag}`);
+    options[flag] = true;
+    continue;
+  }
   if (
     !['--config', '--migration-entry', '--previous-config', '--previous-migration-entry'].includes(
       flag,
@@ -30,7 +34,7 @@ for (let index = 2; index < process.argv.length; index += 2) {
     options[flag]
   )
     throw new Error(`Invalid smoke option: ${flag}`);
-  options[flag] = resolve(process.argv[index + 1]);
+  options[flag] = resolve(process.argv[++index]);
 }
 if (Boolean(options['--previous-config']) !== Boolean(options['--previous-migration-entry']))
   throw new Error('Previous Worker and migrator must be supplied together.');
@@ -49,8 +53,13 @@ const candidateArtifact = options['--config']
 const previousArtifact = options['--previous-config']
   ? await verifyArtifact(dirname(options['--previous-config']))
   : undefined;
-const forwardOnly =
-  previousArtifact && qualificationRecovery(candidateArtifact, previousArtifact) === 'forward-only';
+const recoveryMode = previousArtifact
+  ? qualificationRecovery(candidateArtifact, previousArtifact, Boolean(options['--preserving']))
+  : undefined;
+const forwardOnly = recoveryMode === 'forward-only';
+const preserving = recoveryMode === 'preserving';
+if (options['--preserving'] && !preserving)
+  throw new Error('--preserving requires a document-v1 previous artifact and relational-v1 candidate.');
 const directory = await mkdtemp(join(tmpdir(), 'corner-workers-smoke-'));
 const origin = 'https://corner.example.test';
 const cleanup = new AsyncDisposableStack();
@@ -104,7 +113,7 @@ try {
     CORNER_TOKEN_ENCRYPTION_KEY: Buffer.alloc(32, 42).toString('base64'),
   };
   let workerNumber = 0;
-  const startWorker = async (config, candidate = true) => {
+  const startWorker = async (config, candidate = true, { mainOverride, forbidOutbound = false } = {}) => {
     const miniflareRequire = createRequire(require.resolve('wrangler'));
     const { Miniflare, convertV4MiniflareOptions, WebSocketPair, Response, Log } = await import(
       miniflareRequire.resolve('miniflare')
@@ -172,9 +181,11 @@ try {
       return new Response(null, { status: 101, webSocket: pair[0] });
     };
     const { rawConfig: original } = experimental_readRawConfig({ config });
-    const bundle = original.no_bundle
-      ? resolve(dirname(config), original.main)
-      : join(root, 'apps/server/dist/worker/worker.js');
+    const bundle = mainOverride
+      ? resolve(dirname(config), mainOverride)
+      : original.no_bundle
+        ? resolve(dirname(config), original.main)
+        : join(root, 'apps/server/dist/worker/worker.js');
     const localConfig = join(directory, `worker-${workerNumber++}.json`);
     await writeFile(
       localConfig,
@@ -199,6 +210,8 @@ try {
         scriptPath: bundle,
         bindings,
         outboundService: async (request) => {
+          if (forbidOutbound)
+            assert.fail(`Maintenance Worker must not make outbound DB/Auth requests (${request.url}).`);
           if (
             request.headers.get('Upgrade')?.toLowerCase() === 'websocket' ||
             new URL(request.url).origin === proxyUrl.origin
@@ -300,17 +313,79 @@ try {
         signal: AbortSignal.timeout(20_000),
       });
       assert.equal(previousWrite.status, 200, await previousWrite.clone().text());
-      const response = await worker.fetch(new URL('/api/rpc/workspace/export', origin), {
+      const response = await worker.fetch(new URL('/api/rpc/workspace/get', origin), {
         method: 'POST',
         headers: { Origin: origin, 'Content-Type': 'application/json', Cookie: priorCookie },
         body: '{}',
         signal: AbortSignal.timeout(20_000),
       });
       assert.equal(response.status, 200, await response.clone().text());
-      priorState = (await response.json()).json;
+      const previousSnapshot = (await response.json()).json;
+      priorState = { state: previousSnapshot.state, revision: previousSnapshot.revision };
     }
     await worker.dispose();
-    await candidateMigrator.migrate(backend.database);
+    if (preserving) {
+      assert.equal(
+        candidateArtifact?.manifest.maintenanceWorkerEntry,
+        'worker/maintenance-worker.js',
+        'Preserving cutover requires packaged worker/maintenance-worker.js.',
+      );
+      worker = await startWorker(options['--config'], false, {
+        mainOverride: candidateArtifact.manifest.maintenanceWorkerEntry,
+        forbidOutbound: true,
+      });
+      await worker.ready;
+      const maintHealth = await worker.fetch(new URL('/api/health', origin));
+      assert.equal(maintHealth.status, 503);
+      const maintVersion = maintHealth.headers.get('X-Corner-Version');
+      assert.match(maintVersion ?? '', /^[a-f0-9-]{36}$/i);
+      await maintenanceChecks(origin, maintVersion, (url, init) => worker.fetch(url, init));
+      assert.equal(
+        (await worker.fetch(new URL('https://wrong.example.test/api/health'))).status,
+        400,
+      );
+      const maintPage = await worker.fetch(new URL('/', origin));
+      assert.equal(maintPage.status, 503);
+      assert.match(await maintPage.text(), /Corner is updating/);
+      await worker.dispose();
+      assert.equal(typeof candidateMigrator.preservingDocumentCutover, 'function');
+      assert.equal(typeof candidateMigrator.inspectDocumentCutover, 'function');
+      const operationId = 'workers-smoke-preserving-cutover';
+      assert.equal(
+        (await candidateMigrator.inspectDocumentCutover(backend.database, operationId)).phase,
+        'untouched',
+      );
+      const cutoverResult = await candidateMigrator.preservingDocumentCutover(
+        backend.database,
+        operationId,
+      );
+      assert.equal(cutoverResult.phase, 'completed');
+      const replayResult = await candidateMigrator.preservingDocumentCutover(
+        backend.database,
+        operationId,
+      );
+      assert.equal(replayResult.phase, 'completed');
+      const previousUnpooled = process.env.DATABASE_URL_UNPOOLED;
+      const validationUrl = new URL(backend.databaseUrl);
+      validationUrl.searchParams.delete('options');
+      process.env.DATABASE_URL_UNPOOLED = validationUrl.href;
+      try {
+        await validateCutoverCandidate({
+          ...candidateArtifact,
+          directory: dirname(options['--config']),
+        }, operationId, async () => ({
+          ...candidateMigrator,
+          // The existing disposable fixture isolates schemas through libpq options,
+          // forbidden on production unpooled URLs. Keep its real pool factory here.
+          createDatabase: () => candidateMigrator.createDatabase(backend.databaseUrl),
+        }));
+      } finally {
+        if (previousUnpooled === undefined) delete process.env.DATABASE_URL_UNPOOLED;
+        else process.env.DATABASE_URL_UNPOOLED = previousUnpooled;
+      }
+    } else {
+      await candidateMigrator.migrate(backend.database);
+    }
   }
   worker = await startWorker(options['--config'] ?? join(root, 'apps/server/wrangler.jsonc'));
   await worker.ready;
@@ -332,6 +407,28 @@ try {
       priorState,
       'Candidate schema migration must preserve the previous workspace.',
     );
+    if (preserving) {
+      const priorFollowup = {
+        requestId: 'preserving-candidate-followup-write',
+        mutation: {
+          type: 'settings.save',
+          data: { ...priorState.state.settings, name: 'Converted and updated on relational-v1' },
+        },
+      };
+      const firstFollowup = await rpc('workspace/mutate', priorFollowup, { Cookie: priorCookie });
+      assert.equal(firstFollowup.status, 200, await firstFollowup.clone().text());
+      const retryFollowup = await rpc('workspace/mutate', priorFollowup, { Cookie: priorCookie });
+      assert.equal(retryFollowup.status, 200, await retryFollowup.clone().text());
+      const followupPayload = (await firstFollowup.json()).json;
+      assert.equal(followupPayload.revision, priorState.revision + 1);
+      assert.deepEqual((await retryFollowup.json()).json, followupPayload);
+      const updatedPrior = await rpc('workspace/export', undefined, { Cookie: priorCookie });
+      assert.equal(updatedPrior.status, 200, await updatedPrior.clone().text());
+      const updatedSnapshot = (await updatedPrior.json()).json;
+      assert.equal(updatedSnapshot.revision, priorState.revision + 1);
+      assert.equal(updatedSnapshot.state.settings.name, 'Converted and updated on relational-v1');
+      assert.deepEqual(updatedSnapshot.state.foodLog, priorState.state.foodLog);
+    }
   }
   const health = await call('/api/health');
   assert.deepEqual(await health.json(), { ok: true });
@@ -510,7 +607,7 @@ try {
       'ALTER TABLE mutation_receipts DROP CONSTRAINT workers_smoke_reject_receipt',
     );
   }
-  if (previousMigrator && !forwardOnly) {
+  if (previousMigrator && !forwardOnly && !preserving) {
     const fixtures = [
       {
         type: 'log.save',
