@@ -27,6 +27,109 @@ const bootstrap = (revision: number): Bootstrap => ({
   revision, settings: createInitialState().settings, aiAvailable: false,
 });
 
+const accountUnavailable = () => json({ json: {
+  defined: true, code: 'CORNER_ERROR', status: 503,
+  message: 'The account service is temporarily unavailable. Try again later.',
+  data: { code: 'ACCOUNT_SERVICE_UNAVAILABLE' },
+} }, 503);
+
+test('workspace and food reads recover transient account failures without retiring the session', async () => {
+  const attempts = new Map<string, number>();
+  const generation = runtime.sessionLifetime();
+  mockHttp((call) => {
+    const attempt = (attempts.get(call.path) ?? 0) + 1;
+    attempts.set(call.path, attempt);
+    if (attempt === 1) return accountUnavailable();
+    if (call.path === '/api/rpc/workspace/get') return json({ json: bootstrap(7) });
+    if (call.path === '/api/rpc/workspace/foodWindow')
+      return json({ json: { revision: 7, entries: [foodEntry('recovered-oats')],
+        totals: { calories: 200, protein: 20, carbs: 24, fat: 8 }, nextCursor: null } });
+  });
+  function Consumer() {
+    const workspace = runtime.useWorkspace();
+    const food = runtime.useResource('food', undefined,
+      (signal) => foodDay('2026-10-24', signal));
+    return <>
+      <output aria-label="Workspace">{workspace.isError ? 'error' : workspace.data?.revision}</output>
+      <output aria-label="Food">{food.isError ? 'error' : food.data?.entries[0]?.name}</output>
+    </>;
+  }
+  render(<QueryClientProvider client={runtime.queryClient}><Consumer /></QueryClientProvider>);
+  await waitFor(() => {
+    expect(screen.getByLabelText('Workspace')).toHaveTextContent('7');
+    expect(screen.getByLabelText('Food')).toHaveTextContent('Synthetic oats');
+  }, { timeout: 2500 });
+  expect(runtime.sessionLifetime()).toBe(generation);
+  expect([...attempts.values()]).toEqual([2, 2]);
+});
+
+test('persistent account failures exhaust read retries and retain manual recovery', async () => {
+  let fail = true;
+  const generation = runtime.sessionLifetime();
+  const calls = mockHttp(() => fail ? accountUnavailable() : json({ json: bootstrap(7) }));
+  function Consumer() {
+    const workspace = runtime.useWorkspace();
+    return <>
+      <output>{workspace.isError ? workspace.error.message : workspace.data?.revision}</output>
+      <button onClick={() => void workspace.refetch()}>Retry</button>
+    </>;
+  }
+  render(<QueryClientProvider client={runtime.queryClient}><Consumer /></QueryClientProvider>);
+  await screen.findByText('The account service is temporarily unavailable. Try again later.', {}, { timeout: 3000 });
+  expect(calls).toHaveLength(3);
+  expect(runtime.sessionLifetime()).toBe(generation);
+  fail = false;
+  await userEvent.setup().click(screen.getByRole('button', { name: 'Retry' }));
+  await screen.findByText('7');
+});
+
+test('logout cancels account backoff before another request or private result can appear', async () => {
+  vi.useFakeTimers();
+  const generation = runtime.sessionLifetime();
+  const calls = mockHttp(() => accountUnavailable());
+  function Consumer() {
+    const active = runtime.useSessionLifetime() === generation;
+    const workspace = runtime.useWorkspace(active);
+    return <output>{active ? workspace.data?.settings.name : 'Signed out'}</output>;
+  }
+  await act(async () => {
+    render(<QueryClientProvider client={runtime.queryClient}><Consumer /></QueryClientProvider>);
+    await vi.advanceTimersByTimeAsync(0);
+  });
+  expect(calls).toHaveLength(1);
+  expect(runtime.queryClient.getQueryState(['workspace', generation])?.fetchFailureCount).toBe(1);
+  await act(async () => {
+    runtime.clearPrivateState();
+    await vi.advanceTimersByTimeAsync(5000);
+  });
+  expect(screen.getByText('Signed out')).toBeInTheDocument();
+  expect(calls).toHaveLength(1);
+  expect(runtime.queryClient.getQueryData(['workspace', generation])).toBeUndefined();
+});
+
+test.each(['SIGN_IN_REQUIRED', 'INVALID_INPUT'] as const)('%s stops workspace reads without retrying', async (code) => {
+  const calls = mockHttp(() => json({ json: {
+    defined: true, code: code === 'SIGN_IN_REQUIRED' ? code : 'CORNER_ERROR',
+    status: code === 'SIGN_IN_REQUIRED' ? 401 : 400, message: code, data: { code },
+  } }, code === 'SIGN_IN_REQUIRED' ? 401 : 400));
+  const expired = vi.fn();
+  window.addEventListener('corner:session-expired', expired);
+  const generation = runtime.sessionLifetime();
+  function Consumer() {
+    const active = runtime.useSessionLifetime() === generation;
+    const workspace = runtime.useWorkspace(active);
+    return <output>{active ? workspace.error?.message : 'Signed out'}</output>;
+  }
+  try {
+    render(<QueryClientProvider client={runtime.queryClient}><Consumer /></QueryClientProvider>);
+    await screen.findByText(code === 'SIGN_IN_REQUIRED' ? 'Signed out' : code);
+    expect(calls).toHaveLength(1);
+    expect(expired).toHaveBeenCalledTimes(code === 'SIGN_IN_REQUIRED' ? 1 : 0);
+  } finally {
+    window.removeEventListener('corner:session-expired', expired);
+  }
+});
+
 test.each(['stale', 'failed'] as const)('reconnect refreshes %s workspace resources but not provider connections', async (initial) => {
   let revision = 1;
   let fail = initial === 'failed';

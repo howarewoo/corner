@@ -51,6 +51,38 @@ test('deep-link sign-in survives logout and a different account cannot see priva
 test.describe('account session handoff', () => {
   test.use({ serviceWorkers: 'block' });
 
+  test('dashboard refresh recovers account-service failures without another sign-in', async ({
+    page, account,
+  }, testInfo) => {
+    await page.setViewportSize({ width: testInfo.project.name === 'webkit-phone' ? 320 : 1280, height: 844 });
+    await signIn(page, account);
+    await expect(page.getByRole('button', { name: 'Add food', exact: true })).toBeVisible();
+    const attempts = new Map<string, number>();
+    const transientPaths = ['/api/rpc/workspace/get', '/api/rpc/workspace/foodWindow'];
+    await page.route('**/api/rpc/workspace/*', (route) => {
+      const path = new URL(route.request().url()).pathname;
+      if (!transientPaths.includes(path)) return route.continue();
+      const attempt = (attempts.get(path) ?? 0) + 1;
+      attempts.set(path, attempt);
+      if (attempt > 2) return route.continue();
+      return route.fulfill({ status: 503, json: { json: {
+        defined: true, code: 'CORNER_ERROR', status: 503,
+        message: 'The account service is temporarily unavailable. Try again later.',
+        data: { code: 'ACCOUNT_SERVICE_UNAVAILABLE' },
+      } } });
+    });
+    const session = page.waitForResponse('**/api/rpc/account/session');
+    const failures = transientPaths.map((path) => page.waitForResponse((response) =>
+      new URL(response.url()).pathname === path && response.status() === 503));
+    await page.reload();
+    expect((await session).status()).toBe(200);
+    await Promise.all(failures);
+    await expect(page.getByRole('button', { name: 'Add food', exact: true })).toBeVisible();
+    for (const path of transientPaths) expect(attempts.get(path)).toBeGreaterThanOrEqual(3);
+    await expect(page.getByLabel('Email', { exact: true })).not.toBeVisible();
+    await expect(page.getByRole('button', { name: 'Retry', exact: true })).not.toBeVisible();
+  });
+
   test('a successful sign-in without a Corner session keeps the email and offers a retry', async ({
     page,
     account,
