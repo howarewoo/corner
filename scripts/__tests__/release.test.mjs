@@ -248,6 +248,13 @@ test('configuration excludes secrets and binds explicit public settings plus ope
     () => validateConfiguration(configuration.replace('corner.example.com', 'corner.workers.dev')),
     /custom-domain/,
   );
+  assert.throws(
+    () =>
+      validateConfiguration(
+        JSON.stringify({ ...JSON.parse(configuration), NEON_AUTH_REQUIRE_EMAIL_VERIFICATION: 'false' }),
+      ),
+    /Release requires/,
+  );
 });
 test('production rejects native Worker hosts and the obsolete staging release environment', () => {
   for (const origin of [

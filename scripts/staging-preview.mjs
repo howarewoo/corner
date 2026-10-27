@@ -28,8 +28,8 @@ export function previewConfiguration(raw, environment = process.env) {
     'Preview configuration must be an object',
   );
   need(
-    Object.keys(value).length === 2 && value.NEON_AUTH_REQUIRE_EMAIL_VERIFICATION === 'true',
-    'Preview requires only canonical origin and email verification',
+    Object.keys(value).length === 2 && value.NEON_AUTH_REQUIRE_EMAIL_VERIFICATION === 'false',
+    'Preview requires only canonical origin and disabled email verification',
   );
   const origin = new URL(value.CORNER_ORIGIN);
   need(

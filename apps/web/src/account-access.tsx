@@ -31,6 +31,8 @@ type Mode =
   | 'reset-invalid'
   | 'reset-complete';
 const emptyRoute: AccountRoute = { kind: 'default' };
+const verificationPolicyError =
+  'The account service requires email verification, but Corner has it disabled. Ask the person who manages Corner to align the email verification settings.';
 const invalidResetCodes = new Set([
   'INVALID_TOKEN',
   'TOKEN_EXPIRED',
@@ -248,8 +250,12 @@ export default function AccountAccess({
       if (!current(pending.id)) return;
       setEmail(submittedEmail);
       setPassword('');
-      if (signup && (policy.emailVerificationRequired || result.data?.token === null)) {
+      if (policy.emailVerificationRequired && (signup || result.data?.user?.emailVerified === false)) {
         show('verify');
+        return;
+      }
+      if (signup && result.data?.token === null) {
+        show('signin', 'Your account was created. Sign in to continue.');
         return;
       }
       await onSignedInRef.current();
@@ -260,7 +266,11 @@ export default function AccountAccess({
         (isAuthError(failure) && failure.code === 'email_not_confirmed')
       ) {
         setEmail(submittedEmail);
-        show('verify');
+        if (policy.emailVerificationRequired) show('verify');
+        else {
+          show('signin');
+          setError(verificationPolicyError);
+        }
       } else setError(readableError(failure));
     } finally {
       finish(pending.id);

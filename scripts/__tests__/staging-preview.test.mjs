@@ -22,7 +22,7 @@ function environment() {
     CORNER_STAGING_BINDINGS_REVISION: 'test-1',
     CORNER_STAGING_CONFIG_JSON: JSON.stringify({
       CORNER_ORIGIN: origin,
-      NEON_AUTH_REQUIRE_EMAIL_VERIFICATION: 'true',
+      NEON_AUTH_REQUIRE_EMAIL_VERIFICATION: 'false',
     }),
     CORNER_WORKER_SECRETS_JSON: JSON.stringify(secrets),
     DATABASE_URL: secrets.DATABASE_URL,
@@ -32,14 +32,17 @@ function environment() {
   };
 }
 
-test('Preview rejects production origins, extra runtime bindings, and disabled verification', () => {
+test('Preview rejects production origins, extra runtime bindings, and enabled or invalid verification', () => {
   const env = environment();
   for (const configuration of [
-    { CORNER_ORIGIN: 'https://corner.example.com', NEON_AUTH_REQUIRE_EMAIL_VERIFICATION: 'true' },
-    { CORNER_ORIGIN: origin, NEON_AUTH_REQUIRE_EMAIL_VERIFICATION: 'false' },
+    { CORNER_ORIGIN: 'https://corner.example.com', NEON_AUTH_REQUIRE_EMAIL_VERIFICATION: 'false' },
+    { CORNER_ORIGIN: origin },
+    { CORNER_ORIGIN: origin, NEON_AUTH_REQUIRE_EMAIL_VERIFICATION: 'true' },
+    { CORNER_ORIGIN: origin, NEON_AUTH_REQUIRE_EMAIL_VERIFICATION: false },
+    { CORNER_ORIGIN: origin, NEON_AUTH_REQUIRE_EMAIL_VERIFICATION: '0' },
     {
       CORNER_ORIGIN: origin,
-      NEON_AUTH_REQUIRE_EMAIL_VERIFICATION: 'true',
+      NEON_AUTH_REQUIRE_EMAIL_VERIFICATION: 'false',
       DATABASE_URL: 'private',
     },
   ])

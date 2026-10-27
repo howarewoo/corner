@@ -124,6 +124,42 @@ test('anonymous requests and forged Sites headers cannot authenticate or select 
   assert.equal(session.user.token, undefined);
 });
 
+test('unverified managed sign-in resolves only when application verification is disabled', async () => {
+  const requiredConfig = { ...config, neonAuthRequireEmailVerification: true };
+  const requiredApp = createApp({
+    config: requiredConfig,
+    auth: await createTestAuth(requiredConfig, db),
+    store,
+  });
+  const signIn = await requiredApp.request(config.origin + '/api/auth/sign-in/email', {
+    method: 'POST',
+    headers: { Origin: config.origin, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: 'alice@example.test', password }),
+  });
+  assert.equal(signIn.status, 200);
+  const payload = await readResponse(signIn);
+  assert.equal(payload.user.emailVerified, false);
+  assert.equal(payload.token, undefined);
+  const cookie = signIn.headers.getSetCookie().map((value) => value.split(';', 1)[0]).join('; ');
+  assert.match(cookie, /neon-auth.session_token=/);
+  const lookup = (path: string) => requiredApp.request(config.origin + path, {
+    method: 'POST',
+    headers: { Origin: config.origin, 'Content-Type': 'application/json', Cookie: cookie },
+    body: JSON.stringify({}),
+  });
+  const denied = await lookup('/api/rpc/account/session');
+  assert.equal(denied.status, 200);
+  assert.deepEqual(await readResponse(denied), { user: null });
+  await expectError(await lookup('/api/rpc/workspace/get'), 401, 'SIGN_IN_REQUIRED');
+
+  const allowed = await request('/api/rpc/account/session', { cookie });
+  assert.equal(allowed.status, 200);
+  assert.deepEqual(await readResponse(allowed), {
+    user: { id: alice.id, name: 'Alice', email: 'alice@example.test' },
+  });
+  assert.equal((await request('/api/rpc/workspace/get', { cookie })).status, 200);
+});
+
 test('new authenticated accounts are empty and OAuth callbacks receive the verified session', async () => {
   const state = await readResponse(
     await request('/api/rpc/workspace/get', { cookie: alice.cookie }),
