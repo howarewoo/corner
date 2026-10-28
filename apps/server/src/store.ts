@@ -221,6 +221,7 @@ export class WorkspaceStore {
     requestId: string,
     mutation: unknown,
     expectedRevision?: number,
+    name?: string,
   ): Promise<CommandResult> {
     return this.commit(
       userId,
@@ -235,6 +236,8 @@ export class WorkspaceStore {
           current.settings,
           position,
         ),
+      undefined,
+      name,
     );
   }
 
@@ -345,6 +348,7 @@ export class WorkspaceStore {
       position: () => number,
     ) => Promise<Settings>,
     onApplied?: (connection: Transaction) => Promise<void>,
+    name?: string,
   ): Promise<CommandResult> {
     userSchema.parse(userId);
     requestIdSchema.parse(requestId);
@@ -361,7 +365,7 @@ export class WorkspaceStore {
           )
           .limit(1)
       )[0];
-      const current = await this.metadata(connection, userId);
+      const current = await this.metadata(connection, userId, name);
       if (receipt) {
         if (receipt.payload_hash !== hash)
           throw new ApiError(
