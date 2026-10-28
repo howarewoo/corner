@@ -1,8 +1,6 @@
 import { z } from 'zod';
 import type {
   ExerciseHistoryEntry,
-  ExerciseTarget,
-  LoadType,
   TrainingCheckIn,
   TrainingMutation,
   TrainingState,

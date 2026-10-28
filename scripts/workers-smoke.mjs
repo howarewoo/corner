@@ -206,7 +206,15 @@ try {
         modules: true,
         modulesRoot: dirname(bundle),
         scriptPath: bundle,
-        bindings,
+        bindings: {
+          ...bindings,
+          ...(options['--previous-config'] && config === options['--previous-config']
+            ? {
+                BETTER_AUTH_SECRET: 'synthetic-workers-session-binding-secret-over-32-characters',
+                CORNER_TOKEN_ENCRYPTION_KEY: Buffer.alloc(32, 42).toString('base64'),
+              }
+            : {}),
+        },
         outboundService: async (request) => {
           if (forbidOutbound)
             assert.fail(`Maintenance Worker must not make outbound DB/Auth requests (${request.url}).`);

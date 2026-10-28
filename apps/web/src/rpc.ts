@@ -5,7 +5,6 @@ import { QueryClient, replaceEqualDeep, useQuery } from '@tanstack/react-query';
 import type { ApiClient } from '@packages/api/contract';
 import { RPC_PREFIX } from '@packages/api/protocol';
 import type { WorkspaceMutationInput } from '@packages/api/schemas';
-import type { Bootstrap } from '@packages/api/workspace-data';
 
 const ACCOUNT_READ_RETRIES = 2;
 const ACCOUNT_READ_RETRY_DELAY_MS = 500;

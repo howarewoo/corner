@@ -17,7 +17,6 @@ import {
   ToggleGroup,
   ToggleGroupItem,
   useSidebar,
-  WorkspaceHeader,
   WorkspaceMobileBar,
   type MobileNavigation,
 } from '@packages/ui';
