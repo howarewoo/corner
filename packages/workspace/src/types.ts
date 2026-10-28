@@ -46,9 +46,7 @@ export type Mutation =
         | 'log.save'
         | 'log.delete'
         | 'settings.save'
-        | 'grocery.check'
-        | 'request.save'
-        | 'request.fulfill';
+        | 'grocery.check';
       data: any;
     }
   | TrainingMutation;

@@ -1,15 +1,11 @@
 import { oc, type, type ContractRouterClient } from '@orpc/contract';
 import { z } from 'zod';
 import { AgentRequestSchema, type AgentRun } from '@packages/agent/proposals';
-import { RecipeSchema } from '@packages/nutrition/schemas';
-import { FoodEstimateResultSchema } from '@packages/nutrition/food-estimate';
 import type { AppState } from '@packages/workspace/types';
 import {
   applyInputSchema,
-  FoodInputSchema,
   importInputSchema,
   importPreviewInputSchema,
-  RecipeInputSchema,
   runInputSchema,
   type WorkspaceMutationInput,
 } from './schemas.js';
@@ -119,12 +115,6 @@ export const contract = {
     setModel: base
       .input(z.object({ model: z.string().min(1).max(160) }).strict())
       .output(type<Connection>()),
-    generateRecipe: draft
-      .input(RecipeInputSchema)
-      .output(z.object({ recipe: z.unknown().pipe(RecipeSchema), draft: z.literal(true) })),
-    estimateFood: draft
-      .input(FoodInputSchema)
-      .output(z.object({ estimate: z.unknown().pipe(FoodEstimateResultSchema) })),
   },
   agent: {
     list: base.input(empty).output(type<{ runs: AgentRun[] }>()),

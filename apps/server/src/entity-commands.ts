@@ -7,12 +7,7 @@ import { prepareTrainingCommand } from '@packages/training/workouts';
 import type { TrainingMutation } from '@packages/training/types';
 import type { Transaction } from './queries.js';
 import * as tables from './schema.js';
-import {
-  recipeRequestRecord,
-  savePlan,
-  saveRecipe,
-  saveRecipeRequest,
-} from './nutrition-records.js';
+import { savePlan, saveRecipe } from './nutrition-records.js';
 import { saveFoodRecord } from './food-records.js';
 import {
   reviewRecord,
@@ -163,33 +158,6 @@ export async function executeEntityCommand(
             ),
           );
       break;
-    case 'request.save':
-      if (mutation.data.status !== 'pending') throw new Error('New recipe briefs must be pending.');
-      await saveRecipeRequest(connection, userId, mutation.data, allocatePosition());
-      break;
-    case 'request.fulfill': {
-      const row = (
-        await connection
-          .select()
-          .from(tables.recipeRequests)
-          .where(
-            and(
-              eq(tables.recipeRequests.user_id, userId),
-              eq(tables.recipeRequests.id, mutation.data.id),
-            ),
-          )
-          .limit(1)
-      )[0];
-      if (!row) throw new Error('That recipe brief no longer exists.');
-      await saveRecipe(connection, userId, mutation.data.recipe, allocatePosition());
-      await saveRecipeRequest(
-        connection,
-        userId,
-        { ...recipeRequestRecord(row), status: 'fulfilled', recipeId: mutation.data.recipe.id },
-        allocatePosition(),
-      );
-      break;
-    }
     default:
       await executeTrainingCommand(connection, userId, mutation, settings, allocatePosition);
   }

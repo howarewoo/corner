@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { afterEach, beforeEach, test } from 'node:test';
 import type { Pool } from 'pg';
 import { sql } from 'drizzle-orm';
@@ -80,6 +81,68 @@ test('mutations and receipts are isolated by owner and transport retries do not 
       }),
     code('REQUEST_ID_REUSED'),
   );
+});
+
+test('archived recipe ideas roundtrip but retired commands cannot replay retained receipts', async () => {
+  const state = createInitialState();
+  state.recipes = [recipe()];
+  state.requests = [
+    {
+      id: 'historical-idea',
+      prompt: 'A quick breakfast',
+      calories: 400,
+      protein: 30,
+      maxMinutes: 15,
+      status: 'pending',
+      createdAt: '2026-10-22T12:00:00.000Z',
+    },
+    {
+      id: 'fulfilled-idea',
+      prompt: 'Yogurt and oats',
+      calories: 320,
+      protein: 25,
+      maxMinutes: 5,
+      status: 'fulfilled',
+      recipeId: 'recipe-a',
+      createdAt: '2026-10-22T12:00:00.000Z',
+    },
+  ];
+  await store.replaceImport('user-a', 'archive-import-123', state, 0);
+  const before = await store.exportSnapshot('user-a');
+  await store.replaceImport('user-b', 'archive-copy-123', before.state, 0);
+  assert.deepEqual((await store.exportSnapshot('user-b')).state, before.state);
+  const commands = [
+    { type: 'request.save', data: state.requests[0] },
+    { type: 'request.fulfill', data: { id: 'historical-idea', recipe: recipe() } },
+  ];
+  for (const [index, mutation] of commands.entries()) {
+    const requestId = `retired-command-${index}`;
+    await assert.rejects(store.mutate('user-a', requestId, mutation));
+    const payload = { kind: 'mutation', mutation, expectedRevision: undefined };
+    // Match the historical canonical fingerprint, including undefined revision as null.
+    const canonical = (value: unknown): string => {
+      if (value === undefined || value === null) return 'null';
+      if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
+      if (typeof value !== 'object') return JSON.stringify(value);
+      const record = value as Record<string, unknown>;
+      return `{${Object.keys(record)
+        .sort()
+        .map((key) => `${JSON.stringify(key)}:${canonical(record[key])}`)
+        .join(',')}}`;
+    };
+    await database.query(
+      'INSERT INTO mutation_receipts(user_id, request_id, payload_hash, revision, created_at) VALUES ($1,$2,$3,$4,$5)',
+      [
+        'user-a',
+        requestId,
+        createHash('sha256').update(canonical(payload)).digest('hex'),
+        before.revision,
+        new Date().toISOString(),
+      ],
+    );
+    await assert.rejects(store.mutate('user-a', requestId, mutation));
+    assert.deepEqual(await store.exportSnapshot('user-a'), before);
+  }
 });
 
 test('explicit revision conflicts and invalid batch members leave the whole transaction untouched', async () => {

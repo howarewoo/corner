@@ -150,7 +150,7 @@ export default function MealPlanner({
         <div className="onboarding-nudge">
           <div>
             <h3>Your first recipe starts the plan.</h3>
-            <p>Add a favorite manually, or create one with your connected agent.</p>
+            <p>Add a favorite to your collection, then choose it for a meal.</p>
           </div>
           <Button
             variant="outline"

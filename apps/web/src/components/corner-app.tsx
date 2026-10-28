@@ -26,8 +26,6 @@ import TrainingPanel from './training-panel';
 import Today from '../features/today/today';
 import MealPlanner from '../features/meal-planner/meal-planner';
 import RecipeCollection, { useRecipeFilters } from '../features/recipes/recipe-collection';
-import RecipeStudio from '../features/recipe-studio/recipe-studio';
-import { useRecipeStudio } from '../features/recipe-studio/use-recipe-studio';
 import Groceries from '../features/groceries/groceries';
 import Settings from '../features/settings/settings';
 import WorkspaceOverlays from '../features/workspace/workspace-overlays';
@@ -36,8 +34,6 @@ import { isNutritionView, sidebarGroups, viewPaths } from '../features/workspace
 import type { Confirmation, CornerAppProps, Overlay, View } from '../features/workspace/types';
 import { useTheme } from '../theme';
 import './training.css';
-import './food-estimator.css';
-import './food-entry.css';
 
 export default function CornerApp(props: CornerAppProps) {
   const routes = useRoutes([
@@ -66,9 +62,9 @@ function CornerWorkspace({
 }: CornerAppProps & { view: View }) {
   const { isMobile } = useSidebar();
   const theme = useTheme();
-  const [lastNutritionView, setLastNutritionView] = useState<
-    'planner' | 'recipes' | 'groceries' | 'studio'
-  >(isNutritionView(view) ? view : 'planner');
+  const [lastNutritionView, setLastNutritionView] = useState<'planner' | 'recipes' | 'groceries'>(
+    isNutritionView(view) ? view : 'planner',
+  );
   const workspaceContent = useRef<HTMLDivElement>(null);
   const routerNavigate = useNavigate();
   const location = useLocation();
@@ -84,22 +80,14 @@ function CornerWorkspace({
     revision,
     busy,
     disabled,
-    aiAvailable,
     notifications,
     notify,
     readState,
     mutate,
     copyText,
   } = useWorkspaceState({ initialState, initialSettings, initialRevision, preview });
-  // These hooks stay mounted with the workspace so drafts and filters survive navigation.
+  // Collection filters stay mounted with the workspace across navigation.
   const recipeFilters = useRecipeFilters();
-  const studio = useRecipeStudio({
-    initialSettings: initialSettings ?? initialState!.settings,
-    settings,
-    aiAvailable,
-    mutate,
-    notify,
-  });
   useEffect(() => {
     if (isNutritionView(view)) setLastNutritionView(view);
     setOverlay(null);
@@ -119,7 +107,6 @@ function CornerWorkspace({
   const saveRecipe = async (recipe: Recipe) => {
     if (await mutate({ type: 'recipe.save', data: recipe }, 'Recipe saved to your collection')) {
       setOverlay(null);
-      studio.clearGenerated();
     }
   };
   const mobileNavigation = useMemo<MobileNavigation<View>>(
@@ -232,7 +219,6 @@ function CornerWorkspace({
                     <ToggleGroupItem value="planner">Meal planner</ToggleGroupItem>
                     <ToggleGroupItem value="recipes">Recipes</ToggleGroupItem>
                     <ToggleGroupItem value="groceries">Grocery list</ToggleGroupItem>
-                    <ToggleGroupItem value="studio">Recipe studio</ToggleGroupItem>
                   </ToggleGroup>
                 </div>
               )}
@@ -302,7 +288,6 @@ function CornerWorkspace({
                 <RecipeCollection
                   state={state}
                   disabled={disabled}
-                  navigate={navigate}
                   setOverlay={setOverlay}
                   openRecipe={openRecipe}
                   mutate={mutate}
@@ -318,21 +303,6 @@ function CornerWorkspace({
                   disabled={disabled}
                   navigate={navigate}
                   mutate={mutate}
-                  copyText={copyText}
-                />
-              )}
-
-              {view === 'studio' && (
-                <RecipeStudio
-                  state={state}
-                  settings={settings}
-                  aiAvailable={aiAvailable}
-                  disabled={disabled}
-                  studio={studio}
-                  navigate={navigate}
-                  openAgent={openAgent}
-                  openRecipe={openRecipe}
-                  saveRecipe={saveRecipe}
                   copyText={copyText}
                 />
               )}
@@ -360,7 +330,6 @@ function CornerWorkspace({
           selectedDate={selectedDate}
           disabled={disabled}
           busy={busy}
-          aiAvailable={aiAvailable}
           overlay={overlay}
           setOverlay={setOverlay}
           confirmation={confirmation}

@@ -34,8 +34,9 @@ Corner does not read ChatGPT conversations, memories, an original Corner Site, o
 - Workout plans, reusable routines, editable set targets and actual results, check-ins, progress views, and an attributed exercise catalog.
 - Managed accounts, verification-code entry, and password recovery. Neon owns delivery; production requires custom SMTP and matching verification policy.
 - Previewed imports into empty workspaces, workspace JSON export, and individual recipe text downloads. Workspace exports exclude credentials and separate agent request history; they are not complete installation backups.
-- Optional local ChatGPT authorization for planning, recipe drafts, and food estimates. Model access depends on the connected account. Drafts and estimates require user review before saving.
+- Optional local ChatGPT authorization for planning and Training Coach. Model access depends on the connected account. Planning proposals may include recipes and require review before application; dedicated Recipe studio and Describe food inputs are retired.
 - AI proposals can change plans and targets only after explicit approval. They cannot invent food eaten, measurements, or completed training, or overwrite started or recorded workouts. Applying a stale proposal is rejected.
+- Manual recipe creation/editing and direct food logging remain available. Historical recipe requests survive supported workspace import/export as archive data, without an idea-saving or request-fulfillment workflow.
 
 The Node runtime remains one Corner process, backed by Neon Postgres; its agent tasks still run in memory. The hosted-only Cloudflare Workers runtime supports manual tools and persisted history without starting inference or running process-wide recovery. Hosted mode has no enabled AI connection or alternate inference provider on either platform.
 

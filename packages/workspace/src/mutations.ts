@@ -4,7 +4,6 @@ import {
   FoodEntrySchema,
   MacrosSchema,
   PlanEntrySchema,
-  RecipeRequestSchema,
   RecipeSchema,
 } from '@packages/nutrition/schemas';
 import { mondayOf, weekDates } from '@packages/nutrition/dates';
@@ -89,8 +88,6 @@ export const MutationSchema = z.discriminatedUnion('type', [
       checked: z.boolean(),
     }),
   }),
-  z.object({ type: z.literal('request.save'), data: RecipeRequestSchema }),
-  z.object({ type: z.literal('request.fulfill'), data: z.object({ id, recipe: RecipeSchema }) }),
   ...TrainingMutationOptions,
 ]);
 function upsert<T extends { id: string }>(items: T[], item: T): T[] {
@@ -217,20 +214,6 @@ export function applyMutation(previous: AppState, input: Mutation): AppState {
     case 'grocery.check':
       if (mutation.data.checked) next.groceryChecks[mutation.data.key] = true;
       else delete next.groceryChecks[mutation.data.key];
-      break;
-    case 'request.save':
-      if (mutation.data.status !== 'pending') throw new Error('New recipe briefs must be pending.');
-      next.requests = upsert(next.requests, mutation.data);
-      break;
-    case 'request.fulfill':
-      if (!next.requests.some((request) => request.id === mutation.data.id))
-        throw new Error('That recipe brief no longer exists.');
-      next.recipes = upsert(next.recipes, mutation.data.recipe);
-      next.requests = next.requests.map((request) =>
-        request.id === mutation.data.id
-          ? { ...request, status: 'fulfilled', recipeId: mutation.data.recipe.id }
-          : request,
-      );
       break;
     case 'training.session.save':
     case 'training.session.delete':

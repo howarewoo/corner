@@ -117,7 +117,7 @@ Shared React controls live in `packages/ui`, exposed as `@packages/ui`. They ada
 
 Use the live specimens and their source as the implementation reference, without generated usage documentation, snippets/copy controls, or Autodocs. The [catalog coverage record](apps/design/README.md) preserves the exhaustive existing Corner inventory: 67 upstream entries sourced on 2026-10-23 plus Colors and Spacing, totaling 69 indexed stories. This is a tooling migration, not a new audit of today's upstream inventory. The record retains provenance, notices, theme contract, composition/API distinctions, limits, and source ownership.
 
-Product browser navigation uses [React Router](https://reactrouter.com/start/declarative/installation). Product pages have bookmarkable paths: `/` (Today), `/agent`, `/workouts`, `/planner`, `/recipes`, `/groceries`, `/studio`, and `/settings`. Back/forward navigation preserves the current workspace's local filters and selected date; a reload opens the requested page and reloads saved records. Sign-in gates access without dropping that path; no profile setup is required. Storybook replaces the custom React Router catalog shell: canonical catalog links use `?path=/story/<group-lowercase>--<id>`, such as `?path=/story/actions--button`; old `?component=button` links redirect.
+Product browser navigation uses [React Router](https://reactrouter.com/start/declarative/installation). Product pages have bookmarkable paths: `/` (Today), `/agent`, `/workouts`, `/planner`, `/recipes`, `/groceries`, and `/settings`. The retired `/studio` path follows the normal unknown-page redirect to `/`. Back/forward navigation preserves the current workspace's local filters and selected date; a reload opens the requested page and reloads saved records. Sign-in gates access without dropping that path; no profile setup is required. Storybook replaces the custom React Router catalog shell: canonical catalog links use `?path=/story/<group-lowercase>--<id>`, such as `?path=/story/actions--button`; old `?component=button` links redirect.
 
 ### Docker option
 
@@ -165,11 +165,11 @@ Useful requests include:
 
 The agent uses your saved Corner profile, bounded recent records, and recent Corner agent exchanges. It has no shell, unrestricted browser, or access to another user's workspace. It can search the included exercise catalog and inspect your recipes, routines, and workouts. It cannot record meals eaten, body measurements, or completed workouts on your behalf as part of generating a plan.
 
-### Recipe and food assistance
+### Recipes and food logging
 
-**Recipe studio** creates a draft using the same connection. Review and save the recipe to add it to your collection. Nutrition and ingredient quantities describe one serving; planned servings multiply those values.
+Create and edit recipes directly in your collection. Nutrition and ingredient quantities describe one serving; planned servings multiply those values. **Add food** accepts manually entered food and nutrition values and saves only when you submit the editable form.
 
-In **Add food → Describe food**, enter food and quantity in ordinary language, such as “2 large boiled eggs and 200 g cooked rice.” If the identity, amount, or preparation is too ambiguous, the estimator asks for details. Accepting an estimate fills an editable food form; it does not save a food log until you choose to save it. Estimates remain approximate, especially without a package label.
+Recipe studio, including idea saving, and **Describe food** estimation are retired. Historical recipe requests remain part of supported workspace imports and exports, not an active request-writing workflow. My agent can still propose recipes as part of a plan, and Training Coach remains available with the existing local connection.
 
 Workout targets and previous performance supply editable prefills. A proposed load is separate from an actual logged set. Dumbbell loads marked “per hand” are the weight of each dumbbell.
 
@@ -331,7 +331,7 @@ Old feature-preview provisioning workflows are removed. Never recreate removed l
 | ---------------------------- | ------------------------------------------------------------------------------------------------------------ |
 | `apps/web/src/`              | React account UI, profile/import settings, meal planner, recipes, workouts, and agent review                 |
 | `apps/server/src/`           | Managed Auth boundary, PostgreSQL persistence, oRPC procedures, model connection, and planning agent         |
-| `packages/nutrition/src/`    | Food and recipe types/schemas, meal calendar, macro/grocery calculations, and food estimates                 |
+| `packages/nutrition/src/`    | Food and recipe types/schemas, meal calendar, and macro/grocery calculations                                 |
 | `packages/training/src/`     | Workout types/rules, result prefill, exercise catalog, and provenance data                                   |
 | `packages/workspace/src/`    | Combined state/settings, validated mutation composition, training-aware nutrition targets, and initial state |
 | `packages/agent/src/`        | Planning proposal contracts, allowed changes, and proposal-to-mutation validation                            |

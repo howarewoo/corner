@@ -107,10 +107,6 @@ export function mutationFamilies(mutation: WorkspaceMutationInput['mutation']): 
       return ['groceries'];
     case 'settings.save':
       return ['workspace', 'nutrition', 'proposal'];
-    case 'request.save':
-      return ['recipeRequests'];
-    case 'request.fulfill':
-      return ['recipeRequests', 'recipes', 'details', 'nutrition', 'groceries', 'proposal'];
     case 'training.template.save':
       return ['templates', 'details', 'proposal'];
     case 'training.checkin.save':

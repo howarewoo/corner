@@ -5,10 +5,13 @@ test('manual food entries persist their servings and nutrition after reload with
   page,
   account,
 }) => {
-  await signIn(page, account);
+  await signIn(page, account, '/studio');
+  await expect(page).toHaveURL(/\/$/);
+  await expect(page.getByRole('button', { name: 'Recipe studio', exact: true })).toHaveCount(0);
   await page.getByRole('button', { name: 'Add food', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Add to your food log' });
   await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole('button', { name: 'Describe food', exact: true })).toHaveCount(0);
   await dialog.getByLabel('What did you eat?').fill('Synthetic oats');
   await dialog.getByLabel('Servings eaten').fill('2');
   await dialog.getByLabel('Calories (kcal)').fill('100');

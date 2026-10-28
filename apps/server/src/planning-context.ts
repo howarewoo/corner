@@ -56,27 +56,6 @@ export type PlanningSnapshot = {
   };
 };
 
-export type RecipeContext = {
-  revision: number;
-  settings: Settings;
-  existingRecipes: string[];
-};
-
-export async function recipeContext(db: Database, userId: string): Promise<RecipeContext> {
-  return consistentRead(db, userId, async (connection, revision) => ({
-    revision,
-    settings: await settings(connection, userId),
-    existingRecipes: (
-      await connection
-        .select({ name: tables.recipes.name })
-        .from(tables.recipes)
-        .where(eq(tables.recipes.user_id, userId))
-        .orderBy(asc(tables.recipes.position))
-        .limit(30)
-    ).map((recipe) => recipe.name),
-  }));
-}
-
 function shift(date: string, days: number) {
   const result = new Date(date + 'T12:00:00Z');
   result.setUTCDate(result.getUTCDate() + days);

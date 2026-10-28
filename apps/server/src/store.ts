@@ -222,19 +222,14 @@ export class WorkspaceStore {
     mutation: unknown,
     expectedRevision?: number,
   ): Promise<CommandResult> {
+    const parsed = MutationSchema.parse(mutation);
     return this.commit(
       userId,
       requestId,
       { kind: 'mutation', mutation, expectedRevision },
       expectedRevision,
       (connection, current, position) =>
-        executeEntityCommand(
-          connection,
-          userId,
-          MutationSchema.parse(mutation),
-          current.settings,
-          position,
-        ),
+        executeEntityCommand(connection, userId, parsed, current.settings, position),
     );
   }
 

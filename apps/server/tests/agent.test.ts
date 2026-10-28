@@ -1,7 +1,6 @@
 import { mock, test } from 'node:test';
 import assert from 'node:assert/strict';
-import type { Pool } from 'pg';
-import { testDatabase, closeTestDatabase, createTestAuth, neonTestConfig } from './helpers.ts';
+import { testDatabase, closeTestDatabase } from './helpers.ts';
 import { WorkspaceStore } from '../src/store.js';
 import { createQueries } from '../src/queries.js';
 import { recordPage } from '../src/workspace-queries.js';
@@ -442,62 +441,6 @@ test('a bad reference prevents the whole proposal from being applied', () => {
   if (meal.type === 'meal') meal.data.recipeId = 'missing-recipe';
   assert.throws(() => proposalMutations(state, result), /recipe/);
   assert.equal(state.recipes.length, 0);
-});
-
-test('food estimation can ask for details and never writes a food log', async () => {
-  let calls = 0;
-  const { db, store, agent } = await fixture(async (_user, input) => {
-    calls++;
-    assert.equal(input.tools?.[0].type, 'namespace');
-    return completed({
-      result: {
-        status: 'needs_details',
-        questions: ['How large was the bowl, and what ingredients were in it?'],
-      },
-    });
-  });
-  try {
-    const input = { requestId: 'food-one', description: 'A bowl of curry' };
-    const result = await agent.estimateFood('alice', input);
-    assert.equal((result.estimate as any).status, 'needs_details');
-    await agent.estimateFood('alice', input);
-    assert.equal(calls, 1);
-    assert.equal(
-      (await store.foodWindow('alice', { from: date, through: date })).entries.length,
-      0,
-    );
-  } finally {
-    await agent.close();
-    await closeTestDatabase(db);
-  }
-});
-
-test('recipe generation returns a draft tied to the requesting account and stays unsaved', async () => {
-  const { id, color, source, favorite, createdAt, ...draft } = recipe();
-  const { db, agent } = await fixture(async (user, input) => {
-    assert.equal(user, 'alice');
-    assert.ok(input.instructions.includes('ONE serving'));
-    return completed(draft);
-  });
-  try {
-    const result = await agent.generateRecipe('alice', {
-      requestId: 'recipe-one',
-      prompt: 'A quick yogurt breakfast.',
-      calories: 400,
-      protein: 25,
-      maxMinutes: 10,
-    });
-    assert.equal((result.recipe as Recipe).source, 'ai');
-    assert.equal(result.draft, true);
-    assert.equal(
-      (await recordPage(createQueries(db), 'alice', { resource: 'recipes', limit: 100 })).items
-        .length,
-      0,
-    );
-  } finally {
-    await agent.close();
-    await closeTestDatabase(db);
-  }
 });
 
 test('cancelled runs cannot complete later and another owner cannot cancel them', async () => {

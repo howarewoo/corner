@@ -9,7 +9,6 @@ export type View =
   | 'planner'
   | 'recipes'
   | 'groceries'
-  | 'studio'
   | 'settings';
 
 export type Overlay =

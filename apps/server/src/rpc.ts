@@ -231,20 +231,6 @@ export function createRPCHandler({ config, auth, store, aiAvailable, ai }: RPCSe
       setModel: api.ai.setModel.handler(async ({ input, context }) =>
         connectionDTO(await services().provider.setModel(principal(context).userId, input.model)),
       ),
-      generateRecipe: api.ai.generateRecipe.handler(async ({ input, context }) => {
-        const owner = principal(context);
-        const { agent } = services();
-        if (!(await agent.hasRequest(owner.userId, 'recipe', input))) await available(owner);
-        const result = await agent.generateRecipe(owner.userId, input);
-        return { recipe: result.recipe, draft: true as const };
-      }),
-      estimateFood: api.ai.estimateFood.handler(async ({ input, context }) => {
-        const owner = principal(context);
-        const { agent } = services();
-        if (!(await agent.hasRequest(owner.userId, 'food', input))) await available(owner);
-        const result = await agent.estimateFood(owner.userId, input);
-        return { estimate: result.estimate };
-      }),
     },
     agent: {
       list: api.agent.list.handler(async ({ context }) => ({

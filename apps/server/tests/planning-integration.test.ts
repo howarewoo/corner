@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { afterEach, beforeEach, describe, test } from 'node:test';
+import { createHash } from 'node:crypto';
 import type { Pool } from 'pg';
 import {
   testDatabase,
@@ -427,41 +428,79 @@ describe('authenticated planning routes with fake inference only', { concurrency
     },
   );
 
-  test('completed food, recipe, and planning requests replay after disconnect while new calls remain blocked', async () => {
-    const foodInput = { requestId: 'cached-food-123', description: '2 boiled eggs' };
-    const estimate = {
-      status: 'estimated',
-      name: 'Two eggs',
-      amountSummary: '2 large boiled eggs',
-      nutrition: { calories: 156, protein: 12.6, carbs: 1.2, fat: 10.6 },
-      assumptions: [],
-    };
-    answer = async () => completed({ result: estimate });
-    const food = await send('/api/rpc/ai/estimateFood', { cookie: alice.cookie, body: foodInput });
-    assert.equal(food.status, 200);
-    const expectedFood = await readResponse(food);
-    const {
-      id: _id,
-      source: _source,
-      favorite: _favorite,
-      color: _color,
-      createdAt: _createdAt,
-      ...recipeDraft
-    } = recipe();
-    answer = async () => completed(recipeDraft);
-    const recipeInput = {
-      requestId: 'cached-recipe-123',
-      prompt: 'A quick yogurt breakfast.',
-      calories: 350,
-      protein: 25,
-      maxMinutes: 15,
-    };
-    const generated = await send('/api/rpc/ai/generateRecipe', {
-      cookie: alice.cookie,
-      body: recipeInput,
-    });
-    assert.equal(generated.status, 200);
-    const expectedRecipe = await readResponse(generated);
+  test('retired dedicated draft endpoints reject fresh and retained retries without inference or workspace changes', async () => {
+    const before = await store.exportSnapshot(alice.id);
+    for (const connectedState of [true, false]) {
+      connected = connectedState;
+      for (const [endpoint, body] of [
+        ['estimateFood', { requestId: 'retired-food-123', description: '2 boiled eggs' }],
+        [
+          'generateRecipe',
+          {
+            requestId: 'retired-recipe-123',
+            prompt: 'A quick yogurt breakfast.',
+            calories: 350,
+            protein: 25,
+            maxMinutes: 15,
+          },
+        ],
+      ] as const) {
+        await error(
+          await send(`/api/rpc/ai/${endpoint}`, { cookie: alice.cookie, body }),
+          404,
+          'NOT_FOUND',
+        );
+        const { requestId, ...payload } = body;
+        const kind = endpoint === 'estimateFood' ? 'food' : 'recipe';
+        await db.query(
+          `INSERT INTO corner_ai_runs
+            (id, user_id, request_id, payload_hash, kind, status, prompt, reference_date,
+             base_revision, result, created_at, updated_at)
+           VALUES ($1, $2, $3, $4, $5, 'completed', $6, $7, 0, $8, $9, $9)
+           ON CONFLICT (id) DO NOTHING`,
+          [
+            `archived-${kind}`,
+            alice.id,
+            requestId,
+            createHash('sha256').update(JSON.stringify(payload)).digest('hex'),
+            kind,
+            'Retained draft request',
+            date,
+            JSON.stringify(
+              kind === 'recipe'
+                ? recipe()
+                : {
+                    status: 'needs_details',
+                    questions: ['How large was the portion?'],
+                  },
+            ),
+            timestamp,
+          ],
+        );
+        const retained = (
+          await db.query('SELECT * FROM corner_ai_runs WHERE id = $1', [`archived-${kind}`])
+        ).rows;
+        await error(
+          await send(`/api/rpc/ai/${endpoint}`, { cookie: alice.cookie, body }),
+          404,
+          'NOT_FOUND',
+        );
+        assert.deepEqual(
+          (await db.query('SELECT * FROM corner_ai_runs WHERE id = $1', [`archived-${kind}`])).rows,
+          retained,
+        );
+      }
+    }
+    assert.equal(calls.length, 0);
+    assert.deepEqual(await store.exportSnapshot(alice.id), before);
+    assert.equal(
+      (await db.query('SELECT COUNT(*) AS n FROM corner_ai_runs WHERE user_id = $1', [alice.id]))
+        .rows[0]?.n,
+      2,
+    );
+  });
+
+  test('completed planning requests replay after disconnect while new calls remain blocked', async () => {
     answer = async () => completed(clarification);
     const planInput = {
       requestId: 'cached-plan-123',
@@ -472,39 +511,11 @@ describe('authenticated planning routes with fake inference only', { concurrency
     const run = (await readResponse(plan)).run;
     await agent.settled(run.id);
     connected = false;
-    const cachedFood = await send('/api/rpc/ai/estimateFood', {
-      cookie: alice.cookie,
-      body: foodInput,
-    });
-    assert.equal(cachedFood.status, 200);
-    assert.deepEqual(await readResponse(cachedFood), expectedFood);
-    const cachedRecipe = await send('/api/rpc/ai/generateRecipe', {
-      cookie: alice.cookie,
-      body: recipeInput,
-    });
-    assert.equal(cachedRecipe.status, 200);
-    assert.deepEqual(await readResponse(cachedRecipe), expectedRecipe);
     const cachedPlan = await send('/api/rpc/agent/start', {
       cookie: alice.cookie,
       body: planInput,
     });
     assert.equal((await readResponse(cachedPlan)).run.id, run.id);
-    await error(
-      await send('/api/rpc/ai/estimateFood', {
-        cookie: alice.cookie,
-        body: { ...foodInput, description: '3 boiled eggs' },
-      }),
-      409,
-      'REQUEST_ID_REUSED',
-    );
-    await error(
-      await send('/api/rpc/ai/generateRecipe', {
-        cookie: alice.cookie,
-        body: { ...recipeInput, requestId: 'fresh-recipe-123' },
-      }),
-      503,
-      'AI_CONNECTION_REQUIRED',
-    );
     await error(
       await send('/api/rpc/agent/start', {
         cookie: alice.cookie,
@@ -513,19 +524,11 @@ describe('authenticated planning routes with fake inference only', { concurrency
       503,
       'AI_CONNECTION_REQUIRED',
     );
-    await error(
-      await send('/api/rpc/ai/estimateFood', {
-        cookie: alice.cookie,
-        body: { ...foodInput, requestId: 'fresh-food-123' },
-      }),
-      503,
-      'AI_CONNECTION_REQUIRED',
-    );
-    assert.equal(calls.length, 3);
+    assert.equal(calls.length, 1);
     assert.equal(
       (await db.query('SELECT COUNT(*) AS n FROM corner_ai_runs WHERE user_id = $1', [alice.id]))
         .rows[0]?.n,
-      3,
+      1,
     );
   });
 

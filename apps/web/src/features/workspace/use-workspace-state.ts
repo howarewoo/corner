@@ -38,7 +38,6 @@ export function useWorkspaceState({
   const loading = !preview && workspace.isFetching;
   const hydrated = preview || Boolean(workspace.data);
   const loadError = preview ? null : (workspace.error?.message ?? null);
-  const aiAvailable = !preview && Boolean(workspace.data?.aiAvailable);
   const mutationLock = useRef(false);
   const notify = useCallback(
     (message: string, error = false) => {
@@ -138,7 +137,6 @@ export function useWorkspaceState({
     revision,
     busy,
     disabled,
-    aiAvailable,
     notifications,
     notify,
     readState,

@@ -15,11 +15,10 @@ export const viewPaths: Record<View, string> = {
   planner: '/planner',
   recipes: '/recipes',
   groceries: '/groceries',
-  studio: '/studio',
   settings: '/settings',
 };
-export const isNutritionView = (v: View): v is 'planner' | 'recipes' | 'groceries' | 'studio' =>
-  v === 'planner' || v === 'recipes' || v === 'groceries' || v === 'studio';
+export const isNutritionView = (v: View): v is 'planner' | 'recipes' | 'groceries' =>
+  v === 'planner' || v === 'recipes' || v === 'groceries';
 export const sidebarGroups = [
   {
     items: [
@@ -57,12 +56,6 @@ export const sidebarGroups = [
         label: 'Grocery list',
         href: viewPaths.groceries,
         icon: <ShoppingBasket size={18} strokeWidth={1.8} />,
-      },
-      {
-        id: 'studio' as const,
-        label: 'Recipe studio',
-        href: viewPaths.studio,
-        icon: <UtensilsCrossed size={18} strokeWidth={1.8} />,
       },
     ],
   },

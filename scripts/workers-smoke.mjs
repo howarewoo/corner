@@ -625,18 +625,6 @@ try {
       },
       { type: 'grocery.check', data: { key: 'compatibility:rice', checked: true } },
       {
-        type: 'request.save',
-        data: {
-          id: 'compatibility-request',
-          prompt: 'Candidate-written dinner request',
-          calories: 600,
-          protein: 40,
-          maxMinutes: 30,
-          status: 'pending',
-          createdAt: '2026-10-23T12:00:00.000Z',
-        },
-      },
-      {
         type: 'training.checkin.save',
         data: {
           id: 'compatibility-checkin',

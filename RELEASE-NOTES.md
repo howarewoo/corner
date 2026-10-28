@@ -6,6 +6,8 @@ Corner has not been released. This is the current implementation baseline, not a
 
 ### Application and workspace
 
+- Retired Recipe studio, including manual idea saving, and Add food's Describe food estimator. `/studio` now follows the normal unknown-page redirect. Dedicated recipe-generation/food-estimation RPCs and studio request-writing commands are removed; manual recipe editing and food logging remain. Historical recipe requests remain portable through workspace import/export, not executable requests. My agent can still propose recipes; Training Coach and local ChatGPT connection/model controls remain. Earlier implementation and verification notes below describe their historical scope and do not establish verification of this retirement.
+
 - pnpm/Turborepo workspaces separate the Hono server, Vite/React product, backend-free design catalog, shared UI, domain rules, and browser-safe API contract.
 - Application calls use native oRPC at `/api/rpc` and TanStack Query browser server state. Managed Auth `/api/auth`, OAuth `/auth/callback`, and `GET /api/health` remain separate protocols.
 - Managed Neon Auth owns accounts, sessions, verification, and recovery delivery. Owner-scoped PostgreSQL workspaces retain recipes, meals, groceries, food logs, workouts, routines, targets, and progress records. Profile editing is optional; sign-in opens the requested workspace route without onboarding.
@@ -72,7 +74,7 @@ Corner has not been released. This is the current implementation baseline, not a
 ### AI and data safety
 
 - Local ChatGPT authorization remains optional and independent of Corner login. Tokens stay encrypted server-side; disconnect, refresh rotation, and session/generation checks remain protected.
-- AI produces reviewable proposals, recipe drafts, and editable food estimates. Explicit approval is required to apply planning changes; stale proposals and edits to protected recorded workouts are rejected. AI cannot record food eaten, measurements, or completed training on the user's behalf.
+- AI produces reviewable planning proposals, which may include recipes. Explicit approval is required to apply planning changes; stale proposals and edits to protected recorded workouts are rejected. AI cannot record food eaten, measurements, or completed training on the user's behalf.
 - Hosted ChatGPT access remains disabled pending an approved integration and live qualification. Local grants must not be repurposed for public hosting; no separately billed fallback is enabled.
 - Preserve installation keys, private configuration, original SQLite backups, and independent production/staging backups. Database restore is a separate operator-controlled data-loss decision. Source cleanup does not authorize cloud/admin/data changes or retirement of provider resources.
 
