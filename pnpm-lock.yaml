@@ -41,6 +41,9 @@ importers:
       '@packages/ui':
         specifier: workspace:*
         version: link:../../packages/ui
+      '@tanstack/react-form':
+        specifier: 1.33.5
+        version: 1.33.5(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
       '@tanstack/react-table':
         specifier: 9.3.1
         version: 9.3.1(react-dom@19.2.6(react@19.2.6))(react@19.2.6)

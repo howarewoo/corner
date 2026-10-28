@@ -49,7 +49,7 @@ const entries = [
   ['drawer', 'Drawer', 'Overlays', 'Bring a complementary task in from the edge of the viewport.'],
   ['empty', 'Empty', 'Feedback', 'Explain an empty state and offer a useful next action.'],
   ['field', 'Field', 'Forms', 'Compose a label, control, description, and validation message.'],
-  ['form', 'Form', 'Forms', 'Combine shared fields with native form validation and submission.'],
+  ['form', 'Form', 'Forms', 'Compose TanStack Form state, shared fields, and native validation.'],
   [
     'hover-card',
     'Hover Card',
