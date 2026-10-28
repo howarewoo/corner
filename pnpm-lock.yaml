@@ -108,9 +108,6 @@ importers:
       '@orpc/standard-server-fetch':
         specifier: 1.16.1
         version: 1.16.1
-      '@packages/agent':
-        specifier: workspace:*
-        version: link:../../packages/agent
       '@packages/api':
         specifier: workspace:*
         version: link:../../packages/api
@@ -129,9 +126,6 @@ importers:
       hono:
         specifier: 4.13.13
         version: 4.13.13
-      jose:
-        specifier: 6.2.13
-        version: 6.2.13
       pg:
         specifier: ^8.23.1
         version: 8.23.1
@@ -172,12 +166,6 @@ importers:
       '@orpc/client':
         specifier: 1.16.1
         version: 1.16.1
-      '@orpc/tanstack-query':
-        specifier: 1.16.1
-        version: 1.16.1(@orpc/client@1.16.1)(@tanstack/query-core@5.104.5)
-      '@packages/agent':
-        specifier: workspace:*
-        version: link:../../packages/agent
       '@packages/api':
         specifier: workspace:*
         version: link:../../packages/api
@@ -261,36 +249,11 @@ importers:
         specifier: 4.153.0
         version: 4.153.0(@types/node@24.19.2)
 
-  packages/agent:
-    dependencies:
-      '@packages/nutrition':
-        specifier: workspace:*
-        version: link:../nutrition
-      '@packages/training':
-        specifier: workspace:*
-        version: link:../training
-      '@packages/workspace':
-        specifier: workspace:*
-        version: link:../workspace
-      zod:
-        specifier: 4.6.7
-        version: 4.6.7
-    devDependencies:
-      '@types/node':
-        specifier: 24.19.2
-        version: 24.19.2
-      typescript:
-        specifier: 5.9.3
-        version: 5.9.3
-
   packages/api:
     dependencies:
       '@orpc/contract':
         specifier: 1.16.1
         version: 1.16.1
-      '@packages/agent':
-        specifier: workspace:*
-        version: link:../agent
       '@packages/nutrition':
         specifier: workspace:*
         version: link:../nutrition
@@ -1750,12 +1713,6 @@ packages:
 
   '@orpc/standard-server@1.16.1':
     resolution: {integrity: sha512-f8Ejzey83F/EXA1kugCyuPcE0TFJyUtxopEZ3vr/aqAOFdr45tIFlQl/v1VkpZAKmt3RP9KiAZGyesv5rhJltA==}
-
-  '@orpc/tanstack-query@1.16.1':
-    resolution: {integrity: sha512-fMl+DVGqCwxqg4U1WBt6EtdVNhZ4ODQlNBaTSiCCIBcAaePJZD1pBDTJ1epMJ67zG62KHEH10frKuLIwBMngjQ==}
-    peerDependencies:
-      '@orpc/client': 1.16.1
-      '@tanstack/query-core': '>=5.80.2'
 
   '@oxc-parser/binding-android-arm-eabi@0.127.0':
     resolution: {integrity: sha512-0LC7ye4hvqbIKxAzThzvswgHLFu2AURKzYLeSVvLdu2TBOYWQDmHnTqPLeA597BcUCxiLqLsS4CJ5uoI5WYWCQ==}
@@ -7530,14 +7487,6 @@ snapshots:
   '@orpc/standard-server@1.16.1':
     dependencies:
       '@orpc/shared': 1.16.1
-    transitivePeerDependencies:
-      - '@opentelemetry/api'
-
-  '@orpc/tanstack-query@1.16.1(@orpc/client@1.16.1)(@tanstack/query-core@5.104.5)':
-    dependencies:
-      '@orpc/client': 1.16.1
-      '@orpc/shared': 1.16.1
-      '@tanstack/query-core': 5.104.5
     transitivePeerDependencies:
       - '@opentelemetry/api'
 

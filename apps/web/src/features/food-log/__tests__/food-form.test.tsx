@@ -3,45 +3,32 @@ import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, test, vi } from 'vitest';
 import type { FoodEntry } from '@packages/nutrition/types';
-import type { EstimatedFood } from '@packages/nutrition/food-estimate';
 import FoodForm from '../food-form';
-
-vi.mock('../../../components/food-estimator', () => ({
-  default: ({ onApply }: { onApply: (estimate: EstimatedFood) => void }) => (
-    <button
-      type="button"
-      onClick={() =>
-        onApply({
-          status: 'estimated',
-          name: 'Estimated oats',
-          amountSummary: 'one bowl',
-          nutrition: { calories: 100, protein: 10, carbs: 12, fat: 0 },
-          assumptions: [],
-        })
-      }
-    >
-      Apply synthetic estimate
-    </button>
-  ),
-}));
 
 afterEach(cleanup);
 
-test('estimate application only populates review, preserves date, scales portions and awaits saving', async () => {
+test('manual entry preserves edited values and date, scales servings and awaits saving', async () => {
   const user = userEvent.setup();
   const { promise, reject } = Promise.withResolvers<void>();
   const save = vi.fn((_value: FoodEntry) => promise);
-  render(<FoodForm date="2026-10-24" busy={false} aiAvailable onClose={() => {}} onSave={save} />);
-  await user.click(screen.getByText('Enter manually'));
+  render(<FoodForm date="2026-10-24" busy={false} onClose={() => {}} onSave={save} />);
+  await user.type(screen.getByRole('textbox', { name: 'What did you eat?' }), 'Oats');
+  for (const [name, value] of [
+    ['Calories', '100'],
+    ['Protein', '10'],
+    ['Carbs', '12'],
+  ] as const) {
+    const input = screen.getByRole('spinbutton', { name: new RegExp(name, 'i') });
+    await user.clear(input);
+    await user.type(input, value);
+  }
   const date = screen.getByLabelText('Date');
   await user.clear(date);
   await user.type(date, '2026-10-25');
-  await user.click(screen.getByText('Describe food'));
-  await user.click(screen.getByRole('button', { name: 'Apply synthetic estimate' }));
   expect(save).not.toHaveBeenCalled();
-  expect(screen.getByRole('textbox', { name: 'What did you eat?' })).toHaveValue('Estimated oats');
+  expect(screen.getByRole('textbox', { name: 'What did you eat?' })).toHaveValue('Oats');
   expect(screen.getByLabelText('Date')).toHaveValue('2026-10-25');
-  const portions = screen.getByRole('spinbutton', { name: /^Portions eaten/ });
+  const portions = screen.getByRole('spinbutton', { name: 'Servings eaten' });
   expect(portions).toHaveValue(1);
   await user.clear(portions);
   await user.type(portions, '2');
@@ -50,7 +37,7 @@ test('estimate application only populates review, preserves date, scales portion
   await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
   expect(submit).toBeDisabled();
   expect(save.mock.calls[0]?.[0]).toMatchObject({
-    name: 'Estimated oats',
+    name: 'Oats',
     date: '2026-10-25',
     servings: 2,
     nutrition: { calories: 100, protein: 10, carbs: 12, fat: 0 },
@@ -58,5 +45,8 @@ test('estimate application only populates review, preserves date, scales portion
   await act(async () => reject(new Error('Food save failed')));
   expect(await screen.findByText('Food save failed')).toBeVisible();
   expect(portions).toHaveValue(2);
+  expect(screen.getByRole('textbox', { name: 'What did you eat?' })).toHaveValue('Oats');
+  expect(screen.getByLabelText('Date')).toHaveValue('2026-10-25');
+  expect(screen.getByRole('spinbutton', { name: /Calories/i })).toHaveValue(100);
   expect(submit).toBeEnabled();
 });

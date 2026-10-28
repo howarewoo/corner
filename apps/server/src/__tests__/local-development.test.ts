@@ -22,8 +22,6 @@ const config: Config = {
   deployment: 'local',
   dataDir: '/unused',
   neonAuthBaseUrl: authUrl,
-  authSecret: 'synthetic-local-fixture-test-secret-over-32-characters',
-  tokenEncryptionKey: Buffer.alloc(32, 11),
 };
 
 test('local seeding recovers lost signup/import acknowledgements and never overwrites later edits', async () => {
@@ -38,7 +36,12 @@ test('local seeding recovers lost signup/import acknowledgements and never overw
       local.initializeLocalDatabase(database, 'wrong-owner'),
       /identity does not match/,
     );
-    const options = local.localAuthOptions(database, authUrl, origin, config.authSecret);
+    const options = local.localAuthOptions(
+      database,
+      authUrl,
+      origin,
+      'synthetic-local-fixture-test-secret-over-32-characters',
+    );
     await (await getMigrations(options)).runMigrations();
     const managed = betterAuth(options);
     await managed.$context;

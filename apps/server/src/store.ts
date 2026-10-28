@@ -12,7 +12,7 @@ import {
 } from '@packages/nutrition/schemas';
 import { createInitialState } from '@packages/workspace/initial-state';
 import { createTrainingState, TrainingStateSchema } from '@packages/training/workouts';
-import type { AppState, Mutation } from '@packages/workspace/types';
+import type { AppState } from '@packages/workspace/types';
 import { ApiError } from './http.js';
 import { requestIdSchema, revisionSchema } from '@packages/api/schemas';
 import type { Settings } from '@packages/workspace/types';
@@ -222,47 +222,15 @@ export class WorkspaceStore {
     mutation: unknown,
     expectedRevision?: number,
   ): Promise<CommandResult> {
+    const parsed = MutationSchema.parse(mutation);
     return this.commit(
       userId,
       requestId,
       { kind: 'mutation', mutation, expectedRevision },
       expectedRevision,
       (connection, current, position) =>
-        executeEntityCommand(
-          connection,
-          userId,
-          MutationSchema.parse(mutation),
-          current.settings,
-          position,
-        ),
+        executeEntityCommand(connection, userId, parsed, current.settings, position),
     );
-  }
-
-  async applyBatch(
-    userId: string,
-    requestId: string,
-    mutations: Mutation[],
-    expectedRevision: number,
-    onApplied?: (connection: Transaction) => Promise<void>,
-  ): Promise<CommandResult> {
-    return this.commit(
-      userId,
-      requestId,
-      { kind: 'batch', mutations, expectedRevision },
-      expectedRevision,
-      async (connection, current, position) => {
-        const parsed = z.array(MutationSchema).min(1).max(200).parse(mutations);
-        let settings = current.settings;
-        for (const command of parsed)
-          settings = await executeEntityCommand(connection, userId, command, settings, position);
-        return settings;
-      },
-      onApplied,
-    );
-  }
-
-  inspectImport(rawState: unknown) {
-    return inspectImport(rawState);
   }
 
   async isEmpty(userId: string, connection: Database = this.db): Promise<boolean> {
@@ -344,7 +312,6 @@ export class WorkspaceStore {
       current: WorkspaceBootstrap,
       position: () => number,
     ) => Promise<Settings>,
-    onApplied?: (connection: Transaction) => Promise<void>,
   ): Promise<CommandResult> {
     userSchema.parse(userId);
     requestIdSchema.parse(requestId);
@@ -369,7 +336,6 @@ export class WorkspaceStore {
             'REQUEST_ID_REUSED',
             'This request identifier was already used for a different change.',
           );
-        await onApplied?.(connection);
         return { revision: current.revision };
       }
       if (expectedRevision !== undefined && current.revision !== expectedRevision)
@@ -448,7 +414,6 @@ export class WorkspaceStore {
             ),
           ),
         );
-      await onApplied?.(connection);
       return { revision };
     });
   }

@@ -22,8 +22,6 @@ const config: Config = {
   port: 3000,
   dataDir: '/tmp',
   deployment: 'local',
-  authSecret: 'synthetic-routing-secret-more-than-32-characters',
-  tokenEncryptionKey: Buffer.alloc(32, 7),
 };
 let db: Pool;
 let app: ReturnType<typeof createApp>;
@@ -104,6 +102,51 @@ test('account proxy and exact paths do not broaden during route composition', as
   );
 });
 
+test('retired provider and planning routes reject while callback stays a no-store 404', async () => {
+  for (const sessionCookie of ['', cookie]) {
+    const response = await request('/auth/callback?code=retired&state=retired', {
+      headers: sessionCookie ? { Cookie: sessionCookie } : {},
+    });
+    assert.equal(response.status, 404);
+    assert.match(response.headers.get('Cache-Control') ?? '', /no-store/);
+    assert.equal((await readResponse(response)).code, 'NOT_FOUND');
+  }
+  for (const path of [
+    'ai/connection',
+    'ai/connect',
+    'ai/disconnect',
+    'ai/setModel',
+    'agent/list',
+    'agent/get',
+    'agent/start',
+    'agent/cancel',
+    'agent/apply',
+  ]) {
+    const response = await request(`/api/rpc/${path}`, {
+      method: 'POST',
+      headers: { Cookie: cookie, Origin: config.origin, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        json: { id: 'retained-run', requestId: 'retired-request', prompt: 'Do not apply' },
+      }),
+    });
+    assert.equal(response.status, 404, path);
+    assert.match(response.headers.get('Cache-Control') ?? '', /no-store/);
+  }
+});
+
+test('archival requests and reviews are not active resource query capabilities', async () => {
+  for (const resource of ['recipeRequests', 'trainingRequests', 'reviews']) {
+    const response = await request('/api/rpc/workspace/page', {
+      method: 'POST',
+      headers: { Cookie: cookie, Origin: config.origin, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ json: { resource } }),
+    });
+    assert.equal(response.status, 400, resource);
+    const body = await readResponse(response);
+    assert.equal(body.data.code, 'INVALID_INPUT');
+  }
+});
+
 test('maintenance Worker responds 503 with Retry-After and no-store without invoking DB, Auth, or ASSETS', async () => {
   const versionId = '11111111-2222-4333-8444-555555555555';
   let assetsCalled = 0;
@@ -112,8 +155,6 @@ test('maintenance Worker responds 503 with Retry-After and no-store without invo
     DATABASE_URL: 'postgresql://unused:unused@127.0.0.1:5432/unused',
     NEON_AUTH_BASE_URL: 'https://auth.example.test/neondb/auth',
     NEON_AUTH_REQUIRE_EMAIL_VERIFICATION: 'true',
-    BETTER_AUTH_SECRET: 'synthetic-maintenance-secret-over-32-characters',
-    CORNER_TOKEN_ENCRYPTION_KEY: Buffer.alloc(32, 9).toString('base64'),
     CF_VERSION_METADATA: { id: versionId },
     ASSETS: {
       fetch: async () => {

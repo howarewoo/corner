@@ -11,8 +11,6 @@ import {
 import type { CornerAuth } from '../src/auth.ts';
 import { createApp } from '../src/app.ts';
 import type { Config } from '../src/config.ts';
-import type { SubscriptionProvider } from '../src/subscription.ts';
-import type { PlanningAgent } from '../src/planning-agent.ts';
 import { WorkspaceStore } from '../src/store.ts';
 import { createQueries } from '../src/queries.ts';
 import { createInitialState } from '@packages/workspace/initial-state';
@@ -24,8 +22,6 @@ const config: Config = {
   port: 3000,
   dataDir: '/tmp',
   deployment: 'local',
-  authSecret: 'unit-test-auth-secret-that-is-long-enough-to-use',
-  tokenEncryptionKey: Buffer.alloc(32, 7),
 };
 let db: Pool;
 let store: WorkspaceStore;
@@ -34,7 +30,6 @@ let app: ReturnType<typeof createApp>;
 let alice: { cookie: string; id: string };
 let bob: { cookie: string; id: string };
 const password = 'test-only-password-with-twelve-characters';
-let callbackOwner: { owner: string; hasVerifiedSession: boolean } | undefined;
 
 function request(
   path: string,
@@ -87,15 +82,7 @@ before(async () => {
   db = await testDatabase();
   auth = await createTestAuth(config, db);
   store = new WorkspaceStore(createQueries(db));
-  const provider = {
-    async callback(owner: string, _url: URL, sessionId: string) {
-      callbackOwner = { owner, hasVerifiedSession: Boolean(sessionId) };
-    },
-    async models() {
-      return [];
-    },
-  } as unknown as SubscriptionProvider;
-  app = createApp({ config, auth, store, ai: { provider, agent: {} as PlanningAgent } });
+  app = createApp({ config, auth, store });
   alice = await account('Alice', 'alice@example.test');
   bob = await account('Bob', 'bob@example.test');
 });
@@ -114,7 +101,7 @@ test('anonymous requests and forged Sites headers cannot authenticate or select 
     'SIGN_IN_REQUIRED',
   );
   await expectError(await request('/api/identity-test'), 401, 'SIGN_IN_REQUIRED');
-  await expectError(await request('/auth/callback'), 401, 'SIGN_IN_REQUIRED');
+  await expectError(await request('/auth/callback'), 404, 'NOT_FOUND');
   assert.equal((await request('/api/health')).status, 200);
   const session = await readResponse(
     await request('/api/rpc/account/session', { cookie: alice.cookie }),
@@ -164,13 +151,13 @@ test('unverified managed sign-in resolves only when application verification is 
   assert.equal((await request('/api/rpc/workspace/get', { cookie })).status, 200);
 });
 
-test('new authenticated accounts are empty and OAuth callbacks receive the verified session', async () => {
+test('new authenticated accounts are empty and retired OAuth callbacks reject without side effects', async () => {
   const state = await readResponse(
     await request('/api/rpc/workspace/get', { cookie: alice.cookie }),
   );
   assert.equal(state.settings.name, 'Alice');
   assert.equal(state.revision, 0);
-  assert.equal(state.aiAvailable, false);
+  assert.equal('aiAvailable' in state, false);
   assert.equal('state' in state, false);
   const exported = await readResponse(
     await request('/api/rpc/workspace/export', { cookie: alice.cookie }),
@@ -181,8 +168,8 @@ test('new authenticated accounts are empty and OAuth callbacks receive the verif
     cookie: alice.cookie,
     origin: null,
   });
-  assert.equal(callback.status, 303);
-  assert.deepEqual(callbackOwner, { owner: alice.id, hasVerifiedSession: true });
+  assert.equal(callback.status, 404);
+  assert.match(callback.headers.get('Cache-Control') ?? '', /no-store/);
 });
 
 test('cookie-authenticated writes reject missing or foreign origins before changes', async () => {

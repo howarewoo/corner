@@ -2,7 +2,7 @@
 // secrets, and databases are disposable. No mail or AI request is sent.
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { access, mkdtemp, rm } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { request as httpRequest } from 'node:http';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
@@ -37,6 +37,27 @@ async function run(mode, port) {
   const listener = `http://127.0.0.1:${port}`;
   const backend = await startSmokeServices(temporary, origin);
   services.add(backend);
+  const dataDirectory = join(temporary, mode);
+  await mkdir(dataDirectory);
+  const privateConfigPath = join(dataDirectory, 'private-config.json');
+  const privateConfig = Buffer.from(
+    '{"authSecret":"synthetic-retained-binding","tokenEncryptionKey":"synthetic-retained-key"}\n',
+  );
+  await writeFile(privateConfigPath, privateConfig, { mode: 0o600 });
+  await backend.database.query(
+    `INSERT INTO corner_ai_runs
+     (id,user_id,request_id,payload_hash,kind,status,prompt,reference_date,base_revision,created_at,updated_at)
+     VALUES ('retained-run','retained-owner','retained-request','retained-hash','plan','running',
+             'Synthetic archived prompt','2026-10-28',0,'2026-10-28T00:00:00.000Z','2026-10-28T00:00:00.000Z')`,
+  );
+  await backend.database.query(
+    `INSERT INTO corner_subscription_accounts (user_id,encrypted,version,refresh_owner,refresh_until)
+     VALUES ('retained-owner','opaque-synthetic-encrypted-provider-record',7,'retained-refresh-owner',123)`,
+  );
+  const archivedRun = (await backend.database.query('SELECT * FROM corner_ai_runs')).rows;
+  const archivedProvider = (
+    await backend.database.query('SELECT * FROM corner_subscription_accounts')
+  ).rows;
   const environment = {
     ...process.env,
     NODE_ENV: 'production',
@@ -46,13 +67,13 @@ async function run(mode, port) {
     CORNER_PORT: String(port),
     CORNER_DATA_DIR: join(temporary, mode),
     CORNER_PROXY_SECRET: proof,
-    BETTER_AUTH_SECRET: 'synthetic-http-account-secret-with-more-than-32-characters',
-    CORNER_TOKEN_ENCRYPTION_KEY: Buffer.alloc(32, 42).toString('base64'),
     DATABASE_URL: backend.databaseUrl,
     NEON_AUTH_BASE_URL: backend.authUrl,
     NEON_AUTH_REQUIRE_EMAIL_VERIFICATION: 'false',
     NODE_EXTRA_CA_CERTS: backend.certificate,
   };
+  delete environment.BETTER_AUTH_SECRET;
+  delete environment.CORNER_TOKEN_ENCRYPTION_KEY;
   const child = spawn(process.execPath, [serverEntry], {
     cwd: root,
     env: environment,
@@ -287,6 +308,21 @@ async function run(mode, port) {
     'The Node process must finish its orderly shutdown.',
   );
   children.delete(child);
+  assert.deepEqual(
+    (await backend.database.query('SELECT * FROM corner_ai_runs')).rows,
+    archivedRun,
+    'Startup and shutdown must not recover or rewrite archived running AI records.',
+  );
+  assert.deepEqual(
+    (await backend.database.query('SELECT * FROM corner_subscription_accounts')).rows,
+    archivedProvider,
+    'Manual runtime must preserve opaque encrypted provider records.',
+  );
+  assert.deepEqual(
+    await readFile(privateConfigPath),
+    privateConfig,
+    'Manual runtime must preserve existing private configuration bytes without model environment keys.',
+  );
   await backend.close();
   services.delete(backend);
   process.stdout.write(`Passed ${mode} production HTTP, proxy, health, and shutdown checks.\n`);

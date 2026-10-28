@@ -1320,18 +1320,12 @@ export async function promote({
     bootstrapSecrets = JSON.parse(
       need(process.env.CORNER_WORKER_SECRETS_JSON, 'Bootstrap requires protected Worker secrets'),
     );
-    const names = [
-      'DATABASE_URL',
-      'NEON_AUTH_BASE_URL',
-      'BETTER_AUTH_SECRET',
-      'CORNER_TOKEN_ENCRYPTION_KEY',
-    ];
+    const names = ['DATABASE_URL', 'NEON_AUTH_BASE_URL'];
     need(
       bootstrapSecrets.DATABASE_URL === process.env.DATABASE_URL &&
         names.every(
           (key) => typeof bootstrapSecrets[key] === 'string' && bootstrapSecrets[key].length > 0,
-        ) &&
-        Object.keys(bootstrapSecrets).every((key) => names.includes(key)),
+        ),
       'Invalid bootstrap Worker secrets',
     );
     const auth = new URL(bootstrapSecrets.NEON_AUTH_BASE_URL);
@@ -1339,18 +1333,11 @@ export async function promote({
       auth.protocol === 'https:' && !auth.username && !auth.password && !auth.search && !auth.hash,
       'Invalid bootstrap auth binding',
     );
-    const key = bootstrapSecrets.CORNER_TOKEN_ENCRYPTION_KEY;
-    need(
-      bootstrapSecrets.BETTER_AUTH_SECRET.length >= 32 &&
-        /^[A-Za-z0-9+/]{43}=$/.test(key) &&
-        Buffer.from(key, 'base64').length === 32 &&
-        Buffer.from(key, 'base64').toString('base64') === key,
-      'Invalid bootstrap session/encryption binding',
-    );
     need(
       ['postgres:', 'postgresql:'].includes(new URL(bootstrapSecrets.DATABASE_URL).protocol),
       'Invalid bootstrap database binding',
     );
+    bootstrapSecrets = Object.fromEntries(names.map((name) => [name, bootstrapSecrets[name]]));
   }
   need(process.env.DATABASE_URL_UNPOOLED, 'Protected unpooled migration connection is required');
   const candidate = await github.artifact(p, join(work, 'candidate'));
@@ -1403,12 +1390,7 @@ export async function promote({
   if (!p.bootstrap) {
     const settings = await cf(`workers/scripts/${target.workerName}/settings`);
     need(
-      [
-        'DATABASE_URL',
-        'NEON_AUTH_BASE_URL',
-        'BETTER_AUTH_SECRET',
-        'CORNER_TOKEN_ENCRYPTION_KEY',
-      ].every((name) =>
+      ['DATABASE_URL', 'NEON_AUTH_BASE_URL'].every((name) =>
         settings.bindings?.some(
           (binding) => binding.name === name && binding.type === 'secret_text',
         ),
@@ -1747,12 +1729,7 @@ export async function resume({
   );
   const settings = await cf(`workers/scripts/${target.workerName}/settings`);
   need(
-    [
-      'DATABASE_URL',
-      'NEON_AUTH_BASE_URL',
-      'BETTER_AUTH_SECRET',
-      'CORNER_TOKEN_ENCRYPTION_KEY',
-    ].every((name) =>
+    ['DATABASE_URL', 'NEON_AUTH_BASE_URL'].every((name) =>
       settings.bindings?.some((binding) => binding.name === name && binding.type === 'secret_text'),
     ),
     'Production Worker is missing required protected secret bindings',

@@ -216,7 +216,7 @@ export async function packageArtifact({ root: sourceRoot = root, out, sourceSha 
   const serverRequire = createRequire(join(sourceRoot, 'apps/server/package.json'));
   const webRequire = createRequire(join(sourceRoot, 'apps/web/package.json'));
   const { experimental_readRawConfig } = await import(serverRequire.resolve('wrangler'));
-  for (const name of ['nutrition', 'training', 'workspace', 'agent']) {
+  for (const name of ['nutrition', 'training', 'workspace']) {
     const files = await readdir(join(sourceRoot, 'packages', name, 'dist')).catch(() => []);
     if (!files.some((file) => file.endsWith('.js')))
       throw new Error(`Build ${name} before packaging.`);

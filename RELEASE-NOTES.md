@@ -6,8 +6,11 @@ Corner has not been released. This is the current implementation baseline, not a
 
 ### Application and workspace
 
+- Retired all in-app assistance: Recipe studio/idea saving, Describe food, My agent, Training Coach, provider/model controls, OAuth callback, and AI/agent RPCs. `/agent` and `/studio` use normal unknown-page redirects; `/auth/callback` is a no-store 404. Manual nutrition/training/account/import/export remain. Historical recipe/training requests/reviews remain archive data, never executable commands or receipt retries.
+- Removed the agent workspace build/watch/artifact/container requirements and app model-secret requirements. The local controller's independent Auth/password/control secrets and TLS are preserved. Existing data, provider/AI-run archives, backups/original keys, applied migrations, and receipts are not deleted or rotated. Final retirement release still requires separate operator backup confirmation and revocation of any existing ChatGPT grants.
+
 - pnpm/Turborepo workspaces separate the Hono server, Vite/React product, backend-free design catalog, shared UI, domain rules, and browser-safe API contract.
-- Application calls use native oRPC at `/api/rpc` and TanStack Query browser server state. Managed Auth `/api/auth`, OAuth `/auth/callback`, and `GET /api/health` remain separate protocols.
+- Application calls use native oRPC at `/api/rpc` and TanStack Query browser state. Managed Auth `/api/auth` and `GET /api/health` retain separate protocols.
 - Managed Neon Auth owns accounts, sessions, verification, and recovery delivery. Owner-scoped PostgreSQL workspaces retain recipes, meals, groceries, food logs, workouts, routines, targets, and progress records. Profile editing is optional; sign-in opens the requested workspace route without onboarding.
 - Sign-in confirms the server-side Corner session before replacing the account form or retiring private query state. A successful Auth response followed by a missing session now shows an actionable error and preserves the email for retry. Unverified accounts receive policy-appropriate verification guidance rather than an empty sign-in form.
 - Account credentials, verification/recovery inputs, and the workspace import confirmation use TanStack Form with the existing shared controls and native constraints. Account mode changes still retain email while clearing passwords and codes; request cancellation and Corner session confirmation remain separate safety boundaries. Import confirmation resets with each selected file, and commits retain the matching preview’s candidate, request ID, and revision.
@@ -20,9 +23,9 @@ Corner has not been released. This is the current implementation baseline, not a
 - Corner supports iPhone Home Screen installation with a standalone manifest, opaque app icons, and Apple metadata, retaining the existing mobile navigation and safe-area layout. Production-only, network-only service-worker handling shows a reconnect page for disconnected launches without caching private data or queueing edits. Installation and real-iPhone verification steps are in [README.md](README.md#install-on-iphone).
 - Original Corner JSON imports remain previewed, revision-checked, and restricted to empty workspaces. Workspace export and recipe text downloads remain supported. Imports do not claim identities by email or transfer passwords, sessions, model grants, or separate agent history.
 - Removed unused sample recipe/starter-week/template APIs and date selectors; persistence reuses the shared empty training-state factory. Supported original Corner imports and manual workflows remain unchanged.
-- Domain code is separated into nutrition, training, workspace, and agent packages with direct owner imports and acyclic dependencies. Development watchers, Vite access boundaries, containers, source packaging, and release tooling use those packages; no catch-all package or compatibility re-exports remain.
-- Server, domain, and oRPC contract validation now use Zod 4. Planning tools use native JSON Schema conversion instead of a direct `zod-to-json-schema` dependency; migration inventory validation retains UUID-shaped snapshot lineage IDs and explicit string-keyed table records.
-- Manual profile/targets, recipes, food logging, and meal selection now use TanStack Form `1.33.5` for editable drafts and submission state while retaining shared controls and native constraints. Saves await persistence, failed saves retain edits, food estimates only populate review, matching ingredient metadata survives recipe edits, and unset targets remain distinct from zero targets. Recipe editing also retains legitimate zero-minute prep/cook values.
+- Domain code is separated into nutrition, training, and workspace packages with direct owner imports and acyclic dependencies. Development watchers, containers, packaging, and release tooling no longer require an agent package.
+- Server, domain, and oRPC validation use Zod 4; migration inventory validation retains UUID-shaped snapshot lineage IDs and explicit string-keyed records.
+- Manual profile/targets, recipes, food logging, and meal selection use TanStack Form `1.33.5` with shared controls and native constraints. Saves await persistence, failed saves retain edits, ingredient metadata survives recipe edits, unset targets stay distinct from zero, and zero-minute prep/cook values remain valid.
 
 ### Local development
 
@@ -72,7 +75,7 @@ Corner has not been released. This is the current implementation baseline, not a
 ### AI and data safety
 
 - Local ChatGPT authorization remains optional and independent of Corner login. Tokens stay encrypted server-side; disconnect, refresh rotation, and session/generation checks remain protected.
-- AI produces reviewable proposals, recipe drafts, and editable food estimates. Explicit approval is required to apply planning changes; stale proposals and edits to protected recorded workouts are rejected. AI cannot record food eaten, measurements, or completed training on the user's behalf.
+- AI produces reviewable planning proposals, which may include recipes. Explicit approval is required to apply planning changes; stale proposals and edits to protected recorded workouts are rejected. AI cannot record food eaten, measurements, or completed training on the user's behalf.
 - Hosted ChatGPT access remains disabled pending an approved integration and live qualification. Local grants must not be repurposed for public hosting; no separately billed fallback is enabled.
 - Preserve installation keys, private configuration, original SQLite backups, and independent production/staging backups. Database restore is a separate operator-controlled data-loss decision. Source cleanup does not authorize cloud/admin/data changes or retirement of provider resources.
 

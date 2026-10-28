@@ -109,8 +109,6 @@ try {
     DATABASE_URL: backend.databaseUrl,
     NEON_AUTH_BASE_URL: backend.authUrl,
     NEON_AUTH_REQUIRE_EMAIL_VERIFICATION: 'false',
-    BETTER_AUTH_SECRET: 'synthetic-workers-session-binding-secret-over-32-characters',
-    CORNER_TOKEN_ENCRYPTION_KEY: Buffer.alloc(32, 42).toString('base64'),
   };
   let workerNumber = 0;
   const startWorker = async (config, candidate = true, { mainOverride, forbidOutbound = false } = {}) => {
@@ -208,7 +206,15 @@ try {
         modules: true,
         modulesRoot: dirname(bundle),
         scriptPath: bundle,
-        bindings,
+        bindings: {
+          ...bindings,
+          ...(options['--previous-config'] && config === options['--previous-config']
+            ? {
+                BETTER_AUTH_SECRET: 'synthetic-workers-session-binding-secret-over-32-characters',
+                CORNER_TOKEN_ENCRYPTION_KEY: Buffer.alloc(32, 42).toString('base64'),
+              }
+            : {}),
+        },
         outboundService: async (request) => {
           if (forbidOutbound)
             assert.fail(`Maintenance Worker must not make outbound DB/Auth requests (${request.url}).`);
@@ -625,18 +631,6 @@ try {
       },
       { type: 'grocery.check', data: { key: 'compatibility:rice', checked: true } },
       {
-        type: 'request.save',
-        data: {
-          id: 'compatibility-request',
-          prompt: 'Candidate-written dinner request',
-          calories: 600,
-          protein: 40,
-          maxMinutes: 30,
-          status: 'pending',
-          createdAt: '2026-10-23T12:00:00.000Z',
-        },
-      },
-      {
         type: 'training.checkin.save',
         data: {
           id: 'compatibility-checkin',
@@ -728,28 +722,16 @@ try {
     );
     assert.equal((await state(bob)).settings.name, 'Bob');
   }
-  const connection = (await (await rpc('ai/connection', undefined, { Cookie: alice })).json()).json;
-  assert.equal(connection.enabled, false);
-  assert.equal(connection.available, false);
-  const disabledConnection = await rpc('ai/connect', {}, { Cookie: alice });
-  assert.equal(disabledConnection.status, 409);
-  const disabledError = (await disabledConnection.json()).json;
-  assert.equal(disabledError.code, 'CORNER_ERROR');
-  assert.equal(typeof disabledError.data.code, 'string');
-  assert.equal(
-    (
-      await rpc(
-        'agent/start',
-        {
-          requestId: 'workers-plan-request-123',
-          prompt: 'Plan my training',
-          referenceDate: '2026-10-23',
-        },
-        { Cookie: alice },
-      )
-    ).status,
-    503,
-  );
+  for (const path of ['ai/connection', 'ai/connect', 'agent/start']) {
+    const retired = await rpc(path, {}, { Cookie: alice });
+    assert.equal(retired.status, 404);
+    assert.match(retired.headers.get('Cache-Control'), /no-store/);
+  }
+  const callback = await worker.fetch(new URL('/auth/callback?code=synthetic&state=synthetic', origin), {
+    headers: { Cookie: alice },
+  });
+  assert.equal(callback.status, 404);
+  assert.match(callback.headers.get('Cache-Control'), /no-store/);
   assert.equal((await post('/api/auth/sign-out', {}, { Cookie: alice })).status, 200);
   const signedOut = await rpc('workspace/get', undefined, { Cookie: alice });
   assert.equal(signedOut.status, 401);
@@ -758,5 +740,5 @@ try {
   await cleanup.disposeAsync();
 }
 process.stdout.write(
-  `Passed fullstack Worker assets, version identity, canonical origin, secure account cookies, isolated PostgreSQL writes/retries/rollback, clean candidate database shutdown, sign-out, and hosted AI gate${previousMigrator ? ', including prior-schema writes and candidate/recovery compatibility' : ''}.\nNo live cloud, account email, or model requests were made.\n`,
+  `Passed fullstack Worker assets, version identity, canonical origin, secure account cookies, isolated PostgreSQL writes/retries/rollback, clean candidate database shutdown, sign-out, and retired AI route rejection${previousMigrator ? ', including prior-schema writes and candidate/recovery compatibility' : ''}.\nNo live cloud, account email, or model requests were made.\n`,
 );

@@ -158,7 +158,7 @@ test('packaging canonicalizes JSONC comments and trailing commas but rejects mal
     'package.json': '{"type":"module"}',
     'pnpm-lock.yaml': 'lockfileVersion: "9.0"\n',
     ...Object.fromEntries(
-      ['nutrition', 'training', 'workspace', 'agent'].map((name) => [
+      ['nutrition', 'training', 'workspace'].map((name) => [
         `packages/${name}/dist/index.js`,
         'export {};',
       ]),

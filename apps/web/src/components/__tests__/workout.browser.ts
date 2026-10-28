@@ -179,6 +179,8 @@ test('workout completion persists recorded results and leaves unrecorded sets in
     mutation: { type: 'training.session.save', data: { session, expectedUpdatedAt: null } },
   });
   await signIn(page, account, '/workouts');
+  await expect(page.getByRole('tab', { name: 'Coach', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Adapt', exact: true })).toHaveCount(0);
   await page.getByRole('button', { name: 'Start workout', exact: true }).click();
   await page.getByLabel('Synthetic squat set 1 weight kg', { exact: true }).fill('42.5');
   await page.getByLabel('Synthetic squat set 1 reps', { exact: true }).fill('9');
@@ -203,4 +205,20 @@ test('workout completion persists recorded results and leaves unrecorded sets in
   expect(saved.status).toBe('completed');
   expect(saved.exercises[0].sets[0]).toMatchObject({ weight: 42.5, reps: 9, completed: true });
   expect(saved.exercises[0].sets[1]).toMatchObject({ weight: null, reps: null, completed: false });
+});
+
+test('retired agent navigation redirects home and settings keeps manual account tools', async ({
+  page,
+  account,
+}) => {
+  await signIn(page, account, '/agent');
+  await expect(page).toHaveURL(/\/$/);
+  await expect(page.getByRole('button', { name: 'My agent', exact: true })).toHaveCount(0);
+  await page.goto('/settings');
+  await expect(page.getByRole('button', { name: 'Export workspace', exact: true })).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: /Continue with ChatGPT|Reconnect with ChatGPT/ }),
+  ).toHaveCount(0);
+  await page.reload();
+  await expect(page.getByRole('button', { name: 'Export workspace', exact: true })).toBeVisible();
 });

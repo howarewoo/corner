@@ -1,6 +1,6 @@
 # Deploy Corner
 
-Corner supports Cloudflare Workers for hosted manual tracking and a single-server Docker/Caddy deployment. Both use Neon Postgres and managed Neon Auth, serve the web app and API on one HTTPS origin, and keep the hosted ChatGPT connection disabled.
+Corner supports Cloudflare Workers for manual tracking and a single-server Docker/Caddy deployment. Both use Neon Postgres and managed Neon Auth and serve web/API on one HTTPS origin. Model connections and inference are retired on both platforms.
 
 This guide does not create a cloud account, register a domain, configure SMTP, or authorize live model access. Preserve the database and matching application secrets across releases.
 
@@ -15,9 +15,9 @@ Production and staging share one full-stack runtime and immutable payload:
 | Production  | Worker `corner`                         | `main`     | `https://corner.adam-nathaniel-woo.workers.dev`         |
 | Staging     | Native Preview `staging` under `corner` | `staging`  | `https://staging-corner.adam-nathaniel-woo.workers.dev` |
 
-Both serve assets, `/api/*`, and `/auth/callback` through `apps/server/src/worker.ts`; there is no frontend Worker or service binding. Production also supports an exact HTTPS custom domain. Keep top-level `preview_urls: true`. Enable `workers_dev` only for production's exact stable `https://corner.<account-subdomain>.workers.dev` origin; custom-domain production keeps it disabled. Deployment/Preview URLs cannot be production canonical origins. Keep DB/Auth/keys isolated and hosted ChatGPT disabled.
+Both serve assets and `/api/*` through `apps/server/src/worker.ts`; retired `/auth/callback` returns no-store 404 rather than SPA HTML. There is no frontend Worker or service binding. Production supports an exact HTTPS custom domain. Keep `preview_urls: true`; enable `workers_dev` only for production's exact stable `https://corner.<account-subdomain>.workers.dev` origin. Deployment/Preview URLs cannot be production canonical origins. Keep DB/Auth and retained keys isolated.
 
-The unreleased application's initial deployment baseline is native oRPC at `/api/rpc`. The browser and backend share `@packages/api`; managed Auth `/api/auth`, OAuth `/auth/callback`, and `GET /api/health` retain their own protocols. Old application REST URLs and historical unpublished REST artifacts are not supported. Live admin/cutover actions below remain separately authorized operator work.
+Native oRPC `/api/rpc` shares `@packages/api` with the browser; managed Auth `/api/auth` and `GET /api/health` retain separate protocols. Old application REST URLs and unpublished REST artifacts are unsupported. Live administration/cutover remains separately authorized operator work.
 
 Workers use request-scoped `@neondatabase/serverless` WebSocket pools with Drizzle's `neon-serverless` adapter and the existing owner locks, interactive transactions, and mutation receipts. They retain the same pooled `DATABASE_URL`; no Hyperdrive binding or new secret is required. Node/local runtimes and explicit direct-connection migrations retain native `pg`. Workers never initialize process-wide agent recovery, read repository environment files, or start inference. Stop the old Node process before moving its database to Workers.
 
@@ -51,7 +51,7 @@ The baseliner identifies Neon databases by their database-reported branch ID and
 
 Schema-only creation can also copy empty `neon_auth` objects and provider roles without their memberships. If Neon refuses Auth provisioning, inspect that staging branch rather than reusing production Auth. Replacing a verified-empty copied Auth schema requires explicit operator approval; never drop a nonempty schema. Verify the managed `neon_service` role has database `CREATE` and can administer/set the staging `neon_auth` role before retrying provisioning. Do not grant these privileges to application users or change production roles.
 
-Create staging application keys once and retain them: at least 32 cryptographically random characters for `BETTER_AUTH_SECRET` and 32 random bytes encoded as base64 for `CORNER_TOKEN_ENCRYPTION_KEY`. Never reuse production keys, database URLs, Auth endpoints, email recipients, or local model grants. Do not refresh staging from production later; apply subsequent checked-in migrations normally.
+Current staging requires no model encryption/session-binding keys. Preserve every existing original key and matching backup/provider archive; do not delete, rotate, or reuse production keys. Never reuse production database URLs, Auth endpoints, email recipients, or grants. Do not refresh staging from production; apply checked-in migrations normally.
 
 References: [schema-only branches](https://neon.com/docs/guides/branching-schema-only), [branch expiration and removal](https://neon.com/docs/guides/branch-expiration), [Cloudflare Access service tokens](https://developers.cloudflare.com/cloudflare-one/access-controls/service-credentials/service-tokens/), [native Previews](https://developers.cloudflare.com/workers/previews/), and [Preview resources](https://developers.cloudflare.com/workers/previews/resources/). Preview isolation must come from explicit staging bindings, not an aliased Version URL or a production-targeting service binding.
 
@@ -61,7 +61,7 @@ Production uses `CORNER_PRODUCTION_ORIGIN`, `CORNER_PRODUCTION_CONFIG_JSON`, and
 
 Put public configuration variables where the plan job can read them. Configure `CLOUDFLARE_ACCOUNT_ID` for the appropriate environment. Each effectful environment holds its own `CLOUDFLARE_API_TOKEN` and direct `DATABASE_URL_UNPOOLED`. All production releases use main-only `production` without reviewer or wait-timer rules, including explicit bootstrap/recovery/configuration releases. Keep the existing production credentials there, including bootstrap's pooled `DATABASE_URL` and `CORNER_WORKER_SECRETS_JSON`, without rotating keys. Staging additionally holds `CORNER_STAGING_ACCESS_CLIENT_ID` and `CORNER_STAGING_ACCESS_CLIENT_SECRET`; these never belong in browser code or artifacts.
 
-Protected staging `CORNER_WORKER_SECRETS_JSON` contains **exactly** `DATABASE_URL`, `NEON_AUTH_BASE_URL`, `BETTER_AUTH_SECRET`, and `CORNER_TOKEN_ENCRYPTION_KEY`. Retain existing values; never inherit production bindings or rotate staging keys during migration. Production bootstrap needs its own pooled `DATABASE_URL` and protected secrets JSON, with matching pooled URLs. A temporary owner-only secret file is removed after the first tracked deployment. Ordinary releases inherit four required production secrets; the direct migration URL is never a Worker binding.
+Protected staging `CORNER_WORKER_SECRETS_JSON` must supply `DATABASE_URL` and `NEON_AUTH_BASE_URL`. Production bootstrap requires the same two fields with its own matching pooled URL; ordinary releases require those protected bindings. Controllers project only those current fields into new uploads, leaving retained opaque extras in the protected source payload unchanged. Direct migration URLs are never Worker bindings. Preserve existing retired model secrets and original backups; no deletion or rotation of live configuration is authorized. Controller-owned Auth/TLS/password/control secrets are unaffected.
 
 Preserve existing production installation keys and matching data; do not regenerate them. For a manually provisioned `corner` without a release ledger, dispatch bootstrap with `provisioned_version_id` set to its exact current 100% version. The release plan binds that pin and rechecks it before SQL and again before deployment; drift requires a new plan. Without a pin, bootstrap requires the Worker to be absent. This is explicit Worker adoption, not fabricated qualified history. Existing application databases must already have valid native Drizzle history; the completed pre-Drizzle database cutovers are no longer executable. Pre-Drizzle artifacts remain unsupported everywhere. Never delete an installation to satisfy bootstrap or recreate removed legacy Workers.
 
@@ -125,7 +125,7 @@ Explicit dispatch selects the operation; it is not a second approval ceremony. N
 
 After the release merge, synchronize main back into staging before the next release. For diverged branches, base a temporary sync branch on current staging, merge main into it, pass CI, and merge its PR into staging; direct main-to-staging PRs can otherwise fail strict up-to-date protection. Use merge commits for both promotion and synchronization.
 
-A production-credential-free plan qualifies exact previous/candidate single-Worker artifacts on disposable PostgreSQL, retaining successful prior qualification receipts, immutable digests, native migration prefixes, ownership/security probes, and attempted-schema checks. For compatible relational generations it saves through previous code, migrates, writes candidate food/request/grocery/training records, and exercises recovered-code reads/writes/retries against current data. At the document-to-relational boundary, ordinary `--apply` qualification proves previous code works before migration, proves unexpected legacy rows cause refusal in an isolated fixture, and qualifies the existing-empty transition as `forward-only`; when `preserving_cutover: true` and an explicit `operation_id` are supplied, qualification instead runs `--preserving` against the packaged `worker/maintenance-worker.js` gate and `--preserving-cutover` migrator, proving populated `document-v1` workspaces convert losslessly and remain readable and mutable on `relational-v1` (`recovery: "preserving"`). Neither path pretends old document-only code can run after retirement. Qualification reports retain format 1 and record `generation`, `previousGeneration`, and `recovery` (`bootstrap`, `forward-only`, `preserving`, or `compatible`). Existing historical receipts are never relabelled. Fixtures are targeted evidence, not universal future compatibility proof; never rewrite applied SQL.
+A production-credential-free plan qualifies exact previous/candidate single-Worker artifacts on disposable PostgreSQL, retaining successful prior qualification receipts, immutable digests, native migration prefixes, ownership/security probes, and attempted-schema checks. For compatible relational generations it saves through previous code, migrates, writes candidate food/grocery/training records, and exercises recovered-code reads/writes/retries against current data. Historical recipe requests remain archive import/export data; qualification does not invoke retired studio commands. At the document-to-relational boundary, ordinary `--apply` qualification proves previous code works before migration, proves unexpected legacy rows cause refusal in an isolated fixture, and qualifies the existing-empty transition as `forward-only`; when `preserving_cutover: true` and an explicit `operation_id` are supplied, qualification instead runs `--preserving` against the packaged `worker/maintenance-worker.js` gate and `--preserving-cutover` migrator, proving populated `document-v1` workspaces convert losslessly and remain readable and mutable on `relational-v1` (`recovery: "preserving"`). Neither path pretends old document-only code can run after retirement. Qualification reports retain format 1 and record `generation`, `previousGeneration`, and `recovery` (`bootstrap`, `forward-only`, `preserving`, or `compatible`). Existing historical receipts are never relabelled. Fixtures are targeted evidence, not universal future compatibility proof; never rewrite applied SQL.
 
 The credential-free plan binds source/artifact/digests, baseline/schema IDs, runtime revision, optional preserving-cutover `operationId`, and execution run/attempt. Serialized effects proceed in `production` without another approval and recheck those identities. For ordinary releases, upload one version, journal the schema attempt before running the packaged Drizzle migration, then switch `corner` to the confirmed version. Production plan/receipt format **4**, kind `corner-production`, fixes `workerName: "corner"` and records one `versionId` and `configurationSha256`. Confirmed live identity and public checks gate completion for every release mode.
 
@@ -178,7 +178,7 @@ References: [Workers Static Assets](https://developers.cloudflare.com/workers/st
 
 ## Single-server Docker/Caddy deployment
 
-The supplied image builds `apps/server` and `apps/web`, then serves the compiled interface and API through one Node process. It runs no Vite or TypeScript loader. This option needs one Linux server with Docker Engine and the Docker Compose plugin. Keep one Node instance because local agent tasks still run in memory; image replacement can briefly interrupt service.
+The image builds `apps/server` and `apps/web`, then serves both through one Node process without Vite or a TypeScript loader. This option needs Linux, Docker Engine, and Compose. Keep the existing one-instance topology; replacement can briefly interrupt service.
 
 ## 1. Prepare a hostname and email sender
 
@@ -202,15 +202,13 @@ If you use Docker without a host Node installation, run the same initializer in 
 docker run --rm -v "$PWD:/work" -w /work node:24-bookworm-slim node scripts/init-hosted.mjs --domain corner.your-domain.com
 ```
 
-The helper writes `.env.hosted` with owner-only file permissions and three independent random keys. It prints no secrets and refuses to overwrite an existing file. Preserve those keys across deployments. A container-run initializer may create a root-owned file; edit it with an appropriate local administrator account.
+The helper writes `.env.hosted` owner-only with one independent random proxy proof. It prints no secrets and refuses to overwrite existing files. Preserve existing configuration and keys across deployments. A container-run initializer may create a root-owned file; edit with an appropriate administrator account.
 
 Edit `.env.hosted` on the server and supply the pooled `DATABASE_URL`, direct `DATABASE_URL_UNPOOLED`, and `NEON_AUTH_BASE_URL` pulled by Neon. Keep URLs and private keys server-only.
 
 | Setting                       | Purpose                                                                                   |
 | ----------------------------- | ----------------------------------------------------------------------------------------- |
 | `CORNER_DOMAIN`               | Public hostname without a protocol, port, or path                                         |
-| `BETTER_AUTH_SECRET`          | Binds ChatGPT OAuth attempts to the managed Corner session; does not sign login cookies   |
-| `CORNER_TOKEN_ENCRYPTION_KEY` | Encrypts stored model credentials; exactly 32 bytes encoded as base64                     |
 | `CORNER_PROXY_SECRET`         | Allows the HTTPS edge to attest client identity; never trust arbitrary forwarding headers |
 | `DATABASE_URL`                | Pooled Neon PostgreSQL application connection                                             |
 | `DATABASE_URL_UNPOOLED`       | Direct connection for explicit versioned migrations                                       |
@@ -233,7 +231,7 @@ Open `https://corner.your-domain.com` after the containers become healthy and Ca
 
 Only Caddy publishes host ports. Corner listens on the private Compose network and needs outbound HTTPS to managed Auth and PostgreSQL connectivity to Neon. The `corner-data` volume stores private local configuration, not account/workspace records. Caddy certificate data and configuration use separate named volumes.
 
-The health probe connects to the app's local port with its canonical Host; it does not prove managed Auth or database availability. Shutdown stops new work, finishes accepted requests, drains agent tasks, and closes the PostgreSQL pool within Docker's grace period. Schema changes run through the explicit migration command, never startup.
+The health probe uses the canonical Host but does not prove DB/Auth availability. Shutdown stops new work, finishes accepted requests, and closes PostgreSQL within Docker's grace period. Schema changes use the explicit migration command, never startup.
 
 ## 4. Verify the deployment
 
@@ -259,7 +257,7 @@ Do not publish logs or a resolved Compose configuration that could contain envir
 
 Neon persistence is not an independent backup. Use the restore/branch facilities available under your plan's retention policy, and maintain encrypted off-service PostgreSQL dumps using `DATABASE_URL_UNPOOLED`. Include application tables and managed `neon_auth` data according to Neon's documented backup/restore procedures. Test the recovery path for both sign-in and owner-scoped records.
 
-Back up `.env.hosted` and the original application encryption keys separately from the database. Preserve `corner-data` if local keys were generated there; the hosted template supplies keys explicitly. Keep Caddy certificate volumes persistent. Losing the encryption key makes saved ChatGPT credentials unreadable even when the database survives.
+Back up `.env.hosted` and all original private configuration/encryption keys separately from the database. Preserve existing `corner-data` and Caddy certificate volumes. The current app creates no model keys, but losing original keys makes historical encrypted provider records unreadable.
 
 Before an upgrade, back up, build the image, run the explicit migration command, then replace the single app container. Migrations in `apps/server/migrations` are ordered, checksummed, and transactional. Test schema changes on an isolated database/Neon branch first; do not edit applied migrations.
 
@@ -273,11 +271,11 @@ This template assumes clients connect directly to Caddy. It overwrites the clien
 
 Do not publish Corner's port or expose Caddy's admin API. If you add a CDN or another proxy in front of Caddy, configure and review that upstream trust explicitly; otherwise the IP used for rate limiting will be the intermediate proxy's address. The template intentionally does not trust arbitrary forwarded headers or all private-network ranges.
 
-## AI availability in hosted mode
+## Retirement release gates
 
-Manual plans, recipes, nutrition logs, and training records work in this deployment. **The public hosted ChatGPT subscription connection is not enabled by this package.** OpenAI's documented local authorization flow remains available when running Corner locally. Paid or remotely hosted subscription integrations require the applicable OpenAI approval and credentials.
+Manual plans, recipes, food logs, workouts/routines/sets, check-ins, progress, profile/account settings, and import/export remain. There is no local or hosted model connection or hosted AI roadmap.
 
-A supported hosted integration can be added after that access exists. Do not relabel a public installation as local, reuse a person's local token, or expose the loopback registration route publicly. There is no automatic fallback to separately billed API use.
+Before final retirement release, the owner/operator must confirm matching backups and revoke any existing ChatGPT grants at the provider. Source removal cannot establish grant absence or revocation. Preserve historical provider/AI-run records, workspace request/review archives, receipts, applied migrations, original keys, and data. No live deletion, rotation, or retention change is authorized here.
 
 ## Verification limits
 
@@ -294,5 +292,3 @@ Official deployment and integration references:
 - https://neon.com/docs/auth/guides/configure-domains
 - https://neon.com/docs/connect/connection-pooling
 - https://neon.com/docs/introduction/branch-restore
-- https://developers.openai.com/siwc/token-sharing-open-source
-- https://developers.openai.com/siwc/request-client-id

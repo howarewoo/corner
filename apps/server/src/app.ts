@@ -1,14 +1,9 @@
 import { Hono } from 'hono';
-import { requirePrincipal, type Principal } from './auth.js';
+import { requirePrincipal } from './auth.js';
 import type { Config } from './config.js';
 import { ApiError, errorResponse, json, readJson, requireSameOrigin } from './http.js';
 import { RPC_PREFIX } from '@packages/api/protocol';
 import { createRPCHandler, type RPCServices } from './rpc.js';
-import { subscriptionCallback } from './ai-routes.js';
-
-export type AppEnvironment = { Variables: { principal: Principal } };
-
-export type AppOptions = RPCServices;
 
 const redirectFields = [
   'callbackURL',
@@ -62,11 +57,11 @@ function accountBody(path: string, raw: unknown, config: Config): unknown {
 }
 
 /** Shared Hono API app; runtime entrypoints own listeners, assets, and resources. */
-export function createApp(options: AppOptions) {
-  const { config, auth, ai } = options;
+export function createApp(options: RPCServices) {
+  const { config, auth } = options;
   const rpc = createRPCHandler(options);
   // Preserve literal API paths instead of Hono's default percent-decoding.
-  const app = new Hono<AppEnvironment>({ getPath: (request) => new URL(request.url).pathname });
+  const app = new Hono({ getPath: (request) => new URL(request.url).pathname });
   app.onError(errorResponse);
   app.notFound(() =>
     errorResponse(new ApiError(404, 'NOT_FOUND', 'This endpoint does not exist.')),
@@ -111,18 +106,14 @@ export function createApp(options: AppOptions) {
   app.on('ALL', [RPC_PREFIX, `${RPC_PREFIX}/*`], (c) => rpc(c.req.raw));
 
   app.use('*', async (c, next) => {
-    if (!c.req.path.startsWith('/api/') && c.req.path !== '/auth/callback') {
+    if (!c.req.path.startsWith('/api/')) {
       throw new ApiError(404, 'NOT_FOUND', 'This endpoint does not exist.');
     }
-    c.set('principal', await requirePrincipal(auth, c.req.raw));
+    await requirePrincipal(auth, c.req.raw);
     if (!['GET', 'HEAD', 'OPTIONS'].includes(c.req.method))
       requireSameOrigin(c.req.raw, config.origin);
     if (c.req.method === 'HEAD') return c.notFound();
     await next();
   });
-  if (ai)
-    app.get('/auth/callback', (c) =>
-      subscriptionCallback(ai.provider, c.get('principal'), new URL(c.req.url)),
-    );
   return app;
 }

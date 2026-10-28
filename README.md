@@ -1,10 +1,10 @@
 # Corner — independent training and nutrition
 
-Corner is a self-hostable app for meal planning, nutrition logging, workouts, progress, and an optional planning agent. Neon Postgres stores application data; managed Neon Auth owns email/password accounts and sessions. It does not read ChatGPT conversations, memories, or the original Corner Site.
+Corner is a self-hostable app for manual meal planning, nutrition logging, workouts, and progress. Neon Postgres stores application data; managed Neon Auth owns email/password accounts and sessions.
 
-This is a separate application. Existing personal Corner data enters only when its owner chooses to import a Corner JSON export. The repository uses Turborepo with pnpm workspaces: `apps/server` owns the Hono runtime and oRPC procedures, `apps/web` is the Vite/React interface, and `packages/api` owns the browser-safe application contract. Domain code lives in `packages/nutrition`, `packages/training`, `packages/workspace`, and `packages/agent`. Neon is managed infrastructure configured by root `neon.ts`; its server-side integration and application migrations stay in `apps/server`.
+This is a separate application. Existing personal Corner data enters only when its owner chooses to import a Corner JSON export. The repository uses Turborepo with pnpm workspaces: `apps/server` owns the Hono runtime and oRPC procedures, `apps/web` is the Vite/React interface, and `packages/api` owns the browser-safe application contract. Domain code lives in `packages/nutrition`, `packages/training`, and `packages/workspace`. Neon is managed infrastructure configured by root `neon.ts`; its server-side integration and application migrations stay in `apps/server`.
 
-The intended direction is a hosted service for performance-focused trainees, with an approved hosted ChatGPT integration. That is future direction, not a claim that this unreleased application provides a public service or hosted AI access; see [PRODUCT.md](PRODUCT.md) in a repository checkout.
+Corner serves performance-focused trainees through manual planning and tracking; see [PRODUCT.md](PRODUCT.md). This unreleased application does not establish a public hosted service.
 
 ## Start development
 
@@ -23,7 +23,7 @@ Open **http://127.0.0.1:3000**. The local controller builds the server and its d
 
 The explicit seed command creates `empty@corner.test` and `demo@corner.test`, both with password **`Corner-local-only-2026!`**. The first account stays empty; the second has synthetic recipes, a current-week meal plan, food logs, workouts, and progress records. These are local-only credentials, never suitable for a public service. Signup and sign-in use the normal account flow; no onboarding is required. Settings owns optional profile editing and workspace import.
 
-`dev` never seeds automatically. Reseeding preserves edits and uses persistent seed dates/identities to recover interrupted account creation or imports. Account data and seed-completion records live in the owned Docker volume; `.corner-local/` holds private configuration, application keys, and the local Auth certificate. Both Git and Docker build contexts exclude that directory. No production/staging data is copied, and **there is no staging or production seed option**.
+`dev` never seeds automatically. Reseeding preserves edits and uses persistent seed dates/identities to recover interrupted account creation or imports. Account data and seed-completion records live in the owned Docker volume; `.corner-local/` holds controller Auth/password/control secrets, TLS keys/certificate, and any retained historical application keys. Both Git and Docker build contexts exclude that directory. No production/staging data is copied, and **there is no staging or production seed option**.
 
 Existing owned local databases from before Drizzle use the local-only verified baseline path: installation identity, the original schema/catalog, old audit ledger, and absent native history are checked under the migration lock. A retained `workspace_state` row now refuses before baseline commitment because the relational migration supports empty-only cutover, not backfill or deletion. Empty matching databases may advance through ordinary native migrations; Auth, provider records, seed bookkeeping, keys, and old audit metadata remain untouched. Schema drift or unexpected content stops startup rather than resetting data. Hosted migration and staging provisioning do not use this local-only path.
 
@@ -43,13 +43,13 @@ Security updates pin product/catalog Vite to `8.1.6` and Wrangler to `4.153.0` (
 
 The `shadcn` CLI is a UI **development dependency**: full dependency installation is required to compile the shared `shadcn/tailwind.css` import. The separate `@shadcn/react` runtime dependency remains. Production-install peer paths can still retain other tooling through Neon Auth/Better Auth; installation classification does not establish inclusion or execution in the deployed Worker. Check both `pnpm audit --json` and `pnpm audit --prod --json` after dependency changes, and inspect the actual Worker bundle separately.
 
-Application calls use the shared `@packages/api` contract and native oRPC at `/api/rpc`; TanStack Query owns browser server state. Old application REST URLs are not supported. Managed Auth `/api/auth`, OAuth `/auth/callback`, and `GET /api/health` retain their separate protocols.
+Application calls use the shared `@packages/api` contract and native oRPC at `/api/rpc`; TanStack Query owns browser server state. Old application REST URLs are not supported. Managed Auth `/api/auth` and `GET /api/health` retain their separate protocols. Retired `/auth/callback` returns a no-store 404, not application HTML.
 
 **Development never connects to cloud Neon.** `pnpm dev` starts only its owned local PostgreSQL/Auth stack. API development also rejects non-loopback database/Auth endpoints and database host overrides before opening connections or writing private keys. Development does not load root environment files. Cloud configuration belongs to compiled production starts and explicit deployment/migration operations, not a separate cloud-development mode.
 
 For production, `DATABASE_URL` is the pooled application connection; `DATABASE_URL_UNPOOLED` is used only by the explicit, versioned migration command. `NEON_AUTH_BASE_URL` is the managed account service. The app verifies cookies against its uncached session endpoint, so it does not need browser JWTs or `NEON_AUTH_JWKS_URL`. `NEON_AUTH_REQUIRE_EMAIL_VERIFICATION` must match the branch's email/password policy, with verification method **OTP**. SMTP and recovery delivery are configured in Neon; no app-owned Resend adapter remains. See `.env.example`.
 
-The production Node runtime preserves private encryption/session-binding keys in repository-root `data/`; development uses `.corner-local/data/` instead. Keep existing keys across upgrades. Production `CORNER_ORIGIN` must match the origin registered with Neon Auth. The development controller sets its loopback browser/API ports without cloud registration.
+The runtime neither requires nor generates model encryption/session-binding keys. Preserve existing `data/`, `.corner-local/`, private configuration, backups, and matching original keys; retirement does not delete or rotate them. The local controller still requires independent Auth/password/control secrets and TLS keys. Production `CORNER_ORIGIN` must match the origin registered with Neon Auth.
 
 ### Build and run production locally
 
@@ -59,7 +59,7 @@ pnpm run db:migrate
 pnpm start
 ```
 
-The build compiles the nutrition, training, workspace, agent, and API packages in dependency order, then builds `server` and `web` as separate workspace tasks. The compiled server starts on port 3000 and serves `apps/web/dist` alongside its API, preserving the same browser origin. Production runs ordinary JavaScript from `apps/server/dist`; it does not run Vite or require a TypeScript loader.
+The build compiles the nutrition, training, workspace, and API packages in dependency order, then builds `server` and `web` as separate workspace tasks. The compiled server starts on port 3000 and serves `apps/web/dist` alongside its API, preserving the same browser origin. Production runs ordinary JavaScript from `apps/server/dist`; it does not run Vite or require a TypeScript loader.
 
 ### Workspace commands
 
@@ -89,7 +89,7 @@ The build compiles the nutrition, training, workspace, agent, and API packages i
 | `pnpm run test:ci`                               | Native Node CI, release, and artifact regression tests                                                                                       |
 | `pnpm run smoke:workers`                         | Actual full-stack workerd runtime with a local Neon-compatible WebSocket proxy, disposable PostgreSQL, and HTTPS Auth, after `build:workers` |
 
-For a focused build, use `pnpm run build --filter=server` or `pnpm run build --filter=web`. Turbo also builds their domain/API dependencies. Each app declares its own dependencies; import models and validation directly from their owning `@packages/nutrition`, `@packages/training`, `@packages/workspace`, or `@packages/agent` subpath, and the application contract through `@packages/api`, rather than relative paths into another workspace.
+For a focused build, use `pnpm run build --filter=server` or `pnpm run build --filter=web`. Turbo also builds their domain/API dependencies. Import models and validation from their owning `@packages/nutrition`, `@packages/training`, or `@packages/workspace` subpath, and the application contract through `@packages/api`, rather than relative paths into another workspace.
 
 ### Formatting
 
@@ -113,11 +113,11 @@ Every non-documentation verification profile runs repository-wide lint, includin
 
 `apps/design` is the internal, backend-free Storybook 10.6.3 component catalog, using the native manager and React/Vite preview. Run `pnpm --filter design dev` and open **http://127.0.0.1:3002**. `pnpm run dev` also starts this app alongside the product stack. Build only the catalog with `pnpm run build --filter=design`; serve its built assets at the same loopback address with `pnpm --filter design preview`. No backend is needed for standalone catalog use.
 
-Shared React controls live in `packages/ui`, exposed as `@packages/ui`. They adapt Base UI-backed shadcn compositions to Corner's forest/sage palette and flat tonal surfaces. Prioritize these primitives and shipped styles for product UI changes. Product views and catalog specimens share canonical light tokens and `WorkspaceHeader`; the self-contained Sidebar story renders the product's shared `AppSidebar` composition, not Storybook manager chrome. Account, profile, nutrition, training, and agent controls use the shared primitives. Feature layouts and domain visualizations stay app-owned. The product sidebar and phone header offer Light, Dark, and System appearance; selection stays in the browser, and System follows operating-system changes. The catalog's theme toolbar and Sidebar picker share their own preference. Root themes also cover `.corner-ui` surfaces and portals.
+Shared React controls live in `packages/ui`, exposed as `@packages/ui`. They adapt Base UI-backed shadcn compositions to Corner's forest/sage palette and flat tonal surfaces. Prioritize these primitives and shipped styles for product changes. Product views/catalog specimens share canonical light tokens, `WorkspaceHeader`, and parameterized `AppSidebar`, not Storybook manager chrome. Account, profile, nutrition, and training controls use shared primitives; layouts and domain visualizations stay app-owned. Product and catalog each offer Light/Dark/System preferences with system-change tracking and themed portals.
 
 Use the live specimens and their source as the implementation reference, without generated usage documentation, snippets/copy controls, or Autodocs. The [catalog coverage record](apps/design/README.md) preserves the exhaustive existing Corner inventory: 67 upstream entries sourced on 2026-10-23 plus Colors and Spacing, totaling 69 indexed stories. This is a tooling migration, not a new audit of today's upstream inventory. The record retains provenance, notices, theme contract, composition/API distinctions, limits, and source ownership.
 
-Product browser navigation uses [React Router](https://reactrouter.com/start/declarative/installation). Product pages have bookmarkable paths: `/` (Today), `/agent`, `/workouts`, `/planner`, `/recipes`, `/groceries`, `/studio`, and `/settings`. Back/forward navigation preserves the current workspace's local filters and selected date; a reload opens the requested page and reloads saved records. Sign-in gates access without dropping that path; no profile setup is required. Storybook replaces the custom React Router catalog shell: canonical catalog links use `?path=/story/<group-lowercase>--<id>`, such as `?path=/story/actions--button`; old `?component=button` links redirect.
+Product browser navigation uses [React Router](https://reactrouter.com/start/declarative/installation). Product pages have bookmarkable paths: `/` (Today), `/workouts`, `/planner`, `/recipes`, `/groceries`, and `/settings`. Retired `/agent` and `/studio` paths follow the normal unknown-page redirect to `/`. Back/forward navigation preserves local filters and selected dates; reload restores saved records. Sign-in gates access without dropping the requested path. Storybook uses canonical `?path=/story/<group-lowercase>--<id>` links, with redirects for old `?component=button` links.
 
 ### Docker option
 
@@ -129,7 +129,7 @@ docker compose --env-file .env.local run --rm --no-deps corner node apps/server/
 docker compose --env-file .env.local up -d
 ```
 
-Open the same http://127.0.0.1:3000 address. Compose publishes the app only on loopback and stores private application keys in `corner-data`; records and accounts live in Neon. Substitute `.env` when that is where `neon deploy` wrote configuration. Preserve the volume and its encryption keys across container replacements.
+Open http://127.0.0.1:3000. Compose publishes only on loopback; records/accounts live in Neon. Substitute `.env` when that is where `neon deploy` wrote configuration. Preserve existing `corner-data`, private configuration, and original encryption keys across replacements; current runtime does not generate model keys.
 
 Application smoke checks use real PostgreSQL with a disposable local HTTPS auth fixture. They do not prove the Docker/Caddy application deployment, public certificates, or inbox delivery.
 
@@ -150,53 +150,24 @@ For mobile release verification, install the HTTPS build on a real iPhone and ch
 
 ## Your first plan
 
-1. **Create your own account.** Managed Neon sign-in is independent of the AI connection. Verification policy and recovery delivery are configured in Neon.
+1. **Create your own account.** Verification policy and recovery delivery are configured in Neon.
 2. **Optionally edit your profile in Settings.** Enter goals, experience, available days and session length, equipment, constraints, food preferences, and shopping preferences whenever you are ready. Workout loads can use lb or kg. Nutrition targets are optional; unset targets remain clearly marked.
-3. **Plan and track manually, or connect the agent.** Recipes, meals, groceries, food logs, workouts, sets, and progress work without an AI connection.
-4. **Open My agent → Continue with ChatGPT.** Review OpenAI's consent screen and authorize plan usage if your account supports it. Corner then loads the models available to that account.
-5. **Ask for a specific next step.** The agent can ask for missing information, give an explanation, or prepare a proposal. Inspect the proposed recipes, meals, targets, and workouts before choosing **Apply changes**.
+3. **Plan meals and training.** Create recipes, schedule meals, build grocery lists, and prepare workouts or reusable routines.
+4. **Record actual activity.** Log food, completed sets, check-ins, and progress separately from planned targets.
 
-Useful requests include:
+### Recipes and food logging
 
-- “Build a training week around my available days, equipment, and goals. Ask about anything important that is missing.”
-- “Plan varied meals for next week using my dietary preferences and targets. Keep shopping to one trip.”
-- “I only have 25 minutes today. Adapt my planned workout and explain what you changed.”
-- “Review my last two weeks of training, recovery, and logged nutrition before suggesting adjustments.”
+Create and edit recipes directly in your collection. Nutrition and ingredient quantities describe one serving; planned servings multiply those values. **Add food** accepts manually entered food and nutrition values and saves only when you submit the editable form.
 
-The agent uses your saved Corner profile, bounded recent records, and recent Corner agent exchanges. It has no shell, unrestricted browser, or access to another user's workspace. It can search the included exercise catalog and inspect your recipes, routines, and workouts. It cannot record meals eaten, body measurements, or completed workouts on your behalf as part of generating a plan.
-
-### Recipe and food assistance
-
-**Recipe studio** creates a draft using the same connection. Review and save the recipe to add it to your collection. Nutrition and ingredient quantities describe one serving; planned servings multiply those values.
-
-In **Add food → Describe food**, enter food and quantity in ordinary language, such as “2 large boiled eggs and 200 g cooked rice.” If the identity, amount, or preparation is too ambiguous, the estimator asks for details. Accepting an estimate fills an editable food form; it does not save a food log until you choose to save it. Estimates remain approximate, especially without a package label.
+Historical recipe requests and training requests/reviews remain supported workspace import/export archive data. They cannot execute retired commands or apply changes.
 
 Workout targets and previous performance supply editable prefills. A proposed load is separate from an actual logged set. Dumbbell loads marked “per hand” are the weight of each dumbbell.
 
-## ChatGPT plan access: current scope
+## Retired assistance and preserved history
 
-The implementation follows OpenAI's documented **ChatGPT plan usage / Sign in with ChatGPT** flow for local apps. A supported account authorizes the app independently; tokens are not taken from an existing Codex login or browser session. There is no silent switch to separately billed Platform API usage.
+Recipe studio, Describe food, My agent, Training Coach, model connections, and inference are retired. There is no hosted AI roadmap or replacement provider. Retired RPC namespaces and OAuth callbacks are rejected rather than aliased.
 
-This connection authorizes eligible model requests. **It does not grant ChatGPT conversation history or account context.** Model access, usage limits, consent, workspace policy, and availability are determined by the connected account and OpenAI.
-
-The self-serve route documented by OpenAI is for open-source and locally hosted applications. Paid or remotely hosted applications require separate onboarding/approval. Consequently, Corner supports local loopback authorization and **disables self-serve subscription registration in hosted mode**. It is not a public SaaS deployment, and the local connection should not be presented as an approved hosted integration.
-
-Official references, checked 22 October 2026:
-
-- [Plan usage overview and scope](https://developers.openai.com/siwc/token-sharing-open-source)
-- [Registration and sign-in](https://developers.openai.com/siwc/token-sharing-open-source/sign-in)
-- [Models and inference](https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference)
-- [Preview requirements and limitations](https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations)
-- [Account and session handling](https://developers.openai.com/siwc/token-sharing-open-source/profiles-and-sessions)
-- [Hosted/commercial client access](https://developers.openai.com/siwc/request-client-id)
-
-### Connection lifecycle
-
-Corner login and ChatGPT authorization are separate. An expired or limited ChatGPT grant does not sign you out of Corner. You can keep using the manual tools and reconnect when needed.
-
-OAuth uses fresh state, nonce, PKCE, and the initiating Corner session. The app retains the issued registration and verifies signed account identity before enabling inference. Access and refresh credentials are encrypted in Postgres and never sent to the frontend. Refresh rotation is serialized with database leases, and generation checks prevent late work from restoring a disconnected grant. Available models are fetched for the selected connection rather than hardcoded.
-
-Disconnect stops local use and attempts remote revocation. If remote revocation cannot be confirmed, the interface tells you and links to ChatGPT settings. The verified registration is retained so reconnecting uses the same ChatGPT identity; Corner does not offer a switch-account operation within a Corner account. A separate Corner account has its own independent connection.
+Before the final retirement release, the owner/operator must confirm backups and revoke any existing ChatGPT grants through the provider. Source removal does not prove grant absence or revocation. Preserve encrypted provider records, AI-run archives, historical receipts/migrations, and their matching original backup keys; no deletion or rotation is authorized by retirement. These installation archives are not additional workspace JSON export fields.
 
 ## Bring your current Corner plan
 
@@ -210,14 +181,14 @@ Standalone **Export workspace** requests a consistent full server snapshot, incl
 
 ## Data, backups, and upgrades
 
-Application tables live in Neon Postgres, separate from managed accounts in `neon_auth`. Transaction-scoped owner locks serialize first writes as well as existing workspaces. A proposal is checked against the workspace revision it reviewed; edits made in the meantime require a fresh proposal. Applying a proposal commits all validated changes, its receipt, and its applied status together.
+Application tables live in Neon Postgres, separate from managed accounts in `neon_auth`. Transaction-scoped owner locks serialize first writes and existing workspaces; validated manual changes, revision, and mutation receipt commit atomically. Retired commands are rejected even when a matching historical receipt exists.
 
-Workspace entities are individual relational records. Normal authenticated startup returns only settings/revision/AI availability; screens use bounded date queries, cursor pages, details, and complete-range aggregates. Cursor invalidation or a concurrent revision change requires refreshing the relevant slice rather than silently skipping records. Recorded nutrition/workout snapshots survive edits or deletion of source recipes/templates.
+Workspace entities are individual relational records. Normal authenticated startup returns settings/revision; screens use bounded date queries, cursor pages, details, and complete-range aggregates. Cursor invalidation or a concurrent revision change requires refreshing the relevant slice rather than silently skipping records. Recorded nutrition/workout snapshots survive edits or deletion of source recipes/templates.
 
 For a complete backup:
 
 1. Use Neon restore/branch facilities within your plan's retention window, and maintain encrypted off-service PostgreSQL dumps using the **direct** connection. Include managed account data; follow Neon's restore procedures for Auth.
-2. Back up the matching private application configuration (`data/private-config.json` or hosted secrets) separately. Losing the encryption key makes saved ChatGPT credentials unreadable.
+2. Back up matching original private configuration (`data/private-config.json` or hosted secrets) and keys separately, including keys needed to read historical encrypted provider records. Current runtime no longer creates these keys.
 3. Protect all backups as private account and health-related information. Never publish credentials, database dumps, or private keys.
 
 Restore the database and its original keys together, then verify sign-in and saved records before reopening access. Retention and restore capabilities depend on your Neon plan; exercise recovery rather than assuming persistence is a backup.
@@ -230,15 +201,13 @@ The `relational-v1` transition appends `0001_zippy_silver_sable.sql` to native D
 
 ## Hosted deployment preparation
 
-Hosted mode requires an HTTPS origin, the Neon Postgres/Auth URLs, and independent application encryption/session-binding secrets. Register the public origin as a Neon Auth trusted domain. Configure your own SMTP provider in Neon for production, enable required email verification with method OTP, and set `NEON_AUTH_REQUIRE_EMAIL_VERIFICATION=true`.
+Hosted mode requires an HTTPS origin and the Neon Postgres/Auth URLs, not model encryption/session-binding secrets. Register the public origin as a Neon Auth trusted domain. Configure your own SMTP provider in Neon for production, enable required email verification with method OTP, and set `NEON_AUTH_REQUIRE_EMAIL_VERIFICATION=true`.
 
 Neon owns password recovery, verification codes, session expiry, and managed service rate limits. Corner retains its code-entry, reset-password, loading, and error screens, and requires a live managed session before every protected request. No real inbox delivery is implied by an enabled policy.
 
 For **Cloudflare Workers**, follow [HOSTING.md → Cloudflare Workers](HOSTING.md#cloudflare-workers). Production is one full-stack Worker named `corner`; staging is native Preview `staging` under that Worker, not another named Worker. Both consume the identical immutable format-4 bundle/assets/Drizzle migrator without rebuilding. Expected origins are `https://corner.adam-nathaniel-woo.workers.dev` and `https://staging-corner.adam-nathaniel-woo.workers.dev`; an exact production HTTPS custom domain is optional. Keep `preview_urls` enabled and Access limited to the exact staging alias and Preview deployment URLs, never production. Staging retains isolated persistent Neon DB/Auth/keys and synthetic records. There is no frontend Worker or service binding. Feature branches are tested locally; no feature app/database previews are provisioned. Disable independent Cloudflare Builds/automatic Preview triggers. `pnpm run build:workers` dry-runs the single Worker without publishing. Production `corner` must exist before creating its Preview; follow the separate [cutover gates](HOSTING.md#one-time-protected-configuration-and-cutover-order). Source implementation is not evidence of live migration.
 
-For a **server you control**, the same guide covers one Corner container behind Caddy. `scripts/init-hosted.mjs` creates independent private keys without printing or overwriting them; it does not create a cloud server or configure DNS or SMTP.
-
-Keep one Corner **Node process** because its agent background tasks execute in memory and startup fails interrupted runs. The Workers entrypoint does not perform that process-wide recovery or start inference. Hosted ChatGPT access remains disabled on both platforms pending an approved integration; there is no separately billed fallback.
+For a **server you control**, the same guide covers one Corner container behind Caddy. `scripts/init-hosted.mjs` creates a proxy proof without printing or overwriting existing configuration; it does not create a cloud server or configure DNS or SMTP. Keep the existing one-process Node deployment topology.
 
 ## Development and verification
 
@@ -329,16 +298,15 @@ Old feature-preview provisioning workflows are removed. Never recreate removed l
 
 | Folder                       | Responsibility                                                                                               |
 | ---------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `apps/web/src/`              | React account UI, profile/import settings, meal planner, recipes, workouts, and agent review                 |
-| `apps/server/src/`           | Managed Auth boundary, PostgreSQL persistence, oRPC procedures, model connection, and planning agent         |
-| `packages/nutrition/src/`    | Food and recipe types/schemas, meal calendar, macro/grocery calculations, and food estimates                 |
+| `apps/web/src/`              | React account UI, profile/import settings, meal planner, recipes, workouts, and progress                     |
+| `apps/server/src/`           | Managed Auth boundary, PostgreSQL persistence, and oRPC procedures                                          |
+| `packages/nutrition/src/`    | Food and recipe types/schemas, meal calendar, and macro/grocery calculations                                 |
 | `packages/training/src/`     | Workout types/rules, result prefill, exercise catalog, and provenance data                                   |
 | `packages/workspace/src/`    | Combined state/settings, validated mutation composition, training-aware nutrition targets, and initial state |
-| `packages/agent/src/`        | Planning proposal contracts, allowed changes, and proposal-to-mutation validation                            |
 | `packages/api/src/`          | Browser-safe oRPC contract, transport schemas, and inferred client types                                     |
 | `apps/web/src/**/__tests__/` | Vitest component/logic tests and Playwright browser journeys colocated with their owners                     |
 | `apps/web/__tests__/`        | Node-environment Vitest checks for web configuration                                                         |
-| `apps/server/tests/`         | Accounts, email, data isolation, agent, provider, and proxy regression checks                                |
+| `apps/server/tests/`         | Accounts, data isolation, migration, recovery, and proxy regression checks                                  |
 | `scripts/`                   | Workspace test runner, production/development smoke checks, configuration, and packaging                     |
 | `deployment/`                | HTTPS edge configuration for the optional hosted Compose deployment                                          |
 

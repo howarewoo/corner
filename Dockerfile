@@ -8,7 +8,6 @@ COPY apps/design/package.json ./apps/design/package.json
 COPY packages/nutrition/package.json ./packages/nutrition/package.json
 COPY packages/training/package.json ./packages/training/package.json
 COPY packages/workspace/package.json ./packages/workspace/package.json
-COPY packages/agent/package.json ./packages/agent/package.json
 COPY packages/api/package.json ./packages/api/package.json
 COPY packages/ui/package.json ./packages/ui/package.json
 
@@ -40,7 +39,6 @@ COPY --from=build --chown=node:node /app/apps/web/dist ./apps/web/dist
 COPY --from=build --chown=node:node /app/packages/nutrition/dist ./packages/nutrition/dist
 COPY --from=build --chown=node:node /app/packages/training/dist ./packages/training/dist
 COPY --from=build --chown=node:node /app/packages/workspace/dist ./packages/workspace/dist
-COPY --from=build --chown=node:node /app/packages/agent/dist ./packages/agent/dist
 COPY --from=build --chown=node:node /app/packages/api/dist ./packages/api/dist
 COPY --from=build --chown=node:node /app/scripts/healthcheck.mjs ./scripts/healthcheck.mjs
 RUN mkdir -p /app/data && chown node:node /app/data && chmod 700 /app/data

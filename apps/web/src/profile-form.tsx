@@ -130,7 +130,7 @@ export default function ProfileForm({
           <SlidersHorizontal size={18} />
         </div>
         <p className="profile-help">
-          Your plans and agent use the details you enter here. You can update them at any time.
+          Your plans use the details you enter here. You can update them at any time.
         </p>
         <div className="form-two">
           {renderField(

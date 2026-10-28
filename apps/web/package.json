@@ -18,8 +18,6 @@
   "dependencies": {
     "@neondatabase/auth": "0.6.0-beta",
     "@orpc/client": "1.16.1",
-    "@orpc/tanstack-query": "1.16.1",
-    "@packages/agent": "workspace:*",
     "@packages/api": "workspace:*",
     "@packages/nutrition": "workspace:*",
     "@packages/training": "workspace:*",
