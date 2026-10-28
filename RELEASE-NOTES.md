@@ -19,6 +19,7 @@ Corner has not been released. This is the current implementation baseline, not a
 - Removed unused sample recipe/starter-week/template APIs and date selectors; persistence reuses the shared empty training-state factory. Supported original Corner imports and manual workflows remain unchanged.
 - Domain code is separated into nutrition, training, workspace, and agent packages with direct owner imports and acyclic dependencies. Development watchers, Vite access boundaries, containers, source packaging, and release tooling use those packages; no catch-all package or compatibility re-exports remain.
 - Server, domain, and oRPC contract validation now use Zod 4. Planning tools use native JSON Schema conversion instead of a direct `zod-to-json-schema` dependency; migration inventory validation retains UUID-shaped snapshot lineage IDs and explicit string-keyed table records.
+- Manual profile/targets, recipes, food logging, and meal selection now use TanStack Form `1.33.5` for editable drafts and submission state while retaining shared controls and native constraints. Saves await persistence, failed saves retain edits, food estimates only populate review, matching ingredient metadata survives recipe edits, and unset targets remain distinct from zero targets. Recipe editing also retains legitimate zero-minute prep/cook values.
 
 ### Local development
 
