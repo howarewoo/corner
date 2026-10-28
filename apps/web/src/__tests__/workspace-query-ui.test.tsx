@@ -635,7 +635,10 @@ test('Today respects logged planned-meal membership even when its food entry is 
 });
 
 test('the selected recipe remains actionable when it is outside the current picker page', async () => {
-  const add = vi.fn();
+  const { promise, resolve } = Promise.withResolvers<void>();
+  const add = vi.fn(
+    (_recipe: Recipe, _date: string, _slot: string, _servings: number, _entryId: string) => promise,
+  );
   mockHttp((call) => {
     if (call.path === '/api/rpc/workspace/page')
       return json({
@@ -666,8 +669,18 @@ test('the selected recipe remains actionable when it is outside the current pick
   );
   const submit = await screen.findByRole('button', { name: 'Add to plan' });
   await waitFor(() => expect(submit).toBeEnabled());
-  await userEvent.setup().click(submit);
-  expect(add).toHaveBeenCalledWith(savedRecipe, '2026-10-24', 'breakfast', 1, expect.any(String));
+  const user = userEvent.setup();
+  await user.clear(screen.getByRole('spinbutton', { name: 'Servings' }));
+  await user.type(screen.getByRole('spinbutton', { name: 'Servings' }), '2');
+  await user.click(submit);
+  await waitFor(() =>
+    expect(add).toHaveBeenCalledWith(savedRecipe, '2026-10-24', 'breakfast', 2, expect.any(String)),
+  );
+  expect(submit).toBeDisabled();
+  await user.click(submit);
+  expect(add).toHaveBeenCalledTimes(1);
+  await act(async () => resolve());
+  await waitFor(() => expect(submit).toBeEnabled());
 });
 
 test('query ingestion checks the write floor again when its cache key is still empty', async () => {

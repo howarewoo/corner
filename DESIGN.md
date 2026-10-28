@@ -99,6 +99,8 @@ The product imports `@packages/ui/utilities-only.css` with Tailwind's Vite integ
 
 Storybook 10.6.3 supplies the catalog's native manager, replacing the custom React Router shell without changing product UI. Its preview imports the real shared styles and specimen styles; the Light/Dark/System toolbar and Sidebar specimen's theme picker share the same selection and align `data-corner-theme` and `.dark` on the preview document root. Charts and portal-mounted overlays/toasts follow the same tokens. The existing 69-entry catalog remains the inventory; live specimen source remains the reference, without Autodocs, generated usage documentation, snippets, or copy controls.
 
+Catalog submission examples compose pinned TanStack Form `useForm`, direct `form.Field` bindings, and focused `form.Subscribe` with existing shared controls. Editable submission values belong to the form, including Select and Questionnaire choices; reset/cancel resets those values. Native browser constraints, labels, and existing feedback remain intact. UI wrappers remain library-independent; standalone control-state examples do not require forms. This describes catalog examples, not a completed product-wide migration.
+
 The shared utility entrypoint explicitly registers both app source trees with Tailwind. Product utility generation must not depend on a matching class appearing in a catalog specimen or on the development server's working directory.
 
 ## Do's and Don'ts
