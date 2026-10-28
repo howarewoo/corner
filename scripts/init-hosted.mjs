@@ -43,7 +43,7 @@ if (
   try {
     writeFileSync(destination, contents, { mode: 0o600, flag: 'wx' });
     process.stdout.write(
-      'Created .env.hosted with three independent private keys.\nAdd Neon connection URLs and configure managed Auth, then follow HOSTING.md.\n',
+      'Created .env.hosted with one random proxy proof.\nAdd Neon connection URLs and configure managed Auth, then follow HOSTING.md.\n',
     );
   } catch (error) {
     process.stderr.write(
