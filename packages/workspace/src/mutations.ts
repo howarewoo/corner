@@ -220,10 +220,6 @@ export function applyMutation(previous: AppState, input: Mutation): AppState {
     case 'training.week':
     case 'training.template.save':
     case 'training.checkin.save':
-    case 'training.request.save':
-    case 'training.review.save':
-    case 'training.review.apply':
-    case 'training.review.dismiss':
       next.training = applyTrainingMutation(next.training, mutation, next.settings.schedule);
       break;
   }

@@ -46,7 +46,7 @@ export function classifyChanges(paths) {
     else if (
       !control &&
       path.startsWith('apps/web/src/') &&
-      !/(^|\/)(main|api|account-access|agent-panel|worker)\.[^.]+$/.test(path) &&
+      !/(^|\/)(main|api|account-access|worker)\.[^.]+$/.test(path) &&
       !/(auth|session|connection|proxy|runtime-config|browser)/i.test(path)
     )
       profile = 'web';

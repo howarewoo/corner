@@ -2,14 +2,7 @@ import type { AppState, Settings } from '@packages/workspace/types';
 import type { FoodEntry, MealSlot, Recipe } from '@packages/nutrition/types';
 import type { WorkspaceMutationInput } from '@packages/api/schemas';
 
-export type View =
-  | 'agent'
-  | 'today'
-  | 'workouts'
-  | 'planner'
-  | 'recipes'
-  | 'groceries'
-  | 'settings';
+export type View = 'today' | 'workouts' | 'planner' | 'recipes' | 'groceries' | 'settings';
 
 export type Overlay =
   | { kind: 'recipe'; recipe: Recipe }
@@ -23,7 +16,6 @@ export type CornerAppProps = {
   initialSettings?: Settings;
   preview: boolean;
   displayName: string;
-  initialRevision?: number;
   accountEmail?: string;
   signingOut?: boolean;
   onSignOut?: () => void;

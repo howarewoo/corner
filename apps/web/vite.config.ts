@@ -60,7 +60,6 @@ export function developmentServer(environment: Record<string, string | undefined
         fileURLToPath(new URL('../../packages/nutrition/dist', import.meta.url)),
         fileURLToPath(new URL('../../packages/training/dist', import.meta.url)),
         fileURLToPath(new URL('../../packages/workspace/dist', import.meta.url)),
-        fileURLToPath(new URL('../../packages/agent/dist', import.meta.url)),
         fileURLToPath(new URL('../../packages/api/dist', import.meta.url)),
         fileURLToPath(new URL('../../packages/ui/src', import.meta.url)),
         fileURLToPath(new URL('../../node_modules', import.meta.url)),

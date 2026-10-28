@@ -33,7 +33,6 @@ vi.mock('../features/workspace/utils', async (importOriginal) => {
 const bootstrap = (revision: number): Bootstrap => ({
   revision,
   settings: createInitialState().settings,
-  aiAvailable: false,
 });
 
 const accountUnavailable = () =>
@@ -195,12 +194,11 @@ test.each(['SIGN_IN_REQUIRED', 'INVALID_INPUT'] as const)(
 );
 
 test.each(['stale', 'failed'] as const)(
-  'reconnect refreshes %s workspace resources but not provider connections',
+  'reconnect refreshes %s workspace resources',
   async (initial) => {
     let revision = 1;
     let fail = initial === 'failed';
-    const calls = mockHttp((call) => {
-      if (call.path === '/api/rpc/ai/connection') return json({ json: {} });
+    mockHttp((call) => {
       if (call.path === '/api/rpc/workspace/get') {
         if (fail) throw new TypeError('Network unavailable');
         return json({ json: bootstrap(revision) });
@@ -213,14 +211,12 @@ test.each(['stale', 'failed'] as const)(
     function Consumer() {
       const workspace = runtime.useWorkspace();
       const resource = runtime.useResource('food', undefined, food);
-      const connection = runtime.useConnection();
       return (
         <>
           <output aria-label="Workspace">
             {workspace.isError ? 'error' : workspace.data?.revision}
           </output>
           <output aria-label="Food">{resource.isError ? 'error' : resource.data?.revision}</output>
-          <output aria-label="Connection">{connection.status}</output>
         </>
       );
     }
@@ -232,7 +228,6 @@ test.each(['stale', 'failed'] as const)(
     await waitFor(() => {
       expect(screen.getByLabelText('Workspace')).toHaveTextContent(fail ? 'error' : '1');
       expect(screen.getByLabelText('Food')).toHaveTextContent(fail ? 'error' : '1');
-      expect(screen.getByLabelText('Connection')).toHaveTextContent('success');
     });
     try {
       act(() => {
@@ -248,7 +243,6 @@ test.each(['stale', 'failed'] as const)(
         expect(screen.getByLabelText('Food')).toHaveTextContent('2');
       });
       expect(food).toHaveBeenCalledTimes(2);
-      expect(calls.filter((call) => call.path === '/api/rpc/ai/connection')).toHaveLength(1);
     } finally {
       act(() => {
         onlineManager.setOnline(true);
@@ -797,8 +791,6 @@ test('workout prefill uses the bounded historical context without recording disp
         mutate={mutate}
         busy={false}
         notify={() => {}}
-        onRefresh={() => {}}
-        onOpenAgent={() => {}}
       />
     </QueryClientProvider>,
   );
@@ -864,8 +856,6 @@ test('workout row edits and explicitly cleared suggestions stay with dotted doma
         mutate={mutate}
         busy={false}
         notify={() => {}}
-        onRefresh={() => {}}
-        onOpenAgent={() => {}}
       />
     </QueryClientProvider>,
   );
@@ -943,8 +933,6 @@ test('workout Save clears a failed Complete intent, honors native limits, and wa
         mutate={mutate}
         busy={false}
         notify={() => {}}
-        onRefresh={() => {}}
-        onOpenAgent={() => {}}
       />
     </QueryClientProvider>,
   );
@@ -1056,8 +1044,6 @@ test('progress uses lifetime counts, old measurements and explicit historical se
         mutate={async () => true}
         busy={false}
         notify={() => {}}
-        onRefresh={() => {}}
-        onOpenAgent={() => {}}
       />
     </QueryClientProvider>,
   );
@@ -1126,17 +1112,6 @@ test('a full export above the former browser cap can be uploaded, previewed, and
         },
       });
     if (call.path === '/api/rpc/workspace/import') return json({ json: { revision: 1 } });
-    if (call.path === '/api/rpc/ai/connection')
-      return json({
-        json: {
-          available: false,
-          connected: false,
-          enabled: false,
-          state: 'unavailable',
-          model: null,
-          models: [],
-        },
-      });
   });
   render(
     <QueryClientProvider client={runtime.queryClient}>
@@ -1147,7 +1122,6 @@ test('a full export above the former browser cap can be uploaded, previewed, and
         busy={false}
         accountEmail="synthetic@corner.test"
         notify={() => {}}
-        readState={async () => {}}
         mutate={async () => true}
       />
     </QueryClientProvider>,

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, Navigate, useLocation, useNavigate, useRoutes } from 'react-router';
-import { Dumbbell, Home, Settings2, Sparkles, UtensilsCrossed } from 'lucide-react';
+import { Dumbbell, Home, Settings2, UtensilsCrossed } from 'lucide-react';
 import type { Recipe } from '@packages/nutrition/types';
 import { dateKey } from '@packages/nutrition/dates';
 import {
@@ -21,7 +21,6 @@ import {
   WorkspaceMobileBar,
   type MobileNavigation,
 } from '@packages/ui';
-import AgentPanel from '../agent-panel';
 import TrainingPanel from './training-panel';
 import Today from '../features/today/today';
 import MealPlanner from '../features/meal-planner/meal-planner';
@@ -54,7 +53,6 @@ function CornerWorkspace({
   initialSettings,
   preview,
   displayName,
-  initialRevision = 0,
   accountEmail,
   signingOut,
   onSignOut,
@@ -68,24 +66,13 @@ function CornerWorkspace({
   const workspaceContent = useRef<HTMLDivElement>(null);
   const routerNavigate = useNavigate();
   const location = useLocation();
-  const [agentPrompt, setAgentPrompt] = useState('');
   const [selectedDate, setSelectedDate] = useState(() =>
     dateKey(new Date(), (initialSettings ?? initialState!.settings).timezone),
   );
   const [overlay, setOverlay] = useState<Overlay>(null);
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
-  const {
-    state,
-    settings,
-    revision,
-    busy,
-    disabled,
-    notifications,
-    notify,
-    readState,
-    mutate,
-    copyText,
-  } = useWorkspaceState({ initialState, initialSettings, initialRevision, preview });
+  const { state, settings, busy, disabled, notifications, notify, mutate, copyText } =
+    useWorkspaceState({ initialState, initialSettings, preview });
   // Collection filters stay mounted with the workspace across navigation.
   const recipeFilters = useRecipeFilters();
   useEffect(() => {
@@ -97,10 +84,6 @@ function CornerWorkspace({
   }, [location.key, view]);
   const navigate = (next: View) => {
     if (next !== view) void routerNavigate(viewPaths[next]);
-  };
-  const openAgent = (prompt = '') => {
-    setAgentPrompt(prompt);
-    navigate('agent');
   };
   const firstName = (settings.name || displayName || 'you').split(' ')[0];
   const openRecipe = (recipe: Recipe) => setOverlay({ kind: 'recipe', recipe });
@@ -174,17 +157,6 @@ function CornerWorkspace({
                     <Button
                       variant="ghost"
                       size="icon"
-                      aria-label="My agent"
-                      title="My agent"
-                      nativeButton={false}
-                      role="link"
-                      render={<Link to={viewPaths.agent} />}
-                    >
-                      <Sparkles size={18} />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
                       className="rounded-full p-0"
                       aria-label={`Open settings for ${settings.name || displayName || 'Your workspace'}`}
                       title={`Open settings for ${settings.name || displayName || 'Your workspace'}`}
@@ -246,26 +218,7 @@ function CornerWorkspace({
                   mutate={mutate}
                   busy={disabled}
                   notify={notify}
-                  onRefresh={() => void readState()}
-                  onOpenAgent={openAgent}
                 />
-              )}
-
-              {view === 'agent' && (
-                <>
-                  <WorkspaceHeader
-                    title="Your agent."
-                    eyebrow="SUPPORT FOR THE PLAN YOU CHOOSE"
-                    description="Practical suggestions, grounded in your own workspace."
-                  />
-                  <AgentPanel
-                    state={state}
-                    revision={revision}
-                    referenceDate={selectedDate}
-                    initialPrompt={agentPrompt}
-                    onRefresh={() => void readState()}
-                  />
-                </>
               )}
 
               {view === 'planner' && (
@@ -280,7 +233,6 @@ function CornerWorkspace({
                   setOverlay={setOverlay}
                   setConfirmation={setConfirmation}
                   openRecipe={openRecipe}
-                  openAgent={openAgent}
                 />
               )}
 
@@ -318,7 +270,6 @@ function CornerWorkspace({
                   signingOut={signingOut}
                   onSignOut={onSignOut}
                   notify={notify}
-                  readState={readState}
                   mutate={mutate}
                 />
               )}

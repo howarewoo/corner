@@ -1,16 +1,8 @@
-import {
-  Home,
-  Sparkles,
-  CalendarDays,
-  UtensilsCrossed,
-  ShoppingBasket,
-  Dumbbell,
-} from 'lucide-react';
+import { Home, CalendarDays, UtensilsCrossed, ShoppingBasket, Dumbbell } from 'lucide-react';
 import type { View } from './types';
 
 export const viewPaths: Record<View, string> = {
   today: '/',
-  agent: '/agent',
   workouts: '/workouts',
   planner: '/planner',
   recipes: '/recipes',
@@ -27,12 +19,6 @@ export const sidebarGroups = [
         label: 'Today',
         href: viewPaths.today,
         icon: <Home size={18} strokeWidth={1.8} />,
-      },
-      {
-        id: 'agent' as const,
-        label: 'My agent',
-        href: viewPaths.agent,
-        icon: <Sparkles size={18} strokeWidth={1.8} />,
       },
     ],
   },

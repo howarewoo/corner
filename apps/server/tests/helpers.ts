@@ -60,7 +60,7 @@ export async function closeTestDatabase(database: Pool): Promise<void> {
 export async function createTestAuth(config: Config, database: Pool) {
   const options = {
     database,
-    secret: config.authSecret,
+    secret: 'synthetic-managed-auth-fixture-secret-over-32-characters',
     baseURL: config.neonAuthBaseUrl,
     basePath: '/neondb/auth',
     trustedOrigins: [config.origin],

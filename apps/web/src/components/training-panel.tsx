@@ -30,18 +30,12 @@ import {
 import type { AppState, Settings } from '@packages/workspace/types';
 import type { ExerciseChoices, ExerciseHistoryPage } from '@packages/api/workspace-data';
 import { rpc, useResource, readResource, sessionLifetime } from '../rpc';
-import {
-  calendarPage,
-  requireRevision,
-  useRecordPage,
-  useCursorResource,
-} from '../features/workspace/resources';
+import { calendarPage, useRecordPage, useCursorResource } from '../features/workspace/resources';
 import { ResourceStatus, ResourcePaging } from '../features/workspace/workspace-ui';
 import type { WorkspaceMutationInput } from '@packages/api/schemas';
 import type {
   LoadType,
   TrainingCheckIn,
-  TrainingReview,
   WorkoutExercise,
   WorkoutKind,
   WorkoutSession,
@@ -111,8 +105,6 @@ type Props = {
   mutate: (mutation: WorkspaceMutationInput['mutation'], success?: string) => Promise<boolean>;
   busy: boolean;
   notify: (message: string, error?: boolean) => void;
-  onRefresh: () => void;
-  onOpenAgent: (prompt?: string) => void;
 };
 type EditorState = {
   session: WorkoutSession;
@@ -333,7 +325,7 @@ function sessionError(next: WorkoutSession, templateMode: boolean): string | und
     return 'Enter the minutes you actually trained before completing this session.';
   }
   if (!templateMode && next.status === 'skipped' && next.changeReason.trim().length < 2) {
-    return 'Add a brief plan change or skip reason so the next review has context.';
+    return 'Add a brief plan change or skip reason to keep your training history clear.';
   }
   if (
     !templateMode &&
@@ -1202,7 +1194,7 @@ function SessionEditor({
               </FormField>
               <FormField
                 label="Plan change or skip reason"
-                hint="Useful context for your next review."
+                hint="Keep useful context with your training history."
               >
                 <Input
                   maxLength={1500}
@@ -1280,7 +1272,7 @@ function SkipSessionEditor({
     validators: {
       onSubmit: ({ value }) => {
         if (value.reason.trim().length < 2) {
-          return 'Add a brief plan change or skip reason so the next review has context.';
+          return 'Add a brief plan change or skip reason to keep your training history clear.';
         }
         if (session.exercises.some((exercise) => exercise.sets.some((set) => set.completed))) {
           return 'This session has completed sets. Save it as a partial completed workout, or clear those checks before skipping.';
@@ -1318,7 +1310,7 @@ function SkipSessionEditor({
         }}
       >
         <p className="training-help">
-          A skipped session stays in your plan so a future review has the full picture.
+          A skipped session stays in your plan so your training history retains the full picture.
         </p>
         <form.Field name="reason">
           {(field) => (
@@ -1421,7 +1413,7 @@ function CheckInEditor({
         }}
       >
         <p className="training-help">
-          A few consistent observations make reviews more useful. Every field is optional except the
+          A few consistent observations help you track progress. Every field is optional except the
           date.
         </p>
         <FormField label="Date">
@@ -1517,196 +1509,6 @@ function CheckInEditor({
   );
 }
 
-function ReviewCard({
-  review,
-  sessions,
-  busy,
-  mutate,
-}: {
-  review: TrainingReview;
-  sessions: WorkoutSession[];
-  busy: boolean;
-  mutate: Props['mutate'];
-}) {
-  const actionable = review.status === 'proposed' && review.changes.length > 0;
-  const stale =
-    actionable &&
-    review.changes.some((change) => {
-      const current = sessions.find((session) => session.id === change.session.id);
-      return (
-        (current?.updatedAt ?? null) !== change.expectedUpdatedAt ||
-        Boolean(current && !['planned', 'skipped'].includes(current.status))
-      );
-    });
-  const exercises = (session: WorkoutSession) =>
-    session.exercises.length ? (
-      <ul>
-        {session.exercises.map((exercise) => (
-          <li key={exercise.id}>
-            <b>{exercise.name}</b>
-            <span>
-              {exercise.targetSets} × {exercise.repMin}–{exercise.repMax} ·{' '}
-              {exercise.targetRir === null ? 'RIR not set' : `${exercise.targetRir} RIR`} ·{' '}
-              {exercise.restSeconds}s rest
-            </span>
-            <small>
-              {loadLabels[exercise.loadType]}
-              {exercise.notes ? ` · ${exercise.notes}` : ''}
-            </small>
-          </li>
-        ))}
-      </ul>
-    ) : (
-      <p>{session.notes || kindLabels[session.kind]}</p>
-    );
-
-  return (
-    <Card className="panel coach-review">
-      <div className="coach-review-heading">
-        <div>
-          <span className="training-eyebrow">
-            {new Date(review.createdAt).toLocaleDateString('en-US', {
-              month: 'short',
-              day: 'numeric',
-            })}{' '}
-            · Saved review
-          </span>
-          <h3>{review.title}</h3>
-        </div>
-        <Badge
-          variant={review.status === 'applied' ? 'default' : 'secondary'}
-          className={`training-status training-status-${review.status === 'applied' ? 'completed' : review.status === 'dismissed' ? 'skipped' : 'planned'}`}
-        >
-          {review.status === 'proposed' && !review.changes.length
-            ? 'Analysis'
-            : review.status === 'proposed'
-              ? 'For review'
-              : review.status === 'applied'
-                ? 'Applied'
-                : 'Dismissed'}
-        </Badge>
-      </div>
-      <div className="coach-review-summary">{review.summary}</div>
-      {review.changes.length > 0 && (
-        <div className="coach-changes">
-          <h4>{review.status === 'applied' ? 'Applied plan changes' : 'Proposed plan changes'}</h4>
-          {review.changes.map((change, index) => {
-            const previous = sessions.find((session) => session.id === change.session.id);
-            const next = change.session;
-            return (
-              <div className="coach-change" key={`${next.id}-${index}`}>
-                <h5>{next.name}</h5>
-                <div
-                  className={`coach-change-comparison ${review.status !== 'proposed' ? 'coach-change-saved' : ''}`}
-                >
-                  {review.status === 'proposed' && (
-                    <>
-                      <div>
-                        <span>Current</span>
-                        <p>
-                          {previous
-                            ? `${todayLabel(previous.date, { weekday: 'short', month: 'short', day: 'numeric' })} · ${previous.plannedMinutes} min`
-                            : 'New session'}
-                        </p>
-                        {previous && (
-                          <small>
-                            {previous.exercises.reduce(
-                              (sum, exercise) => sum + exercise.targetSets,
-                              0,
-                            )}{' '}
-                            planned sets · {statusLabels[previous.status]}
-                          </small>
-                        )}
-                      </div>
-                      <ArrowRight size={17} />
-                    </>
-                  )}
-                  <div>
-                    <span>{review.status === 'applied' ? 'Saved change' : 'Proposed'}</span>
-                    <p>
-                      {todayLabel(next.date, { weekday: 'short', month: 'short', day: 'numeric' })}{' '}
-                      · {next.plannedMinutes} min
-                    </p>
-                    <small>
-                      {next.exercises.reduce((sum, exercise) => sum + exercise.targetSets, 0)}{' '}
-                      planned sets · {statusLabels[next.status]}
-                    </small>
-                  </div>
-                </div>
-                <p className="coach-change-reason">{change.reason}</p>
-                <Collapsible className="coach-change-details">
-                  <CollapsibleTrigger className="coach-change-summary">
-                    <ChevronDown size={14} />
-                    {review.status === 'proposed' && previous
-                      ? 'Compare exercises and targets'
-                      : 'See exercises and targets'}
-                  </CollapsibleTrigger>
-                  <CollapsibleContent>
-                    {review.status === 'proposed' && previous && (
-                      <div className="coach-exercise-comparison">
-                        <h6>Current · {previous.name}</h6>
-                        {exercises(previous)}
-                      </div>
-                    )}
-                    <div className="coach-exercise-comparison">
-                      <h6>
-                        {review.status === 'applied' ? 'Saved change' : 'Proposed'} · {next.name}
-                      </h6>
-                      {exercises(next)}
-                    </div>
-                    {next.notes && next.exercises.length > 0 && <p>{next.notes}</p>}
-                  </CollapsibleContent>
-                </Collapsible>
-              </div>
-            );
-          })}
-        </div>
-      )}
-      {stale && (
-        <Alert variant="warning" className="coach-stale-note">
-          <AlertDescription>
-            Your plan changed after this review. Ask your agent for an updated proposal before
-            applying it.
-          </AlertDescription>
-        </Alert>
-      )}
-      {review.status === 'proposed' && (
-        <div className="coach-review-actions">
-          {actionable && (
-            <Button
-              type="button"
-              variant="default"
-              disabled={busy || stale}
-              onClick={() =>
-                void mutate(
-                  { type: 'training.review.apply', data: { id: review.id } },
-                  'Training plan updated',
-                )
-              }
-            >
-              <Check size={16} />
-              Apply {review.changes.length === 1 ? 'change' : `${review.changes.length} changes`}
-            </Button>
-          )}
-          <Button
-            type="button"
-            variant="ghost"
-            disabled={busy}
-            onClick={() =>
-              void mutate(
-                { type: 'training.review.dismiss', data: { id: review.id } },
-                'Review archived',
-              )
-            }
-          >
-            {actionable ? 'Dismiss' : 'Archive review'}
-          </Button>
-        </div>
-      )}
-    </Card>
-  );
-}
-
 export default function TrainingPanel({
   state,
   settings,
@@ -1715,11 +1517,9 @@ export default function TrainingPanel({
   mutate,
   busy,
   notify,
-  onRefresh,
-  onOpenAgent,
 }: Props) {
   const generation = useRef(sessionLifetime()).current;
-  const [tab, setTab] = useState<'week' | 'progress' | 'coach'>('week');
+  const [tab, setTab] = useState<'week' | 'progress'>('week');
   const [editor, setEditor] = useState<EditorState | null>(null);
   const [showChooser, setShowChooser] = useState(false);
   const [manageTemplates, setManageTemplates] = useState(false);
@@ -1750,14 +1550,6 @@ export default function TrainingPanel({
   const checkInPage = useRecordPage(
     { resource: 'checkIns', order: 'recent', limit: 3 },
     !state && tab === 'progress',
-  );
-  const reviewPage = useRecordPage(
-    { resource: 'reviews', order: 'recent', limit: 12 },
-    !state && tab === 'coach',
-  );
-  const requestPage = useRecordPage(
-    { resource: 'trainingRequests', order: 'recent', limit: 20 },
-    !state && tab === 'coach',
   );
   const [templateSearch, setTemplateSearch] = useState('');
   const templatePage = useRecordPage(
@@ -1823,43 +1615,7 @@ export default function TrainingPanel({
       })
     : (progress.data?.weekly ?? []).map((week) => ({ start: week.week, stats: week.stats }));
   const peakSessions = Math.max(1, ...fourWeeks.map((week) => week.stats.sessions));
-  const reviews = state
-    ? [...state.training.reviews].sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-    : (reviewPage.data?.items ?? []);
   const templates = state?.training.templates ?? templatePage.data?.items ?? [];
-  const requests = state
-    ? [...state.training.requests].reverse().slice(0, 20)
-    : (requestPage.data?.items ?? []);
-  const reviewIds = [
-    ...new Set(reviews.flatMap((review) => review.changes.map((change) => change.session.id))),
-  ];
-  const reviewContext = useResource(
-    'details',
-    { sessionIds: reviewIds, revision: reviewPage.data?.revision },
-    async (signal) => {
-      const sessions: WorkoutSession[] = [];
-      let revision = reviewPage.data!.revision;
-      for (let index = 0; index < reviewIds.length; index += 25) {
-        const details = await rpc.workspace.details(
-          { sessionIds: reviewIds.slice(index, index + 25) },
-          { signal },
-        );
-        requireRevision(revision, details.revision);
-        sessions.push(...details.sessions);
-      }
-      return { revision, sessions };
-    },
-    !state && tab === 'coach' && Boolean(reviewPage.data),
-  );
-  const reviewSessions = state?.training.sessions ?? reviewContext.data?.sessions ?? [];
-  const reviewReady = Boolean(
-    state ||
-    (reviewPage.data &&
-      reviewContext.data &&
-      reviewPage.data.revision === reviewContext.data.revision &&
-      !reviewPage.isError &&
-      !reviewContext.isError),
-  );
   const openSession = (session: WorkoutSession) =>
     setEditor({ session: structuredClone(session), expectedUpdatedAt: session.updatedAt });
   const openSessionId = async (id: string) => {
@@ -1953,19 +1709,9 @@ export default function TrainingPanel({
       { type: 'training.session.save', data: { session, expectedUpdatedAt } },
       session.status === 'completed' ? 'Workout logged' : 'Workout saved',
     );
-  const askAbout = (session: WorkoutSession) =>
-    onOpenAgent(`Help me adapt ${session.name} on ${session.date}. Workout ID: ${session.id}. `);
   const activeQueries =
-    tab === 'week'
-      ? [calendar]
-      : tab === 'progress'
-        ? [calendar, progress, completedPage, checkInPage]
-        : [calendar, reviewPage, requestPage, reviewContext];
-  const activeError =
-    activeQueries.find((query) => query.isError)?.error ??
-    (tab === 'coach' && reviewPage.data && reviewContext.data && !reviewReady
-      ? new Error('Your data changed while loading. Please retry.')
-      : null);
+    tab === 'week' ? [calendar] : [calendar, progress, completedPage, checkInPage];
+  const activeError = activeQueries.find((query) => query.isError)?.error;
   if (!state && (activeError || activeQueries.some((query) => !query.data)))
     return (
       <ResourceStatus
@@ -1977,9 +1723,6 @@ export default function TrainingPanel({
           completedPage.reload();
           checkInPage.reload();
           choices.reload();
-          reviewPage.reload();
-          requestPage.reload();
-          void reviewContext.refetch();
         }}
       />
     );
@@ -2026,7 +1769,7 @@ export default function TrainingPanel({
       <Tabs
         value={tab}
         onValueChange={(val) => {
-          if (val) setTab(val as 'week' | 'progress' | 'coach');
+          if (val) setTab(val as 'week' | 'progress');
         }}
       >
         <div className="training-toolbar">
@@ -2038,13 +1781,6 @@ export default function TrainingPanel({
             <TabsTrigger value="progress" id="training-tab-progress">
               <TrendingUp size={17} />
               Progress
-            </TabsTrigger>
-            <TabsTrigger value="coach" id="training-tab-coach">
-              <Sparkles size={17} />
-              Coach
-              {reviews.some((review) => review.status === 'proposed') && (
-                <span className="training-unread-dot" aria-label="New review" />
-              )}
             </TabsTrigger>
           </TabsList>
           <Button type="button" variant="ghost" size="sm" onClick={() => onDateChange(today)}>
@@ -2221,15 +1957,6 @@ export default function TrainingPanel({
                             Move / edit
                           </Button>
                         )}
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => askAbout(session)}
-                        >
-                          <Sparkles size={16} />
-                          Adapt
-                        </Button>
                         {session.status === 'planned' && (
                           <Button
                             type="button"
@@ -2292,23 +2019,6 @@ export default function TrainingPanel({
                   onClick={() => setManageTemplates(true)}
                 >
                   Manage routines <ArrowRight size={16} />
-                </Button>
-              </section>
-              <section className="training-coach-nudge">
-                <Sparkles size={20} />
-                <h3>Life changed the plan?</h3>
-                <p>
-                  Tell your agent what changed. Review a practical adjustment using your profile,
-                  saved workouts, and results.
-                </p>
-                <Button
-                  type="button"
-                  variant="link"
-                  size="sm"
-                  className="inline-link p-0 h-auto font-medium"
-                  onClick={() => onOpenAgent()}
-                >
-                  Open my agent <ArrowRight size={16} />
                 </Button>
               </section>
             </aside>
@@ -2533,73 +2243,6 @@ export default function TrainingPanel({
             )}
             {!state && <ResourcePaging {...completedPage.paging} />}
           </Card>
-        </TabsContent>
-
-        <TabsContent value="coach" id="training-panel-coach">
-          <div className="onboarding-nudge">
-            <div>
-              <h2>A useful next step.</h2>
-              <p>
-                Ask your independent agent to build a routine, adapt a session, or review your
-                progress.
-              </p>
-            </div>
-            <Button
-              type="button"
-              variant="default"
-              onClick={() =>
-                onOpenAgent(
-                  'Review my saved training and suggest a practical next step based on my goals.',
-                )
-              }
-            >
-              <Sparkles size={16} />
-              Open my agent
-            </Button>
-          </div>
-          {reviewReady && reviews.length > 0 && (
-            <>
-              <div className="section-heading">
-                <h2>Saved training reviews</h2>
-                <span>{reviews.length}</span>
-              </div>
-              <div className="coach-reviews">
-                {reviews.slice(0, 12).map((review) => (
-                  <ReviewCard
-                    key={review.id}
-                    review={review}
-                    sessions={reviewSessions}
-                    busy={busy}
-                    mutate={mutate}
-                  />
-                ))}
-              </div>
-            </>
-          )}
-          {!state && <ResourcePaging {...reviewPage.paging} />}
-          {requests.length > 0 && (
-            <section className="profile-section">
-              <h2>Saved coaching notes</h2>
-              {requests.map((request) => (
-                <div key={request.id}>
-                  <small>
-                    {request.date} · {request.status}
-                  </small>
-                  <p>{request.prompt}</p>
-                  <Button
-                    type="button"
-                    variant="link"
-                    size="sm"
-                    className="inline-link p-0 h-auto font-medium"
-                    onClick={() => onOpenAgent(request.prompt)}
-                  >
-                    Use in a new request <ArrowRight size={15} />
-                  </Button>
-                </div>
-              ))}
-            </section>
-          )}
-          {!state && <ResourcePaging {...requestPage.paging} />}
         </TabsContent>
       </Tabs>
 

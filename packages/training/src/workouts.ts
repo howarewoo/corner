@@ -4,8 +4,6 @@ import type {
   ExerciseTarget,
   LoadType,
   TrainingCheckIn,
-  TrainingRequest,
-  TrainingReview,
   TrainingMutation,
   TrainingState,
   TrainingStats,
@@ -259,10 +257,6 @@ export const TrainingMutationOptions = [
   }),
   z.object({ type: z.literal('training.template.save'), data: WorkoutTemplateSchema }),
   z.object({ type: z.literal('training.checkin.save'), data: TrainingCheckInSchema }),
-  z.object({ type: z.literal('training.request.save'), data: TrainingRequestSchema }),
-  z.object({ type: z.literal('training.review.save'), data: TrainingReviewSchema }),
-  z.object({ type: z.literal('training.review.apply'), data: z.object({ id }).strict() }),
-  z.object({ type: z.literal('training.review.dismiss'), data: z.object({ id }).strict() }),
 ] as const;
 export const TrainingMutationSchema = z.discriminatedUnion('type', TrainingMutationOptions);
 export const TrainingStateSchema = z
@@ -392,18 +386,9 @@ export function hasRecordedData(session: WorkoutSession): boolean {
     session.rounds !== null
   );
 }
-function requireUnloggedProposal(session: WorkoutSession): void {
-  if (!['planned', 'skipped'].includes(session.status) || hasRecordedData(session)) {
-    throw new Error(
-      'Suggested plans may change planned or skipped workouts only. Completed work must be logged separately.',
-    );
-  }
-}
 export interface TrainingCommandDependencies {
   sessions: WorkoutSession[];
   templates: WorkoutTemplate[];
-  requests: TrainingRequest[];
-  reviews: TrainingReview[];
   scheduledDates: string[];
   schedule?: Record<string, string>;
 }
@@ -412,8 +397,6 @@ export interface PreparedTrainingCommand {
   deletedSessionIds: string[];
   templates: WorkoutTemplate[];
   checkIns: TrainingCheckIn[];
-  requests: TrainingRequest[];
-  reviews: TrainingReview[];
   scheduledDates: string[];
 }
 function markDates(command: PreparedTrainingCommand, dates: string[]): void {
@@ -421,9 +404,8 @@ function markDates(command: PreparedTrainingCommand, dates: string[]): void {
 }
 /**
  * Dependencies must include every existing record addressed by the command:
- * save/delete IDs, request session, and review request/change IDs. Absent rows
- * mean nonexistent records, never unloaded records. Week preparation needs only
- * that week's occupied/scheduled dates and schedule-selected templates.
+ * save/delete IDs. Absent rows mean nonexistent records, never unloaded records.
+ * Week preparation needs only that week's occupied/scheduled dates and schedule-selected templates.
  * Returns writes only; callers must persist the complete result atomically.
  */
 export function prepareTrainingCommand(
@@ -436,8 +418,6 @@ export function prepareTrainingCommand(
     deletedSessionIds: [],
     templates: [],
     checkIns: [],
-    requests: [],
-    reviews: [],
     scheduledDates: [],
   };
   switch (mutation.type) {
@@ -501,94 +481,6 @@ export function prepareTrainingCommand(
     case 'training.checkin.save':
       next.checkIns = upsert(next.checkIns, mutation.data);
       break;
-    case 'training.request.save':
-      if (mutation.data.status !== 'pending')
-        throw new Error('New coaching requests must be pending.');
-      if (
-        mutation.data.sessionId &&
-        !dependencies.sessions.some((session) => session.id === mutation.data.sessionId)
-      )
-        throw new Error('Choose a workout from your current plan.');
-      if (
-        dependencies.requests.some(
-          (request) => request.id === mutation.data.id && request.status === 'answered',
-        )
-      )
-        throw new Error(
-          'This request has already been answered. Create a new request for another question.',
-        );
-      next.requests = upsert(next.requests, mutation.data);
-      break;
-    case 'training.review.save': {
-      const review = mutation.data;
-      if (review.status !== 'proposed')
-        throw new Error('Save a review as proposed before applying it.');
-      if (dependencies.reviews.some((item) => item.id === review.id))
-        throw new Error('This review already exists. Use a new ID for a new review.');
-      if (review.requestId && !dependencies.requests.some((item) => item.id === review.requestId))
-        throw new Error('That coaching request no longer exists.');
-      for (const change of review.changes) {
-        const existing = dependencies.sessions.find((session) => session.id === change.session.id);
-        checkVersion(existing, change.expectedUpdatedAt);
-        if (
-          existing &&
-          (existing.status === 'completed' ||
-            existing.status === 'in_progress' ||
-            hasRecordedData(existing))
-        )
-          throw new Error(
-            'A coaching proposal cannot replace completed, in-progress, or partially logged workouts.',
-          );
-        requireUnloggedProposal(change.session);
-      }
-      next.reviews.push(review);
-      if (review.requestId)
-        next.requests = dependencies.requests
-          .filter((item) => item.id === review.requestId)
-          .map((item) => ({ ...item, status: 'answered' }));
-      break;
-    }
-    case 'training.review.apply': {
-      const review = dependencies.reviews.find((item) => item.id === mutation.data.id);
-      if (!review) throw new Error('This coaching review no longer exists.');
-      if (review.status !== 'proposed')
-        throw new Error('This review has already been applied or dismissed.');
-      // Validate the complete proposal before changing any session.
-      for (const change of review.changes) {
-        const existing = dependencies.sessions.find((session) => session.id === change.session.id);
-        checkVersion(existing, change.expectedUpdatedAt);
-        if (
-          existing &&
-          (existing.status === 'completed' ||
-            existing.status === 'in_progress' ||
-            hasRecordedData(existing))
-        )
-          throw new Error(
-            'This workout has been started or partially logged. Request a fresh review for your remaining plan.',
-          );
-        requireUnloggedProposal(change.session);
-      }
-      for (const change of review.changes) {
-        const existing = dependencies.sessions.find((session) => session.id === change.session.id);
-        const session = {
-          ...change.session,
-          changeReason: change.reason,
-          createdAt: existing?.createdAt ?? change.session.createdAt,
-          updatedAt: nextTimestamp(existing?.updatedAt),
-        };
-        next.sessions = upsert(next.sessions, session);
-        markDates(next, [session.date, ...(existing ? [existing.date] : [])]);
-      }
-      next.reviews = [{ ...review, status: 'applied' }];
-      break;
-    }
-    case 'training.review.dismiss': {
-      const review = dependencies.reviews.find((item) => item.id === mutation.data.id);
-      if (!review || review.status !== 'proposed')
-        throw new Error('Only a proposed review can be dismissed.');
-      next.reviews = [{ ...review, status: 'dismissed' }];
-      break;
-    }
   }
   return structuredClone(next);
 }
@@ -604,13 +496,10 @@ export function applyTrainingMutation(
   for (const session of command.sessions) next.sessions = upsert(next.sessions, session);
   for (const template of command.templates) next.templates = upsert(next.templates, template);
   for (const checkIn of command.checkIns) next.checkIns = upsert(next.checkIns, checkIn);
-  for (const request of command.requests) next.requests = upsert(next.requests, request);
-  for (const review of command.reviews) next.reviews = upsert(next.reviews, review);
   if (
     raw.type === 'training.session.save' ||
     raw.type === 'training.session.delete' ||
-    raw.type === 'training.week' ||
-    (raw.type === 'training.review.apply' && command.sessions.length > 0)
+    raw.type === 'training.week'
   )
     next.scheduledDates = [...new Set([...next.scheduledDates, ...command.scheduledDates])].sort();
   if (

@@ -11,9 +11,8 @@ import { newId } from './utils';
 export function useWorkspaceState({
   initialState,
   initialSettings,
-  initialRevision = 0,
   preview,
-}: Pick<CornerAppProps, 'initialState' | 'initialSettings' | 'initialRevision' | 'preview'>) {
+}: Pick<CornerAppProps, 'initialState' | 'initialSettings' | 'preview'>) {
   const generation = useRef(sessionLifetime()).current;
   const [previewState, setPreviewState] = useState<AppState | undefined>(initialState);
   const workspace = useWorkspace(!preview);
@@ -30,9 +29,6 @@ export function useWorkspaceState({
   const settings = preview
     ? previewState!.settings
     : (workspace.data?.settings ?? initialSettings!);
-  const revision = preview
-    ? initialRevision
-    : Math.max(workspace.observedRevision, workspace.data?.revision ?? initialRevision);
   const [notifications] = useState(() => createToastManager());
   const [busy, setBusy] = useState(false);
   const loading = !preview && workspace.isFetching;
@@ -134,12 +130,10 @@ export function useWorkspaceState({
   return {
     state,
     settings,
-    revision,
     busy,
     disabled,
     notifications,
     notify,
-    readState,
     mutate,
     copyText,
   };

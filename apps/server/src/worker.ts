@@ -4,9 +4,6 @@ import { createAuth } from './auth.js';
 import { loadRuntimeConfig } from './runtime-config.js';
 import { createWorkerDatabase } from './worker-database.js';
 import { WorkspaceStore } from './store.js';
-import { SubscriptionProvider } from './subscription.js';
-import { PlanningAgent } from './planning-agent.js';
-import { connectionDTO } from './ai-routes.js';
 
 export type WorkerEnvironment = {
   ASSETS: { fetch(request: Request): Promise<Response> };
@@ -15,8 +12,6 @@ export type WorkerEnvironment = {
   DATABASE_URL: string;
   NEON_AUTH_BASE_URL: string;
   NEON_AUTH_REQUIRE_EMAIL_VERIFICATION: string;
-  BETTER_AUTH_SECRET: string;
-  CORNER_TOKEN_ENCRYPTION_KEY: string;
 };
 
 function secure(response: Response, api: boolean): Response {
@@ -51,8 +46,6 @@ async function fetchApplication(request: Request, env: WorkerEnvironment): Promi
         DATABASE_URL: env.DATABASE_URL,
         NEON_AUTH_BASE_URL: env.NEON_AUTH_BASE_URL,
         NEON_AUTH_REQUIRE_EMAIL_VERIFICATION: env.NEON_AUTH_REQUIRE_EMAIL_VERIFICATION,
-        BETTER_AUTH_SECRET: env.BETTER_AUTH_SECRET,
-        CORNER_TOKEN_ENCRYPTION_KEY: env.CORNER_TOKEN_ENCRYPTION_KEY,
       },
       { dataDir: '/tmp/corner' },
     );
@@ -95,29 +88,18 @@ async function fetchApplication(request: Request, env: WorkerEnvironment): Promi
     // Workers sockets belong to the invoking request, never to an isolate-wide pool.
     const { pool, db } = createWorkerDatabase(config.databaseUrl);
     const store = new WorkspaceStore(db);
-    const provider = new SubscriptionProvider({ db, config });
-    const agent = new PlanningAgent(store, provider);
     try {
-      // Hosted status forbids new inference. Keep persisted history/application,
-      // but do not run process-start recovery or provider registration in isolates.
       const app = createApp({
         config,
         auth: createAuth(config, fetch, env.CF_VERSION_METADATA?.id),
         store,
-        aiAvailable: async (principal) =>
-          connectionDTO(await provider.status(principal.userId)).available,
-        ai: { provider, agent },
       });
       const result = secure(await app.fetch(incoming), true);
       if (env.CF_VERSION_METADATA?.id)
         result.headers.set('X-Corner-Version', env.CF_VERSION_METADATA.id);
       return result;
     } finally {
-      try {
-        await agent.close();
-      } finally {
-        await pool.end();
-      }
+      await pool.end();
     }
   } catch {
     return secure(

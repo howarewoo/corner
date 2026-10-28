@@ -2,8 +2,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { afterEach, beforeEach, test } from 'node:test';
 import type { Pool } from 'pg';
-import { sql } from 'drizzle-orm';
-import { createQueries, type Transaction } from '../src/queries.js';
+import { createQueries } from '../src/queries.js';
 import { testDatabase, closeTestDatabase } from './helpers.ts';
 import { createInitialState } from '@packages/workspace/initial-state';
 import type { AppState } from '@packages/workspace/types';
@@ -83,7 +82,7 @@ test('mutations and receipts are isolated by owner and transport retries do not 
   );
 });
 
-test('archived recipe ideas roundtrip but retired commands cannot replay retained receipts', async () => {
+test('archived requests and reviews roundtrip but retired commands cannot replay retained receipts', async () => {
   const state = createInitialState();
   state.recipes = [recipe()];
   state.requests = [
@@ -107,6 +106,26 @@ test('archived recipe ideas roundtrip but retired commands cannot replay retaine
       createdAt: '2026-10-22T12:00:00.000Z',
     },
   ];
+  state.training.requests = [
+    {
+      id: 'archived-training-request',
+      prompt: 'Review my training',
+      date: '2026-10-22',
+      status: 'answered',
+      createdAt: '2026-10-22T12:00:00.000Z',
+    },
+  ];
+  state.training.reviews = [
+    {
+      id: 'archived-training-review',
+      requestId: 'archived-training-request',
+      title: 'Historical review',
+      summary: 'Retain this review without enabling application.',
+      createdAt: '2026-10-22T12:00:00.000Z',
+      status: 'proposed',
+      changes: [],
+    },
+  ];
   await store.replaceImport('user-a', 'archive-import-123', state, 0);
   const before = await store.exportSnapshot('user-a');
   await store.replaceImport('user-b', 'archive-copy-123', before.state, 0);
@@ -114,6 +133,10 @@ test('archived recipe ideas roundtrip but retired commands cannot replay retaine
   const commands = [
     { type: 'request.save', data: state.requests[0] },
     { type: 'request.fulfill', data: { id: 'historical-idea', recipe: recipe() } },
+    { type: 'training.request.save', data: state.training.requests[0] },
+    { type: 'training.review.save', data: state.training.reviews[0] },
+    { type: 'training.review.apply', data: { id: 'archived-training-review' } },
+    { type: 'training.review.dismiss', data: { id: 'archived-training-review' } },
   ];
   for (const [index, mutation] of commands.entries()) {
     const requestId = `retired-command-${index}`;
@@ -145,106 +168,28 @@ test('archived recipe ideas roundtrip but retired commands cannot replay retaine
   }
 });
 
-test('explicit revision conflicts and invalid batch members leave the whole transaction untouched', async () => {
+test('explicit revision conflicts and invalid manual commands leave records and receipts untouched', async () => {
   await store.mutate('user-a', 'mutation-first', { type: 'recipe.save', data: recipe() });
+  const before = await store.exportSnapshot('user-a');
   await assert.rejects(
-    async () =>
-      await store.applyBatch(
-        'user-a',
-        'batch-conflict',
-        [{ type: 'recipe.save', data: recipe('recipe-b') }],
-        0,
-      ),
+    store.mutate('user-a', 'manual-conflict', { type: 'recipe.save', data: recipe('recipe-b') }, 0),
     code('REVISION_CONFLICT'),
   );
   await assert.rejects(
-    async () =>
-      await store.applyBatch(
-        'user-a',
-        'batch-invalid',
-        [
-          { type: 'recipe.save', data: recipe('recipe-b') },
-          {
-            type: 'plan.save',
-            data: {
-              id: 'meal-invalid',
-              date: '2026-10-22',
-              slot: 'lunch',
-              recipeId: 'missing-recipe',
-              servings: 1,
-            },
-          },
-        ],
-        1,
-      ),
+    store.mutate('user-a', 'manual-invalid', {
+      type: 'plan.save',
+      data: {
+        id: 'meal-invalid',
+        date: '2026-10-22',
+        slot: 'lunch',
+        recipeId: 'missing-recipe',
+        servings: 1,
+      },
+    }),
     code('INVALID_INPUT'),
   );
-  assert.deepEqual(
-    (await store.exportSnapshot('user-a')).state.recipes.map((value) => value.id),
-    ['recipe-a'],
-  );
-  assert.equal((await store.bootstrap('user-a')).revision, 1);
-  assert.equal(
-    (await database.query('SELECT COUNT(*) AS n FROM mutation_receipts', [])).rows[0]?.n,
-    1,
-  );
-  const saved = await store.applyBatch(
-    'user-a',
-    'batch-valid',
-    [
-      { type: 'recipe.save', data: recipe('recipe-b') },
-      {
-        type: 'plan.save',
-        data: {
-          id: 'meal-b',
-          date: '2026-10-22',
-          slot: 'lunch',
-          recipeId: 'recipe-b',
-          servings: 1,
-        },
-      },
-    ],
-    1,
-  );
-  assert.equal(saved.revision, 2);
-  assert.deepEqual(saved, { revision: 2 });
-  const snapshot = await store.exportSnapshot('user-a');
-  assert.equal(snapshot.state.logs.length, 0);
-  assert.equal(snapshot.state.plan.length, 1);
-});
-
-test('batch completion bookkeeping commits or rolls back with the state and is safe on replay', async () => {
-  await database.query('CREATE TABLE applied_runs (id TEXT PRIMARY KEY, status TEXT NOT NULL)');
-  const changes = [{ type: 'recipe.save' as const, data: recipe() }];
-  await assert.rejects(
-    store.applyBatch('user-a', 'atomic-batch-123', changes, 0, async (connection) => {
-      await connection.execute(
-        sql`INSERT INTO applied_runs (id, status) VALUES (${'run-a'}, ${'applied'})`,
-      );
-      throw new Error('simulate bookkeeping failure');
-    }),
-    /bookkeeping failure/,
-  );
-  assert.equal((await store.bootstrap('user-a')).revision, 0);
-  assert.equal(
-    (await database.query('SELECT COUNT(*) AS n FROM mutation_receipts', [])).rows[0]?.n,
-    0,
-  );
-  assert.equal((await database.query('SELECT COUNT(*) AS n FROM applied_runs', [])).rows[0]?.n, 0);
-  let completions = 0;
-  const complete = async (connection: Transaction) => {
-    completions++;
-    await connection.execute(sql`INSERT INTO applied_runs (id, status) VALUES (${'run-a'}, ${'applied'})
-      ON CONFLICT(id) DO UPDATE SET status = excluded.status`);
-  };
-  const first = await store.applyBatch('user-a', 'atomic-batch-123', changes, 0, complete);
-  assert.deepEqual(
-    await store.applyBatch('user-a', 'atomic-batch-123', changes, 0, complete),
-    first,
-  );
-  assert.equal(first.revision, 1);
-  assert.equal(completions, 2);
-  assert.equal((await database.query('SELECT COUNT(*) AS n FROM applied_runs', [])).rows[0]?.n, 1);
+  assert.deepEqual(await store.exportSnapshot('user-a'), before);
+  assert.equal((await database.query('SELECT COUNT(*) AS n FROM mutation_receipts')).rows[0]?.n, 1);
 });
 
 test('import validation rejects duplicates and broken active references while retaining historical snapshots', () => {

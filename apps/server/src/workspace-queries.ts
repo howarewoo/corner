@@ -9,14 +9,8 @@ import {
 } from '@packages/api/workspace-data';
 import type { Database, Transaction } from './queries.js';
 import * as tables from './schema.js';
-import { planRecord, recipeRecord, recipeRequestRecord } from './nutrition-records.js';
-import {
-  checkInRecord,
-  reviewRecord,
-  sessionRecords,
-  templateRecord,
-  trainingRequestRecord,
-} from './training-records.js';
+import { planRecord, recipeRecord } from './nutrition-records.js';
+import { checkInRecord, sessionRecords, templateRecord } from './training-records.js';
 import { ApiError } from './http.js';
 
 export async function consistentRead<T>(
@@ -49,9 +43,6 @@ const resourceTables = {
   sessions: tables.workoutSessions,
   templates: tables.workoutTemplates,
   checkIns: tables.checkIns,
-  recipeRequests: tables.recipeRequests,
-  trainingRequests: tables.trainingRequests,
-  reviews: tables.trainingReviews,
   scheduledDates: tables.scheduledDates,
   groceryChecks: tables.groceryChecks,
 };
@@ -89,9 +80,6 @@ export async function recordPage(
     }
     const recent =
       input.order === 'recent' && (input.resource === 'sessions' || input.resource === 'checkIns');
-    const reverseCollection =
-      input.order === 'recent' &&
-      ['recipeRequests', 'trainingRequests', 'reviews'].includes(input.resource);
     const identity = 'id' in table ? table.id : 'key' in table ? table.key : table.date;
     if (input.cursor) {
       if (recent) {
@@ -109,10 +97,7 @@ export async function recordPage(
           (${tables.checkIns.date} = ${input.cursor.date} AND ${tables.checkIns.position} < ${input.cursor.position}) OR
           (${tables.checkIns.date} = ${input.cursor.date} AND ${tables.checkIns.position} = ${input.cursor.position} AND ${tables.checkIns.id} > ${input.cursor.id})
         )`);
-      } else if (reverseCollection)
-        filters.push(sql`(${table.position} < ${input.cursor.position} OR
-        (${table.position} = ${input.cursor.position} AND ${identity} > ${input.cursor.id}))`);
-      else
+      } else
         filters.push(sql`(${table.position} > ${input.cursor.position} OR
         (${table.position} = ${input.cursor.position} AND ${identity} > ${input.cursor.id}))`);
     }
@@ -120,9 +105,7 @@ export async function recordPage(
       ? input.resource === 'sessions'
         ? sql`${tables.workoutSessions.date} DESC, ${tables.workoutSessions.updated_at} DESC, ${tables.workoutSessions.id} ASC`
         : sql`${tables.checkIns.date} DESC, ${tables.checkIns.position} DESC, ${tables.checkIns.id} ASC`
-      : reverseCollection
-        ? sql`${table.position} DESC, ${identity} ASC`
-        : sql`${table.position} ASC, ${identity} ASC`;
+      : sql`${table.position} ASC, ${identity} ASC`;
     const result = await connection.execute(sql`SELECT * FROM ${table}
       WHERE ${sql.join(filters, sql` AND `)} ORDER BY ${order} LIMIT ${input.limit + 1}`);
     // Raw SQL has no column mapper; normalize the explicitly selected SQL scalar types.
@@ -159,19 +142,6 @@ export async function recordPage(
         break;
       case 'checkIns':
         items = page.map((row) => checkInRecord(row as typeof tables.checkIns.$inferSelect));
-        break;
-      case 'recipeRequests':
-        items = page.map((row) =>
-          recipeRequestRecord(row as typeof tables.recipeRequests.$inferSelect),
-        );
-        break;
-      case 'trainingRequests':
-        items = page.map((row) =>
-          trainingRequestRecord(row as typeof tables.trainingRequests.$inferSelect),
-        );
-        break;
-      case 'reviews':
-        items = page.map((row) => reviewRecord(row as typeof tables.trainingReviews.$inferSelect));
         break;
       case 'scheduledDates':
         items = page.map((row) => row.date);

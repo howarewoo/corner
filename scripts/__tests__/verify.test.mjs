@@ -23,7 +23,6 @@ test('ordinary changes stay narrow while contracts, policy, and uncertainty sele
     'packages/nutrition/src/schemas.ts',
     'packages/training/src/workouts.ts',
     'packages/workspace/src/mutations.ts',
-    'packages/agent/src/proposals.ts',
     'unknown/new-surface.ts',
   ]) {
     assert.equal(classifyChanges([path]).profile, 'full', path);

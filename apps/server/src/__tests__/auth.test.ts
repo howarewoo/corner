@@ -13,8 +13,6 @@ const config: Config = {
   databaseUrl: 'postgresql://unused.invalid/test',
   neonAuthBaseUrl: 'https://auth.example.test/neondb/auth',
   neonAuthRequireEmailVerification: true,
-  authSecret: 'synthetic-session-binding-secret-32-characters',
-  tokenEncryptionKey: Buffer.alloc(32, 7),
 };
 const valid = {
   user: { id: 'owner-a', name: 'Alice', email: 'alice@example.test', emailVerified: true },
@@ -75,11 +73,11 @@ test('session renewal cookies remain host-only and valid on HTTP and HTTPS witho
     const response = auth.withCookies(
       request,
       secure
-        ? Response.redirect(origin + '/?ai=connected', 303)
+        ? Response.redirect(origin + '/settings', 303)
         : Response.json({ user: principal?.userId }),
     );
     assert.equal(response.status, secure ? 303 : 200);
-    if (secure) assert.equal(response.headers.get('Location'), origin + '/?ai=connected');
+    if (secure) assert.equal(response.headers.get('Location'), origin + '/settings');
     const cookies = response.headers.getSetCookie();
     assert.equal(cookies.length, 2);
     for (const cookie of cookies) {

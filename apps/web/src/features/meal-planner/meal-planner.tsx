@@ -4,7 +4,7 @@ import { SLOTS } from '@packages/nutrition/types';
 import { activityForStateDate, targetForStateDate } from '@packages/workspace/targets';
 import { dateKey, mondayOf, shiftDate, weekDates } from '@packages/nutrition/dates';
 import { macroTotal } from '@packages/nutrition/calculations';
-import { Sparkles, Copy, Plus, X, ShoppingBasket, ArrowRight } from 'lucide-react';
+import { Copy, Plus, X, ShoppingBasket, ArrowRight } from 'lucide-react';
 import {
   Button,
   Badge,
@@ -31,7 +31,6 @@ export default function MealPlanner({
   setOverlay,
   setConfirmation,
   openRecipe,
-  openAgent,
 }: {
   state?: AppState;
   selectedDate: string;
@@ -43,7 +42,6 @@ export default function MealPlanner({
   setOverlay: (overlay: Overlay) => void;
   setConfirmation: (confirmation: Confirmation | null) => void;
   openRecipe: (recipe: Recipe) => void;
-  openAgent: (prompt?: string) => void;
 }) {
   const dates = weekDates(mondayOf(selectedDate));
   const query = useResource(
@@ -115,24 +113,7 @@ export default function MealPlanner({
         title="Your meal plan."
         eyebrow="A WEEK WITH INTENTION"
         description="Build in variety. Leave a little room for life."
-        actions={
-          <>
-            <DateControls date={selectedDate} setDate={setSelectedDate} week />
-            <Button
-              variant="default"
-              size="default"
-              disabled={disabled}
-              onClick={() =>
-                openAgent(
-                  'Help me build a meal plan using my saved preferences. Ask for any details you need.',
-                )
-              }
-            >
-              <Sparkles size={16} />
-              Plan with my agent
-            </Button>
-          </>
-        }
+        actions={<DateControls date={selectedDate} setDate={setSelectedDate} week />}
       />
       <div className="planner-toolbar">
         <div className="toolbar-description">

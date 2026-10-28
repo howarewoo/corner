@@ -10,9 +10,6 @@ import { z } from 'zod';
 import { accountPolicy, requirePrincipal, type CornerAuth, type Principal } from './auth.js';
 import type { Config } from './config.js';
 import { ApiError, json, readJson, requireSameOrigin } from './http.js';
-import { connectionDTO } from './ai-routes.js';
-import { AgentError, type PlanningAgent } from './planning-agent.js';
-import { SubscriptionError, type SubscriptionProvider } from './subscription.js';
 import type { WorkspaceStore } from './store.js';
 import { recordDetails, recordPage } from './workspace-queries.js';
 import { groceries } from './grocery-queries.js';
@@ -27,8 +24,6 @@ export type RPCServices = {
   config: Config;
   auth: CornerAuth;
   store: WorkspaceStore;
-  aiAvailable?: (principal: Principal) => Promise<boolean> | boolean;
-  ai?: { provider: SubscriptionProvider; agent: PlanningAgent };
 };
 type RPCContext = { request: Request; principal?: Principal };
 const serializer = new StandardRPCSerializer(new StandardRPCJsonSerializer());
@@ -41,11 +36,7 @@ const metadata = new Map<string, { maxBodyBytes: number; public: boolean }>(
 );
 
 function rpcError(error: unknown): ORPCError<string, unknown> {
-  if (
-    error instanceof ApiError ||
-    error instanceof AgentError ||
-    error instanceof SubscriptionError
-  ) {
+  if (error instanceof ApiError) {
     if (error.code === 'SIGN_IN_REQUIRED')
       return new ORPCError('SIGN_IN_REQUIRED', {
         status: 401,
@@ -107,26 +98,12 @@ export function rpcErrorResponse(error: unknown): Response {
   return json(serializer.serialize(failure.toJSON()), failure.status);
 }
 
-/** Keep persistence, ownership, request fingerprints, and provider lifecycle in their existing services. */
-export function createRPCHandler({ config, auth, store, aiAvailable, ai }: RPCServices) {
+/** Keep persistence, ownership, and request fingerprints in their existing services. */
+export function createRPCHandler({ config, auth, store }: RPCServices) {
   function principal(context: RPCContext): Principal {
     if (!context.principal)
       throw new ApiError(401, 'SIGN_IN_REQUIRED', 'Sign in to open your workspace.');
     return context.principal;
-  }
-  function services() {
-    if (!ai)
-      throw new ApiError(503, 'AI_NOT_CONFIGURED', 'AI is not configured for this installation.');
-    return ai;
-  }
-  async function available(owner: Principal) {
-    const status = connectionDTO(await services().provider.status(owner.userId));
-    if (!status.available)
-      throw new ApiError(
-        503,
-        'AI_CONNECTION_REQUIRED',
-        status.reason || 'Connect your ChatGPT plan and select a model in My agent.',
-      );
   }
   const api = implement(contract).$context<RPCContext>();
   const router = api.router({
@@ -140,10 +117,7 @@ export function createRPCHandler({ config, auth, store, aiAvailable, ai }: RPCSe
     workspace: {
       get: api.workspace.get.handler(async ({ context }) => {
         const owner = principal(context);
-        return {
-          ...(await store.bootstrap(owner.userId, owner.name)),
-          aiAvailable: Boolean(await aiAvailable?.(owner)),
-        };
+        return store.bootstrap(owner.userId, owner.name);
       }),
       foodWindow: api.workspace.foodWindow.handler(({ input, context }) =>
         store.foodWindow(principal(context).userId, input),
@@ -192,64 +166,6 @@ export function createRPCHandler({ config, auth, store, aiAvailable, ai }: RPCSe
           input.state,
           input.expectedRevision,
         ),
-      ),
-    },
-    ai: {
-      connection: api.ai.connection.handler(async ({ context }) => {
-        const { provider } = services();
-        const owner = principal(context);
-        const status = await provider.status(owner.userId);
-        if (status.connected && status.planEnabled) {
-          try {
-            await provider.models(owner.userId);
-          } catch (error) {
-            if (error instanceof SubscriptionError)
-              return {
-                ...connectionDTO(await provider.status(owner.userId)),
-                available: false,
-                reason: error.message,
-              };
-            throw error;
-          }
-        }
-        return connectionDTO(await provider.status(owner.userId));
-      }),
-      connect: api.ai.connect.handler(({ context }) => {
-        const owner = principal(context);
-        return services().provider.begin(owner.userId, owner.sessionId);
-      }),
-      disconnect: api.ai.disconnect.handler(async ({ context }) => {
-        const { provider, agent } = services();
-        const owner = principal(context);
-        for (const run of (await agent.list(owner.userId)).filter(
-          (run) => run.status === 'running',
-        ))
-          await agent.cancel(owner.userId, run.id);
-        const status = await provider.disconnect(owner.userId);
-        return { ...connectionDTO(status), revocationConfirmed: status.revocationConfirmed };
-      }),
-      setModel: api.ai.setModel.handler(async ({ input, context }) =>
-        connectionDTO(await services().provider.setModel(principal(context).userId, input.model)),
-      ),
-    },
-    agent: {
-      list: api.agent.list.handler(async ({ context }) => ({
-        runs: await services().agent.list(principal(context).userId),
-      })),
-      get: api.agent.get.handler(async ({ input, context }) => ({
-        run: await services().agent.get(principal(context).userId, input.id),
-      })),
-      start: api.agent.start.handler(async ({ input, context }) => {
-        const owner = principal(context);
-        const { agent } = services();
-        if (!(await agent.hasRequest(owner.userId, 'plan', input))) await available(owner);
-        return { run: await agent.start(owner.userId, input) };
-      }),
-      cancel: api.agent.cancel.handler(async ({ input, context }) => ({
-        run: await services().agent.cancel(principal(context).userId, input.id),
-      })),
-      apply: api.agent.apply.handler(({ input, context }) =>
-        services().agent.apply(principal(context).userId, input.id, input.requestId),
       ),
     },
   });

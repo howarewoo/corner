@@ -45,13 +45,3 @@ export const importPreviewInputSchema = z.object({ state: z.unknown() }).strict(
 export const importInputSchema = z
   .object({ state: z.unknown(), requestId: requestIdSchema, expectedRevision: revisionSchema })
   .strict();
-export const runInputSchema = z
-  .object({
-    id: z
-      .string()
-      .min(1)
-      .max(120)
-      .regex(/^[a-zA-Z0-9-]+$/),
-  })
-  .strict();
-export const applyInputSchema = runInputSchema.extend({ requestId: z.string().min(1).max(120) });

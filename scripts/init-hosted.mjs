@@ -31,8 +31,6 @@ if (
     '# Private deployment configuration. Keep an encrypted off-server backup.',
     '# Never commit or share this file. Existing files are never overwritten.',
     `CORNER_DOMAIN=${domain}`,
-    `BETTER_AUTH_SECRET=${randomBytes(48).toString('base64')}`,
-    `CORNER_TOKEN_ENCRYPTION_KEY=${randomBytes(32).toString('base64')}`,
     `CORNER_PROXY_SECRET=${randomBytes(48).toString('base64url')}`,
     '',
     '# Pull these server-only values with neon deploy, then copy them here.',
