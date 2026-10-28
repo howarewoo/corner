@@ -727,6 +727,11 @@ try {
     assert.equal(retired.status, 404);
     assert.match(retired.headers.get('Cache-Control'), /no-store/);
   }
+  const callback = await worker.fetch(new URL('/auth/callback?code=synthetic&state=synthetic', origin), {
+    headers: { Cookie: alice },
+  });
+  assert.equal(callback.status, 404);
+  assert.match(callback.headers.get('Cache-Control'), /no-store/);
   assert.equal((await post('/api/auth/sign-out', {}, { Cookie: alice })).status, 200);
   const signedOut = await rpc('workspace/get', undefined, { Cookie: alice });
   assert.equal(signedOut.status, 401);
