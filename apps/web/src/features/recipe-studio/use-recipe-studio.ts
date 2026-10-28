@@ -2,11 +2,13 @@
 
 import { useRef, useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
+import { useForm } from '@tanstack/react-form';
 import type { Settings } from '@packages/workspace/types';
 import type { Recipe, RecipeRequest } from '@packages/nutrition/types';
 import type { Mutate, Notify } from '../workspace/types';
 import { rpc, scoped, errorCode, sessionLifetime } from '../../rpc';
 import { newId } from '../workspace/utils';
+type StudioDraft = { prompt: string; calories: number; protein: number; minutes: number };
 
 export function useRecipeStudio({
   initialSettings,
@@ -22,14 +24,24 @@ export function useRecipeStudio({
   notify: Notify;
 }) {
   const generation = useRef(sessionLifetime()).current;
-  const [studioPrompt, setStudioPrompt] = useState('');
-  const [studioCalories, setStudioCalories] = useState(
-    initialSettings.training.calories > 0 ? Math.round(initialSettings.training.calories / 4) : 500,
-  );
-  const [studioProtein, setStudioProtein] = useState(
-    initialSettings.training.protein > 0 ? Math.round(initialSettings.training.protein / 4) : 25,
-  );
-  const [studioMinutes, setStudioMinutes] = useState(25);
+  const defaults = useRef({
+    prompt: '',
+    calories:
+      initialSettings.training.calories > 0
+        ? Math.round(initialSettings.training.calories / 4)
+        : 500,
+    protein:
+      initialSettings.training.protein > 0 ? Math.round(initialSettings.training.protein / 4) : 25,
+    minutes: 25,
+  }).current;
+  const form = useForm({
+    defaultValues: defaults,
+    onSubmitMeta: 'generate' as 'save' | 'generate',
+    onSubmit: async ({ value, meta }) => {
+      if (meta === 'save') await saveRequest(value);
+      else await generateRecipe(value);
+    },
+  });
   const recipeMutation = useMutation({
     mutationFn: (input: Parameters<typeof rpc.ai.generateRecipe>[0]) =>
       scoped(() => rpc.ai.generateRecipe(input), generation),
@@ -39,9 +51,16 @@ export function useRecipeStudio({
   const generationLock = useRef(false);
   const generationIntent = useRef<{ signature: string; requestId: string } | null>(null);
 
-  const studioBrief = (request?: RecipeRequest) =>
-    `Recipe idea: ${request?.prompt || studioPrompt}\n\nPreferences: about ${request?.calories || studioCalories} calories, ${request?.protein || studioProtein} g protein per serving, ready in ${request?.maxMinutes || studioMinutes} minutes.\nDietary preferences: ${settings.profile?.dietaryPreferences || 'Not specified'}\nGroceries: ${settings.profile?.groceryPreferences || 'Not specified'}\nGoals: ${settings.profile?.goals || 'Not specified'}`;
-  const saveRequest = async () => {
+  const studioBrief = (request?: RecipeRequest) => {
+    const { prompt, calories, protein, minutes } = form.state.values;
+    return `Recipe idea: ${request?.prompt || prompt}\n\nPreferences: about ${request?.calories || calories} calories, ${request?.protein || protein} g protein per serving, ready in ${request?.maxMinutes || minutes} minutes.\nDietary preferences: ${settings.profile?.dietaryPreferences || 'Not specified'}\nGroceries: ${settings.profile?.groceryPreferences || 'Not specified'}\nGoals: ${settings.profile?.goals || 'Not specified'}`;
+  };
+  async function saveRequest({
+    prompt: studioPrompt,
+    calories: studioCalories,
+    protein: studioProtein,
+    minutes: studioMinutes,
+  }: StudioDraft) {
     if (!studioPrompt.trim()) {
       notify('Describe the recipe you want first.', true);
       return;
@@ -61,8 +80,13 @@ export function useRecipeStudio({
       },
       'Recipe idea saved.',
     );
-  };
-  const generateRecipe = async () => {
+  }
+  async function generateRecipe({
+    prompt: studioPrompt,
+    calories: studioCalories,
+    protein: studioProtein,
+    minutes: studioMinutes,
+  }: StudioDraft) {
     if (generation !== sessionLifetime() || generationLock.current) return;
     if (!studioPrompt.trim()) {
       notify('Describe the recipe you want first.', true);
@@ -124,23 +148,14 @@ export function useRecipeStudio({
     } finally {
       generationLock.current = false;
     }
-  };
+  }
 
   return {
-    studioPrompt,
-    setStudioPrompt,
-    studioCalories,
-    setStudioCalories,
-    studioProtein,
-    setStudioProtein,
-    studioMinutes,
-    setStudioMinutes,
+    form,
     generating: recipeMutation.isPending,
     generated,
     setGenerated,
     studioBrief,
-    saveRequest,
-    generateRecipe,
     clearGenerated: () => setGenerated(null),
   };
 }

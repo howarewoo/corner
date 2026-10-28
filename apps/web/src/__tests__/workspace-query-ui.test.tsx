@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { useRef } from 'react';
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { onlineManager, QueryClientProvider, useMutation } from '@tanstack/react-query';
 import { expect, test, vi } from 'vitest';
@@ -21,6 +21,7 @@ import RecipePicker from '../features/meal-planner/recipe-picker';
 import TrainingPanel from '../components/training-panel';
 import type { WorkoutSession } from '@packages/training/types';
 import Settings from '../features/settings/settings';
+import ImportWorkspace from '../import-workspace';
 import { download } from '../features/workspace/utils';
 import type * as WorkspaceUtils from '../features/workspace/utils';
 import { MAX_WORKSPACE_TRANSFER_BYTES } from '@packages/api/workspace-data';
@@ -634,7 +635,10 @@ test('Today respects logged planned-meal membership even when its food entry is 
 });
 
 test('the selected recipe remains actionable when it is outside the current picker page', async () => {
-  const add = vi.fn();
+  const { promise, resolve } = Promise.withResolvers<void>();
+  const add = vi.fn(
+    (_recipe: Recipe, _date: string, _slot: string, _servings: number, _entryId: string) => promise,
+  );
   mockHttp((call) => {
     if (call.path === '/api/rpc/workspace/page')
       return json({
@@ -665,8 +669,18 @@ test('the selected recipe remains actionable when it is outside the current pick
   );
   const submit = await screen.findByRole('button', { name: 'Add to plan' });
   await waitFor(() => expect(submit).toBeEnabled());
-  await userEvent.setup().click(submit);
-  expect(add).toHaveBeenCalledWith(savedRecipe, '2026-10-24', 'breakfast', 1, expect.any(String));
+  const user = userEvent.setup();
+  await user.clear(screen.getByRole('spinbutton', { name: 'Servings' }));
+  await user.type(screen.getByRole('spinbutton', { name: 'Servings' }), '2');
+  await user.click(submit);
+  await waitFor(() =>
+    expect(add).toHaveBeenCalledWith(savedRecipe, '2026-10-24', 'breakfast', 2, expect.any(String)),
+  );
+  expect(submit).toBeDisabled();
+  await user.click(submit);
+  expect(add).toHaveBeenCalledTimes(1);
+  await act(async () => resolve());
+  await waitFor(() => expect(submit).toBeEnabled());
 });
 
 test('query ingestion checks the write floor again when its cache key is still empty', async () => {
@@ -1165,6 +1179,97 @@ test('a full export above the former browser cap can be uploaded, previewed, and
   expect(imported.body?.json).toEqual({
     state: full,
     expectedRevision: 0,
+    requestId: expect.any(String),
+  });
+});
+
+test('changing the import file clears confirmation and failed commits retain the exact preview pins for retry', async () => {
+  const first = createInitialState();
+  const second = { ...createInitialState(), recipes: [savedRecipe] };
+  let fail = true;
+  const calls = mockHttp((call) => {
+    if (call.path === '/api/rpc/workspace/previewImport')
+      return json({ json: { revision: 17, canImport: true, summary: { recipes: 1 } } });
+    if (call.path === '/api/rpc/workspace/import') {
+      if (fail) return accountUnavailable();
+      return json({ json: { revision: 18 } });
+    }
+  });
+  const onImported = vi.fn();
+  render(
+    <QueryClientProvider client={runtime.queryClient}>
+      <ImportWorkspace disabled={false} onImported={onImported} />
+    </QueryClientProvider>,
+  );
+  const user = userEvent.setup();
+  for (const [index, state] of [first, second].entries()) {
+    const file = new File([JSON.stringify(state)], `corner-${index}.json`, {
+      type: 'application/json',
+    });
+    Object.defineProperty(file, 'text', { value: async () => JSON.stringify(state) });
+    await user.upload(screen.getByLabelText('Corner export · JSON'), file);
+    await screen.findByRole('heading', { name: 'Review your import' });
+    expect(screen.getByLabelText('Type IMPORT to confirm')).toHaveValue('');
+    expect(screen.getByRole('button', { name: 'Import my records' })).toBeDisabled();
+    await user.type(screen.getByLabelText('Type IMPORT to confirm'), 'IMPORT');
+  }
+  await user.keyboard('[Enter]');
+  await screen.findByRole('alert');
+  expect(onImported).not.toHaveBeenCalled();
+  expect(screen.getByLabelText('Type IMPORT to confirm')).toHaveValue('IMPORT');
+  fail = false;
+  await user.dblClick(screen.getByRole('button', { name: 'Import my records' }));
+  await waitFor(() => expect(onImported).toHaveBeenCalledTimes(1));
+  const commits = calls.filter((call) => call.path === '/api/rpc/workspace/import');
+  expect(commits).toHaveLength(2);
+  expect(commits[0].body?.json).toEqual({
+    state: second,
+    expectedRevision: 17,
+    requestId: expect.any(String),
+  });
+  expect(commits[1].body).toEqual(commits[0].body);
+});
+
+test('a retired import preview cannot restore its candidate or typed confirmation', async () => {
+  const stale = Promise.withResolvers<Response>();
+  const first = createInitialState();
+  const second = { ...createInitialState(), recipes: [savedRecipe] };
+  let previews = 0;
+  const calls = mockHttp((call) => {
+    if (call.path === '/api/rpc/workspace/previewImport') {
+      if (++previews === 1) return stale.promise;
+      return json({ json: { revision: 23, canImport: true, summary: { recipes: 1 } } });
+    }
+    if (call.path === '/api/rpc/workspace/import') return json({ json: { revision: 24 } });
+  });
+  const onImported = vi.fn();
+  render(
+    <QueryClientProvider client={runtime.queryClient}>
+      <ImportWorkspace disabled={false} onImported={onImported} />
+    </QueryClientProvider>,
+  );
+  for (const [index, state] of [first, second].entries()) {
+    const file = new File([JSON.stringify(state)], `selection-${index}.json`, {
+      type: 'application/json',
+    });
+    Object.defineProperty(file, 'text', { value: async () => JSON.stringify(state) });
+    // Model an already queued selection event while the previous preview is in flight.
+    fireEvent.change(screen.getByLabelText('Corner export · JSON'), { target: { files: [file] } });
+    await waitFor(() => expect(previews).toBe(index + 1));
+  }
+  await screen.findByRole('heading', { name: 'Review your import' });
+  const user = userEvent.setup();
+  await user.type(screen.getByLabelText('Type IMPORT to confirm'), 'IMPORT');
+  await act(async () => {
+    stale.resolve(json({ json: { revision: 1, canImport: true, summary: { recipes: 0 } } }));
+  });
+  expect(screen.getByText('selection-1.json')).toBeVisible();
+  expect(screen.getByLabelText('Type IMPORT to confirm')).toHaveValue('IMPORT');
+  await user.click(screen.getByRole('button', { name: 'Import my records' }));
+  await waitFor(() => expect(onImported).toHaveBeenCalledTimes(1));
+  expect(calls.find((call) => call.path === '/api/rpc/workspace/import')?.body?.json).toEqual({
+    state: second,
+    expectedRevision: 23,
     requestId: expect.any(String),
   });
 });

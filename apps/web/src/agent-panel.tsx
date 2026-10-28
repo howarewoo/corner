@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useId, useRef, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { useForm } from '@tanstack/react-form';
 import {
   ArrowRight,
   Check,
@@ -689,8 +690,6 @@ export default function AgentPanel({
   const setRuns = (update: (current: AgentRun[]) => AgentRun[]) =>
     queryClient.setQueryData<AgentRun[]>(runsKey, (current) => update(current ?? []));
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [prompt, setPrompt] = useState(initialPrompt);
-  const [date, setDate] = useState(referenceDate);
   const loading = historyQuery.isFetching;
   const [busy, setBusy] = useState(false);
   const [actionError, setError] = useState('');
@@ -701,6 +700,17 @@ export default function AgentPanel({
   const intent = useRef<{ signature: string; id: string } | null>(null);
   const appliedIntent = useRef(new Map<string, string>());
   const active = useRef(true);
+  const defaults = useRef({ prompt: initialPrompt, referenceDate }).current;
+  const form = useForm({
+    defaultValues: defaults,
+    validators: {
+      onSubmit: ({ value }) =>
+        value.prompt.trim().length < 3 ? 'Describe your request.' : undefined,
+    },
+    onSubmit: async ({ value }) => {
+      await start(value.prompt, value.referenceDate);
+    },
+  });
   const selected = runs.find((run) => run.id === selectedId) ?? runs[0];
   const contextQuery = useResource(
     'proposal',
@@ -723,12 +733,8 @@ export default function AgentPanel({
     };
   }, []);
   useEffect(() => {
-    if (initialPrompt) {
-      setPrompt(initialPrompt);
-      intent.current = null;
-      textarea.current?.focus();
-    }
-  }, [initialPrompt]);
+    if (defaults.prompt) textarea.current?.focus();
+  }, [defaults.prompt]);
   const runQueries = useQueries({
     queries: runs.filter(isActive).map((run) => ({
       queryKey: [...privateKey('run'), run.id],
@@ -751,8 +757,7 @@ export default function AgentPanel({
     connectionQuery.error?.message ||
     pollError?.message ||
     '';
-  async function start(event: FormEvent) {
-    event.preventDefault();
+  async function start(prompt: string, date: string) {
     if (mutationGeneration !== sessionLifetime()) return;
     if (operation.current || !ready || prompt.trim().length < 3) return;
     operation.current = true;
@@ -846,7 +851,13 @@ export default function AgentPanel({
   return (
     <div className="agent-workspace corner-ui">
       <div className="agent-compose-layout">
-        <form className="agent-compose" onSubmit={start}>
+        <form
+          className="agent-compose"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void form.handleSubmit();
+          }}
+        >
           <div className="eyebrow">YOUR PLANS, WITH ROOM TO ADAPT</div>
           <h2>What would help today?</h2>
           <p>
@@ -855,21 +866,26 @@ export default function AgentPanel({
           </p>
           <Field className="field">
             <FieldLabel htmlFor={promptId}>Your request</FieldLabel>
-            <Textarea
-              id={promptId}
-              name="prompt"
-              ref={textarea}
-              rows={5}
-              maxLength={6000}
-              required
-              minLength={3}
-              value={prompt}
-              onChange={(event) => {
-                setPrompt(event.target.value);
-                intent.current = null;
-              }}
-              placeholder="I have 30 minutes to train today. Adapt my planned workout to fit."
-            />
+            <form.Field name="prompt">
+              {(field) => (
+                <Textarea
+                  id={promptId}
+                  name="prompt"
+                  ref={textarea}
+                  rows={5}
+                  maxLength={6000}
+                  required
+                  minLength={3}
+                  value={field.state.value}
+                  onBlur={field.handleBlur}
+                  onChange={(event) => {
+                    field.handleChange(event.target.value);
+                    intent.current = null;
+                  }}
+                  placeholder="I have 30 minutes to train today. Adapt my planned workout to fit."
+                />
+              )}
+            </form.Field>
           </Field>
           <div className="agent-suggestions">
             {[
@@ -884,7 +900,7 @@ export default function AgentPanel({
                 key={value}
                 className="agent-suggestion-btn"
                 onClick={() => {
-                  setPrompt(value);
+                  form.setFieldValue('prompt', value);
                   intent.current = null;
                   textarea.current?.focus();
                 }}
@@ -896,26 +912,35 @@ export default function AgentPanel({
           <div className="agent-submit-row">
             <Field className="field">
               <FieldLabel htmlFor={dateId}>Reference date</FieldLabel>
-              <Input
-                id={dateId}
-                name="referenceDate"
-                type="date"
-                required
-                value={date}
-                onChange={(event) => {
-                  setDate(event.target.value);
-                  intent.current = null;
-                }}
-              />
+              <form.Field name="referenceDate">
+                {(field) => (
+                  <Input
+                    id={dateId}
+                    name="referenceDate"
+                    type="date"
+                    required
+                    value={field.state.value}
+                    onBlur={field.handleBlur}
+                    onChange={(event) => {
+                      field.handleChange(event.target.value);
+                      intent.current = null;
+                    }}
+                  />
+                )}
+              </form.Field>
             </Field>
-            <Button
-              variant="default"
-              type="submit"
-              disabled={busy || !ready || prompt.trim().length < 3 || runs.some(isActive)}
-            >
-              {busy ? <Loader2 size={16} className="spin" /> : <Sparkles size={16} />}
-              {busy ? 'Please wait…' : 'Ask my agent'}
-            </Button>
+            <form.Subscribe selector={(state) => state.values.prompt}>
+              {(prompt) => (
+                <Button
+                  variant="default"
+                  type="submit"
+                  disabled={busy || !ready || prompt.trim().length < 3 || runs.some(isActive)}
+                >
+                  {busy ? <Loader2 size={16} className="spin" /> : <Sparkles size={16} />}
+                  {busy ? 'Please wait…' : 'Ask my agent'}
+                </Button>
+              )}
+            </form.Subscribe>
           </div>
           <p className="agent-review-note">
             You’ll review the details before any proposal changes your plans.
@@ -1061,7 +1086,8 @@ export default function AgentPanel({
                       variant="outline"
                       size="sm"
                       onClick={() => {
-                        setPrompt(
+                        form.setFieldValue(
+                          'prompt',
                           `${selected.prompt}\n\n${selected.result!.questions.map((question) => `${question}\n`).join('\n')}`,
                         );
                         intent.current = null;
@@ -1111,7 +1137,7 @@ export default function AgentPanel({
                       variant="outline"
                       disabled={busy}
                       onClick={() => {
-                        setPrompt(selected.prompt);
+                        form.setFieldValue('prompt', selected.prompt);
                         intent.current = null;
                         textarea.current?.focus();
                         textarea.current?.scrollIntoView({ block: 'center', behavior: 'smooth' });

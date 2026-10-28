@@ -1,4 +1,5 @@
 import { useId, useRef, useState, type ReactNode } from 'react';
+import { useForm } from '@tanstack/react-form';
 import * as UI from '@packages/ui';
 import { Check, FileText, Info, X } from 'lucide-react';
 
@@ -34,7 +35,27 @@ export function ConversationSpecimen({ id }: { id: string }) {
   const [lineNumbers, setLineNumbers] = useState(true);
   const [wrap, setWrap] = useState(true);
   const [messages, setMessages] = useState(initialMessages);
-  const [draft, setDraft] = useState('');
+  const messageForm = useForm({
+    defaultValues: { message: '' },
+    onSubmit: ({ value, formApi }) => {
+      if (!value.message.trim()) return;
+      setMessages((current) => [
+        ...current,
+        { id: `local-${current.length}`, text: value.message.trim(), author: 'Member' },
+      ]);
+      formApi.reset();
+      setStatus('Local sample message appended. No generated reply or network request.');
+    },
+  });
+  const questionnaireForm = useForm({
+    defaultValues: { focus: '', time: '' },
+    onSubmit: ({ value }) => {
+      setStatus(
+        `Focus: ${value.focus || 'None'} · Time: ${value.time || 'None'}. Local preview only.`,
+      );
+      setSubmitted(true);
+    },
+  });
   const [submitted, setSubmitted] = useState(false);
   const focusTitle = useId();
   const timeTitle = useId();
@@ -217,29 +238,28 @@ export function ConversationSpecimen({ id }: { id: string }) {
             className="specimen-stack"
             onSubmit={(event) => {
               event.preventDefault();
-              if (!draft.trim()) return;
-              setMessages((current) => [
-                ...current,
-                {
-                  id: `local-${current.length}`,
-                  text: draft.trim(),
-                  author: 'Member',
-                },
-              ]);
-              setDraft('');
-              setStatus('Local sample message appended. No generated reply or network request.');
+              void messageForm.handleSubmit();
             }}
           >
             <UI.Label htmlFor="sample-message">Append a local message</UI.Label>
-            <UI.Input
-              id="sample-message"
-              value={draft}
-              onChange={(event) => setDraft(event.target.value)}
-              placeholder="Write a preview message…"
-            />
-            <UI.Button type="submit" disabled={!draft.trim()}>
-              Append sample
-            </UI.Button>
+            <messageForm.Field name="message">
+              {(field) => (
+                <UI.Input
+                  id="sample-message"
+                  value={field.state.value}
+                  onChange={(event) => field.handleChange(event.target.value)}
+                  onBlur={field.handleBlur}
+                  placeholder="Write a preview message…"
+                />
+              )}
+            </messageForm.Field>
+            <messageForm.Subscribe selector={(state) => state.values.message}>
+              {(draft) => (
+                <UI.Button type="submit" disabled={!draft.trim()}>
+                  Append sample
+                </UI.Button>
+              )}
+            </messageForm.Subscribe>
           </form>
         </div>
       );
@@ -256,6 +276,7 @@ export function ConversationSpecimen({ id }: { id: string }) {
           <UI.Button
             variant="outline"
             onClick={() => {
+              questionnaireForm.reset();
               setSubmitted(false);
               setStatus('Questionnaire reset.');
             }}
@@ -270,11 +291,7 @@ export function ConversationSpecimen({ id }: { id: string }) {
           items={questionItems}
           onSubmit={(event) => {
             event.preventDefault();
-            const answers = new FormData(event.currentTarget);
-            setStatus(
-              `Focus: ${answers.get('focus') ?? 'None'} · Time: ${answers.get('time') ?? 'None'}. Local preview only.`,
-            );
-            setSubmitted(true);
+            void questionnaireForm.handleSubmit();
           }}
         >
           <UI.QuestionnaireProgress />
@@ -285,28 +302,64 @@ export function ConversationSpecimen({ id }: { id: string }) {
             <UI.QuestionnaireDescription>
               Choose one illustrative training focus.
             </UI.QuestionnaireDescription>
-            <UI.QuestionnaireChoices>
-              <UI.QuestionnaireChoice value="strength">
-                Strength
-                <UI.QuestionnaireChoiceDescription>
-                  Practice the main lifts.
-                </UI.QuestionnaireChoiceDescription>
-              </UI.QuestionnaireChoice>
-              <UI.QuestionnaireChoice value="conditioning">
-                Conditioning
-                <UI.QuestionnaireChoiceDescription>
-                  Build a sustainable engine.
-                </UI.QuestionnaireChoiceDescription>
-              </UI.QuestionnaireChoice>
-            </UI.QuestionnaireChoices>
+            <questionnaireForm.Field name="focus">
+              {(field) => (
+                <UI.QuestionnaireChoices>
+                  <UI.QuestionnaireChoice
+                    value="strength"
+                    checked={field.state.value === 'strength'}
+                    onChange={(event) => {
+                      if (event.target.checked) field.handleChange('strength');
+                    }}
+                  >
+                    Strength
+                    <UI.QuestionnaireChoiceDescription>
+                      Practice the main lifts.
+                    </UI.QuestionnaireChoiceDescription>
+                  </UI.QuestionnaireChoice>
+                  <UI.QuestionnaireChoice
+                    value="conditioning"
+                    checked={field.state.value === 'conditioning'}
+                    onChange={(event) => {
+                      if (event.target.checked) field.handleChange('conditioning');
+                    }}
+                  >
+                    Conditioning
+                    <UI.QuestionnaireChoiceDescription>
+                      Build a sustainable engine.
+                    </UI.QuestionnaireChoiceDescription>
+                  </UI.QuestionnaireChoice>
+                </UI.QuestionnaireChoices>
+              )}
+            </questionnaireForm.Field>
             <UI.QuestionnaireError />
           </UI.QuestionnaireItem>
           <UI.QuestionnaireItem name="time" required aria-labelledby={timeTitle}>
             <UI.QuestionnaireTitle id={timeTitle}>How much time do you have?</UI.QuestionnaireTitle>
-            <UI.QuestionnaireChoices>
-              <UI.QuestionnaireChoice value="short">About 20 minutes</UI.QuestionnaireChoice>
-              <UI.QuestionnaireChoice value="long">About 45 minutes</UI.QuestionnaireChoice>
-            </UI.QuestionnaireChoices>
+            <questionnaireForm.Field name="time">
+              {(field) => (
+                <UI.QuestionnaireChoices>
+                  <UI.QuestionnaireChoice
+                    value="short"
+                    checked={field.state.value === 'short'}
+                    onChange={(event) => {
+                      if (event.target.checked) field.handleChange('short');
+                    }}
+                  >
+                    About 20 minutes
+                  </UI.QuestionnaireChoice>
+                  <UI.QuestionnaireChoice
+                    value="long"
+                    checked={field.state.value === 'long'}
+                    onChange={(event) => {
+                      if (event.target.checked) field.handleChange('long');
+                    }}
+                  >
+                    About 45 minutes
+                  </UI.QuestionnaireChoice>
+                </UI.QuestionnaireChoices>
+              )}
+            </questionnaireForm.Field>
             <UI.QuestionnaireError />
           </UI.QuestionnaireItem>
           <UI.QuestionnaireActions>

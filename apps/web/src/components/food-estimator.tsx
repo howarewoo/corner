@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
+import { useForm } from '@tanstack/react-form';
 import { rpc, scoped, errorCode, sessionLifetime } from '../rpc';
 import { Check, Loader2, Sparkles } from 'lucide-react';
 import {
@@ -45,7 +46,6 @@ export default function FoodEstimator({ disabled, aiAvailable, onApply }: FoodEs
   const fieldId = useId();
   const helpId = `${fieldId}-help`;
   const connectionId = `${fieldId}-connection`;
-  const [description, setDescription] = useState('');
   const [result, setResult] = useState<FoodEstimateResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
@@ -56,7 +56,18 @@ export default function FoodEstimator({ disabled, aiAvailable, onApply }: FoodEs
   const inFlight = useRef(false);
   const requestIntent = useRef<{ description: string; requestId: string } | null>(null);
   const connectionMissing = !aiAvailable || connectionUnavailable;
-  const descriptionValid = FoodDescriptionSchema.safeParse(description).success;
+  const form = useForm({
+    defaultValues: { description: '' },
+    validators: {
+      onSubmit: ({ value }) =>
+        FoodDescriptionSchema.safeParse(value.description).success
+          ? undefined
+          : 'Describe the food and portions.',
+    },
+    onSubmit: async ({ value }) => {
+      await estimateFood(value.description);
+    },
+  });
 
   const cancelRequest = useCallback(() => {
     requestSequence.current += 1;
@@ -79,17 +90,23 @@ export default function FoodEstimator({ disabled, aiAvailable, onApply }: FoodEs
   function updateDescription(value: string) {
     cancelRequest();
     requestIntent.current = null;
-    setDescription(value);
+    form.setFieldValue('description', value);
     setPending(false);
     setResult(null);
     setApplied(false);
     setError(null);
   }
 
-  async function estimateFood() {
+  async function estimateFood(description: string) {
     if (generation !== sessionLifetime()) return;
     const input = description.trim();
-    if (disabled || connectionMissing || inFlight.current || !descriptionValid) return;
+    if (
+      disabled ||
+      connectionMissing ||
+      inFlight.current ||
+      !FoodDescriptionSchema.safeParse(description).success
+    )
+      return;
 
     const controller = new AbortController();
     const sequence = ++requestSequence.current;
@@ -164,17 +181,22 @@ export default function FoodEstimator({ disabled, aiAvailable, onApply }: FoodEs
     >
       <Field className="field">
         <FieldLabel htmlFor={fieldId}>Food and portions</FieldLabel>
-        <Textarea
-          id={fieldId}
-          name="foodDescription"
-          rows={4}
-          maxLength={FOOD_DESCRIPTION_MAX_LENGTH}
-          value={description}
-          onChange={(event) => updateDescription(event.target.value)}
-          disabled={disabled}
-          aria-describedby={`${helpId}${connectionMissing ? ` ${connectionId}` : ''}`}
-          placeholder="e.g. 2 large eggs scrambled in 1 tsp olive oil, with 2 slices of whole-wheat toast"
-        />
+        <form.Field name="description">
+          {(field) => (
+            <Textarea
+              id={fieldId}
+              name="foodDescription"
+              rows={4}
+              maxLength={FOOD_DESCRIPTION_MAX_LENGTH}
+              value={field.state.value}
+              onBlur={field.handleBlur}
+              onChange={(event) => updateDescription(event.target.value)}
+              disabled={disabled}
+              aria-describedby={`${helpId}${connectionMissing ? ` ${connectionId}` : ''}`}
+              placeholder="e.g. 2 large eggs scrambled in 1 tsp olive oil, with 2 slices of whole-wheat toast"
+            />
+          )}
+        </form.Field>
         <FieldDescription id={helpId}>
           Describe the entire amount you ate. Include quantities, preparation, oils or sauces, and
           the brand when it matters.
@@ -190,16 +212,22 @@ export default function FoodEstimator({ disabled, aiAvailable, onApply }: FoodEs
       )}
 
       <div className="food-estimator-actions">
-        <Button
-          type="button"
-          variant="default"
-          disabled={disabled || connectionMissing || pending || !descriptionValid}
-          aria-busy={pending}
-          onClick={() => void estimateFood()}
+        <form.Subscribe
+          selector={(state) => FoodDescriptionSchema.safeParse(state.values.description).success}
         >
-          {pending ? <Loader2 size={16} className="spin" /> : <Sparkles size={16} />}
-          {pending ? 'Estimating…' : 'Estimate nutrition'}
-        </Button>
+          {(descriptionValid) => (
+            <Button
+              type="button"
+              variant="default"
+              disabled={disabled || connectionMissing || pending || !descriptionValid}
+              aria-busy={pending}
+              onClick={() => void form.handleSubmit()}
+            >
+              {pending ? <Loader2 size={16} className="spin" /> : <Sparkles size={16} />}
+              {pending ? 'Estimating…' : 'Estimate nutrition'}
+            </Button>
+          )}
+        </form.Subscribe>
         <p>You’ll review the estimate before adding it to your log.</p>
       </div>
 

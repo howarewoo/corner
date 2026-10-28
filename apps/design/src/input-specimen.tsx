@@ -1,5 +1,6 @@
 // Live examples adapted from https://ui.shadcn.com/docs/components/base/input.
 import { useState } from 'react';
+import { useForm } from '@tanstack/react-form';
 import { Info } from 'lucide-react';
 import {
   Badge,
@@ -62,12 +63,41 @@ export function InputExamples() {
   const [formResult, setFormResult] = useState(
     'Synthetic contact details only. Nothing is sent or saved.',
   );
-  const [country, setCountry] = useState<string | null>('us');
+  const groupForm = useForm({
+    defaultValues: { name: '', email: '' },
+    onSubmit: ({ value }) =>
+      setGroupResult(
+        `Local submission: ${value.name} (${value.email}). Nothing was sent or saved.`,
+      ),
+  });
+  const inlineForm = useForm({
+    defaultValues: { query: '' },
+    onSubmit: ({ value }) => setInlineResult(search(value.query)),
+  });
+  const searchForm = useForm({
+    defaultValues: { query: '' },
+    onSubmit: ({ value }) => setSearchResult(search(value.query)),
+  });
+  const requiredForm = useForm({
+    defaultValues: { required: '' },
+    onSubmit: () =>
+      setRequiredResult('Required value accepted locally. Nothing was sent or saved.'),
+  });
+  const contactForm = useForm({
+    defaultValues: { name: '', email: '', phone: '', country: 'us' as string | null, address: '' },
+    onSubmit: ({ value }) => {
+      const countryLabel =
+        countries.find((item) => item.value === value.country)?.label ?? 'No country';
+      setFormResult(
+        `Local submission for ${value.name} in ${countryLabel}. Nothing was sent or saved.`,
+      );
+    },
+  });
   const [language, setLanguage] = useState<keyof typeof translations>('ar');
   const translated = translations[language];
 
-  function search(form: HTMLFormElement) {
-    const query = String(new FormData(form).get('query') ?? '').trim();
+  function search(value: string) {
+    const query = value.trim();
     const matches = ['Upper body', 'Recovery', 'Long run'].filter((name) =>
       name.toLowerCase().includes(query.toLowerCase()),
     );
@@ -125,28 +155,48 @@ export function InputExamples() {
           className="specimen-narrow specimen-stack"
           onSubmit={(event) => {
             event.preventDefault();
-            const data = new FormData(event.currentTarget);
-            setGroupResult(
-              `Local submission: ${data.get('name')} (${data.get('email')}). Nothing was sent or saved.`,
-            );
+            void groupForm.handleSubmit();
           }}
-          onReset={() => setGroupResult('Sample fields reset. Nothing was sent or saved.')}
+          onReset={(event) => {
+            event.preventDefault();
+            groupForm.reset();
+            setGroupResult('Sample fields reset. Nothing was sent or saved.');
+          }}
         >
           <FieldGroup>
             <Field>
               <FieldLabel htmlFor="input-fieldgroup-name">Name</FieldLabel>
-              <Input id="input-fieldgroup-name" name="name" placeholder="Jordan Lee" required />
+              <groupForm.Field name="name">
+                {(field) => (
+                  <Input
+                    id="input-fieldgroup-name"
+                    name={field.name}
+                    placeholder="Jordan Lee"
+                    required
+                    value={field.state.value}
+                    onChange={(event) => field.handleChange(event.target.value)}
+                    onBlur={field.handleBlur}
+                  />
+                )}
+              </groupForm.Field>
             </Field>
             <Field>
               <FieldLabel htmlFor="input-fieldgroup-email">Email</FieldLabel>
-              <Input
-                id="input-fieldgroup-email"
-                name="email"
-                type="email"
-                placeholder="name@example.com"
-                required
-                aria-describedby="input-fieldgroup-email-description"
-              />
+              <groupForm.Field name="email">
+                {(field) => (
+                  <Input
+                    id="input-fieldgroup-email"
+                    name="email"
+                    value={field.state.value}
+                    onChange={(event) => field.handleChange(event.target.value)}
+                    onBlur={field.handleBlur}
+                    type="email"
+                    placeholder="name@example.com"
+                    required
+                    aria-describedby="input-fieldgroup-email-description"
+                  />
+                )}
+              </groupForm.Field>
               <FieldDescription id="input-fieldgroup-email-description">
                 Use a synthetic address. No email will be sent.
               </FieldDescription>
@@ -216,18 +266,25 @@ export function InputExamples() {
           className="specimen-narrow specimen-stack"
           onSubmit={(event) => {
             event.preventDefault();
-            setInlineResult(search(event.currentTarget));
+            void inlineForm.handleSubmit();
           }}
         >
           <FieldLabel htmlFor="input-inline-search">Search sample sessions</FieldLabel>
           <Field orientation="horizontal">
-            <Input
-              id="input-inline-search"
-              name="query"
-              type="search"
-              placeholder="Search…"
-              aria-describedby="input-inline-result"
-            />
+            <inlineForm.Field name="query">
+              {(field) => (
+                <Input
+                  id="input-inline-search"
+                  name="query"
+                  value={field.state.value}
+                  onChange={(event) => field.handleChange(event.target.value)}
+                  onBlur={field.handleBlur}
+                  type="search"
+                  placeholder="Search…"
+                  aria-describedby="input-inline-result"
+                />
+              )}
+            </inlineForm.Field>
             <Button type="submit">Search</Button>
           </Field>
           <div id="input-inline-result">
@@ -252,20 +309,27 @@ export function InputExamples() {
           className="specimen-narrow specimen-stack"
           onSubmit={(event) => {
             event.preventDefault();
-            setRequiredResult('Required value accepted locally. Nothing was sent or saved.');
+            void requiredForm.handleSubmit();
           }}
         >
           <Field>
             <FieldLabel htmlFor="input-required">
               Required field <span aria-hidden="true">*</span>
             </FieldLabel>
-            <Input
-              id="input-required"
-              name="required"
-              placeholder="This field is required"
-              required
-              aria-describedby="input-required-description"
-            />
+            <requiredForm.Field name="required">
+              {(field) => (
+                <Input
+                  id="input-required"
+                  name="required"
+                  value={field.state.value}
+                  onChange={(event) => field.handleChange(event.target.value)}
+                  onBlur={field.handleBlur}
+                  placeholder="This field is required"
+                  required
+                  aria-describedby="input-required-description"
+                />
+              )}
+            </requiredForm.Field>
             <FieldDescription id="input-required-description">
               This field must be filled out before submitting.
             </FieldDescription>
@@ -314,19 +378,26 @@ export function InputExamples() {
           className="specimen-narrow specimen-stack"
           onSubmit={(event) => {
             event.preventDefault();
-            setSearchResult(search(event.currentTarget));
+            void searchForm.handleSubmit();
           }}
         >
           <Field>
             <FieldLabel htmlFor="input-button-group">Search</FieldLabel>
             <ButtonGroup>
-              <Input
-                id="input-button-group"
-                name="query"
-                type="search"
-                placeholder="Type to search…"
-                aria-describedby="input-button-group-result"
-              />
+              <searchForm.Field name="query">
+                {(field) => (
+                  <Input
+                    id="input-button-group"
+                    name="query"
+                    value={field.state.value}
+                    onChange={(event) => field.handleChange(event.target.value)}
+                    onBlur={field.handleBlur}
+                    type="search"
+                    placeholder="Type to search…"
+                    aria-describedby="input-button-group-result"
+                  />
+                )}
+              </searchForm.Field>
               <Button type="submit" variant="outline">
                 Search
               </Button>
@@ -345,15 +416,11 @@ export function InputExamples() {
           className="specimen-narrow specimen-stack"
           onSubmit={(event) => {
             event.preventDefault();
-            const data = new FormData(event.currentTarget);
-            const countryLabel =
-              countries.find((item) => item.value === country)?.label ?? 'No country';
-            setFormResult(
-              `Local submission for ${data.get('name')} in ${countryLabel}. Nothing was sent or saved.`,
-            );
+            void contactForm.handleSubmit();
           }}
-          onReset={() => {
-            setCountry('us');
+          onReset={(event) => {
+            event.preventDefault();
+            contactForm.reset();
             setFormResult('Form cancelled and reset. Nothing was sent or saved.');
           }}
         >
@@ -362,17 +429,36 @@ export function InputExamples() {
               <FieldLabel htmlFor="input-form-name">
                 Name <span aria-hidden="true">*</span>
               </FieldLabel>
-              <Input id="input-form-name" name="name" placeholder="Jordan Lee" required />
+              <contactForm.Field name="name">
+                {(field) => (
+                  <Input
+                    id="input-form-name"
+                    name={field.name}
+                    placeholder="Jordan Lee"
+                    required
+                    value={field.state.value}
+                    onChange={(event) => field.handleChange(event.target.value)}
+                    onBlur={field.handleBlur}
+                  />
+                )}
+              </contactForm.Field>
             </Field>
             <Field>
               <FieldLabel htmlFor="input-form-email">Email</FieldLabel>
-              <Input
-                id="input-form-email"
-                name="email"
-                type="email"
-                placeholder="jordan@example.com"
-                aria-describedby="input-form-email-description"
-              />
+              <contactForm.Field name="email">
+                {(field) => (
+                  <Input
+                    id="input-form-email"
+                    name="email"
+                    value={field.state.value}
+                    onChange={(event) => field.handleChange(event.target.value)}
+                    onBlur={field.handleBlur}
+                    type="email"
+                    placeholder="jordan@example.com"
+                    aria-describedby="input-form-email-description"
+                  />
+                )}
+              </contactForm.Field>
               <FieldDescription id="input-form-email-description">
                 Use synthetic contact details for this local preview.
               </FieldDescription>
@@ -380,32 +466,58 @@ export function InputExamples() {
             <div className="specimen-grid">
               <Field>
                 <FieldLabel htmlFor="input-form-phone">Phone</FieldLabel>
-                <Input
-                  id="input-form-phone"
-                  name="phone"
-                  type="tel"
-                  placeholder="+1 (555) 123-4567"
-                />
+                <contactForm.Field name="phone">
+                  {(field) => (
+                    <Input
+                      id="input-form-phone"
+                      name="phone"
+                      value={field.state.value}
+                      onChange={(event) => field.handleChange(event.target.value)}
+                      onBlur={field.handleBlur}
+                      type="tel"
+                      placeholder="+1 (555) 123-4567"
+                    />
+                  )}
+                </contactForm.Field>
               </Field>
               <Field>
                 <FieldLabel htmlFor="input-form-country">Country</FieldLabel>
-                <Select items={countries} value={country} onValueChange={setCountry}>
-                  <SelectTrigger id="input-form-country">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {countries.map((item) => (
-                      <SelectItem key={item.value} value={item.value}>
-                        {item.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <contactForm.Field name="country">
+                  {(field) => (
+                    <Select
+                      items={countries}
+                      value={field.state.value}
+                      onValueChange={field.handleChange}
+                    >
+                      <SelectTrigger id="input-form-country">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {countries.map((item) => (
+                          <SelectItem key={item.value} value={item.value}>
+                            {item.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
+                </contactForm.Field>
               </Field>
             </div>
             <Field>
               <FieldLabel htmlFor="input-form-address">Address</FieldLabel>
-              <Input id="input-form-address" name="address" placeholder="123 Main St" />
+              <contactForm.Field name="address">
+                {(field) => (
+                  <Input
+                    id="input-form-address"
+                    name={field.name}
+                    placeholder="123 Main St"
+                    value={field.state.value}
+                    onChange={(event) => field.handleChange(event.target.value)}
+                    onBlur={field.handleBlur}
+                  />
+                )}
+              </contactForm.Field>
             </Field>
             <Field orientation="horizontal">
               <Button type="reset" variant="outline">
