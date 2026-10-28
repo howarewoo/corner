@@ -447,7 +447,7 @@
   flex-direction: column;
   gap: 10px;
 }
-.training-checkin-button {
+.ui-button.training-checkin-button {
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -456,6 +456,13 @@
   height: auto;
   padding: 14px;
   white-space: normal;
+}
+.training-checkin-button > span {
+  flex: 1;
+  min-width: 0;
+}
+.training-checkin-button > svg {
+  flex-shrink: 0;
 }
 .training-checkin-button b {
   display: block;
