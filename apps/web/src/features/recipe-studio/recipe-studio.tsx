@@ -45,21 +45,7 @@ export default function RecipeStudio({
   saveRecipe: (recipe: Recipe) => Promise<void>;
   copyText: (text: string, success?: string) => Promise<void>;
 }) {
-  const {
-    studioPrompt,
-    setStudioPrompt,
-    studioCalories,
-    setStudioCalories,
-    studioProtein,
-    setStudioProtein,
-    studioMinutes,
-    setStudioMinutes,
-    generating,
-    generated,
-    studioBrief,
-    saveRequest,
-    generateRecipe,
-  } = studio;
+  const { form, generating, generated, studioBrief } = studio;
   const page = useRecordPage({ resource: 'recipeRequests', order: 'recent', limit: 20 }, !state);
   const requests = state ? [...state.requests].reverse() : (page.data?.items ?? []);
   const recipeIds = [
@@ -108,13 +94,18 @@ export default function RecipeStudio({
             <h2>What sounds good?</h2>
             <p>Tell us what you’re craving, what’s in the fridge, or what you’d like to change.</p>
             <Field label="Your recipe idea">
-              <Textarea
-                value={studioPrompt}
-                onChange={(e) => setStudioPrompt(e.target.value)}
-                rows={5}
-                maxLength={1600}
-                placeholder="A flavorful dinner using what I have, easy to prep and suited to my food preferences…"
-              />
+              <form.Field name="prompt">
+                {(field) => (
+                  <Textarea
+                    value={field.state.value}
+                    onBlur={field.handleBlur}
+                    onChange={(e) => field.handleChange(e.target.value)}
+                    rows={5}
+                    maxLength={1600}
+                    placeholder="A flavorful dinner using what I have, easy to prep and suited to my food preferences…"
+                  />
+                )}
+              </form.Field>
             </Field>
             <div className="suggestion-chips">
               {[
@@ -126,7 +117,7 @@ export default function RecipeStudio({
                   variant="ghost"
                   size="default"
                   key={idea}
-                  onClick={() => setStudioPrompt(idea)}
+                  onClick={() => form.setFieldValue('prompt', idea)}
                 >
                   <Plus size={12} />
                   {idea}
@@ -135,33 +126,48 @@ export default function RecipeStudio({
             </div>
             <div className="studio-targets">
               <Field label="Calories per serving">
-                <Input
-                  type="number"
-                  value={studioCalories}
-                  min={150}
-                  max={1500}
-                  step={25}
-                  onChange={(e) => setStudioCalories(Number(e.target.value))}
-                />
+                <form.Field name="calories">
+                  {(field) => (
+                    <Input
+                      type="number"
+                      value={field.state.value}
+                      onBlur={field.handleBlur}
+                      min={150}
+                      max={1500}
+                      step={25}
+                      onChange={(e) => field.handleChange(Number(e.target.value))}
+                    />
+                  )}
+                </form.Field>
               </Field>
               <Field label="Protein goal (g)">
-                <Input
-                  type="number"
-                  value={studioProtein}
-                  min={5}
-                  max={120}
-                  onChange={(e) => setStudioProtein(Number(e.target.value))}
-                />
+                <form.Field name="protein">
+                  {(field) => (
+                    <Input
+                      type="number"
+                      value={field.state.value}
+                      onBlur={field.handleBlur}
+                      min={5}
+                      max={120}
+                      onChange={(e) => field.handleChange(Number(e.target.value))}
+                    />
+                  )}
+                </form.Field>
               </Field>
               <Field label="Total time (min)">
-                <Input
-                  type="number"
-                  value={studioMinutes}
-                  min={5}
-                  max={120}
-                  step={5}
-                  onChange={(e) => setStudioMinutes(Number(e.target.value))}
-                />
+                <form.Field name="minutes">
+                  {(field) => (
+                    <Input
+                      type="number"
+                      value={field.state.value}
+                      onBlur={field.handleBlur}
+                      min={5}
+                      max={120}
+                      step={5}
+                      onChange={(e) => field.handleChange(Number(e.target.value))}
+                    />
+                  )}
+                </form.Field>
               </Field>
             </div>
             {!aiAvailable && (
@@ -175,41 +181,45 @@ export default function RecipeStudio({
                 </div>
               </div>
             )}
-            <div className="studio-actions">
-              {aiAvailable ? (
-                <Button
-                  variant="default"
-                  size="default"
-                  disabled={disabled || generating || !studioPrompt.trim()}
-                  onClick={() => void generateRecipe()}
-                >
-                  {generating ? <Loader2 size={16} className="spin" /> : <Sparkles size={16} />}
-                  {generating ? 'Creating your recipe…' : 'Create recipe'}
-                </Button>
-              ) : (
-                <Button
-                  variant="default"
-                  size="default"
-                  disabled={disabled || !studioPrompt.trim()}
-                  onClick={() => void saveRequest()}
-                >
-                  <Plus size={16} />
-                  Save recipe idea
-                </Button>
+            <form.Subscribe selector={(state) => state.values.prompt}>
+              {(studioPrompt) => (
+                <div className="studio-actions">
+                  {aiAvailable ? (
+                    <Button
+                      variant="default"
+                      size="default"
+                      disabled={disabled || generating || !studioPrompt.trim()}
+                      onClick={() => void form.handleSubmit('generate')}
+                    >
+                      {generating ? <Loader2 size={16} className="spin" /> : <Sparkles size={16} />}
+                      {generating ? 'Creating your recipe…' : 'Create recipe'}
+                    </Button>
+                  ) : (
+                    <Button
+                      variant="default"
+                      size="default"
+                      disabled={disabled || !studioPrompt.trim()}
+                      onClick={() => void form.handleSubmit('save')}
+                    >
+                      <Plus size={16} />
+                      Save recipe idea
+                    </Button>
+                  )}
+                  <Button
+                    variant="outline"
+                    size="default"
+                    disabled={!studioPrompt.trim()}
+                    onClick={() => void copyText(studioBrief(), 'Recipe brief copied.')}
+                  >
+                    <Copy size={16} />
+                    Copy brief
+                  </Button>
+                  <Button variant="ghost" size="default" onClick={() => openAgent(studioBrief())}>
+                    Open my agent <ArrowUpRight size={15} />
+                  </Button>
+                </div>
               )}
-              <Button
-                variant="outline"
-                size="default"
-                disabled={!studioPrompt.trim()}
-                onClick={() => void copyText(studioBrief(), 'Recipe brief copied.')}
-              >
-                <Copy size={16} />
-                Copy brief
-              </Button>
-              <Button variant="ghost" size="default" onClick={() => openAgent(studioBrief())}>
-                Open my agent <ArrowUpRight size={15} />
-              </Button>
-            </div>
+            </form.Subscribe>
           </Card>
           {generated && (
             <Card className="panel generated-recipe">

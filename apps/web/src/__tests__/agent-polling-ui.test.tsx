@@ -155,3 +155,55 @@ test('agent retains its run through poll failure, recovers, and stops observing 
   );
   expect(screen.getByText('Connected and ready')).toBeVisible();
 });
+
+test('composer keeps mount defaults and its prompt, and retries an ambiguous start with the same request ID', async () => {
+  const inputs: unknown[] = [];
+  mockHttp((call) => {
+    if (call.path === '/api/rpc/agent/list') return json({ json: { runs: [] } });
+    if (call.path === '/api/rpc/ai/connection')
+      return json({
+        json: {
+          available: true,
+          connected: true,
+          enabled: true,
+          state: 'connected',
+          model: null,
+          models: [],
+        },
+      });
+    if (call.path === '/api/rpc/agent/start') {
+      inputs.push(call.body?.json);
+      if (inputs.length === 1) throw new TypeError('Synthetic connection loss');
+      return json({ json: { run: { ...running, status: 'cancelled' } } });
+    }
+  });
+  const composer = (initialPrompt: string, referenceDate: string) => (
+    <QueryClientProvider client={queryClient}>
+      <AgentPanel
+        state={state}
+        revision={3}
+        referenceDate={referenceDate}
+        initialPrompt={initialPrompt}
+        onRefresh={() => {}}
+      />
+    </QueryClientProvider>
+  );
+  const user = userEvent.setup();
+  const { rerender } = render(composer('  Plan practical meals  ', '2026-10-24'));
+  rerender(composer('A different incoming prompt', '2026-11-01'));
+  expect(screen.getByRole('textbox', { name: 'Your request' })).toHaveValue(
+    '  Plan practical meals  ',
+  );
+  expect(screen.getByLabelText('Reference date')).toHaveValue('2026-10-24');
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Ask my agent' })).toBeEnabled());
+  await user.click(screen.getByRole('button', { name: 'Ask my agent' }));
+  await waitFor(() => expect(inputs).toHaveLength(1));
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Ask my agent' })).toBeEnabled());
+  await user.click(screen.getByRole('button', { name: 'Ask my agent' }));
+  await waitFor(() => expect(inputs).toHaveLength(2));
+  expect(inputs[1]).toEqual(inputs[0]);
+  expect(inputs[0]).toMatchObject({ prompt: 'Plan practical meals', referenceDate: '2026-10-24' });
+  expect(screen.getByRole('textbox', { name: 'Your request' })).toHaveValue(
+    '  Plan practical meals  ',
+  );
+});
