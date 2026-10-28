@@ -18,14 +18,14 @@ const token = 'syntheticResetToken123456';
 
 async function account(
   policy: AccountPolicy,
-  options: { route?: AccountRoute; handler?: Handler } = {},
+  options: { route?: AccountRoute; handler?: Handler; onSignedIn?: () => Promise<void> } = {},
 ) {
   const calls = mockHttp(
     async (call) =>
       (await options.handler?.(call)) ??
       (call.path === '/api/rpc/account/policy' ? json({ json: policy }) : undefined),
   );
-  const signedIn = vi.fn(async () => {});
+  const signedIn = vi.fn(options.onSignedIn ?? (async () => {}));
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
   const view = render(
     <QueryClientProvider client={client}>
@@ -340,4 +340,57 @@ test('failed account-policy loading blocks credentials until retry succeeds', as
   await view.user.click(screen.getByRole('button', { name: 'Retry account options' }));
   await waitFor(() => expect(signInButton()).toBeEnabled());
   expect(screen.getByRole('button', { name: 'Forgot password?' })).toBeEnabled();
+});
+
+test('failed credentials retain the exact password for retry and mode changes retain only email', async () => {
+  let rejected = true;
+  const exactPassword = '  a-long-test-passphrase  ';
+  const view = await account(local, {
+    handler: (call) =>
+      call.path === '/api/auth/sign-in/email'
+        ? rejected
+          ? json(
+              { message: 'Try these credentials again.', code: 'INVALID_EMAIL_OR_PASSWORD' },
+              401,
+            )
+          : json({ token: 'synthetic-session' })
+        : undefined,
+  });
+  await view.user.type(screen.getByLabelText('Email', { exact: true }), 'person@example.test');
+  await view.user.type(screen.getByLabelText('Password', { exact: true }), exactPassword);
+  await view.user.keyboard('[Enter]');
+  await screen.findByRole('alert');
+  expect(screen.getByLabelText('Password', { exact: true })).toHaveValue(exactPassword);
+  expect(view.calls.find((call) => call.path === '/api/auth/sign-in/email')?.body).toMatchObject({
+    email: 'person@example.test',
+    password: exactPassword,
+  });
+  rejected = false;
+  await view.user.click(signInButton());
+  await waitFor(() => expect(view.signedIn).toHaveBeenCalledTimes(1));
+  expect(screen.getByLabelText('Password', { exact: true })).toHaveValue('');
+  await view.user.click(screen.getByRole('button', { name: 'Create account' }));
+  expect(screen.getByLabelText('Email', { exact: true })).toHaveValue('person@example.test');
+  expect(screen.getByLabelText('Password', { exact: true })).toHaveValue('');
+});
+
+test('credentials stay pending until Corner session confirmation settles and preserve email on failure', async () => {
+  const confirmation = Promise.withResolvers<void>();
+  const view = await account(local, {
+    onSignedIn: () => confirmation.promise,
+    handler: (call) =>
+      call.path === '/api/auth/sign-in/email' ? json({ token: 'synthetic-session' }) : undefined,
+  });
+  await credentials(view.user);
+  await view.user.click(signInButton());
+  await waitFor(() => expect(view.signedIn).toHaveBeenCalledTimes(1));
+  expect(screen.getByRole('button', { name: 'Please wait…' })).toBeDisabled();
+  expect(screen.getByLabelText('Email', { exact: true })).toBeDisabled();
+  await act(async () => {
+    confirmation.reject(new Error('Session not confirmed'));
+  });
+  await screen.findByRole('alert');
+  expect(screen.getByLabelText('Email', { exact: true })).toHaveValue('person@example.test');
+  expect(screen.getByLabelText('Password', { exact: true })).toHaveValue('');
+  expect(signInButton()).toBeEnabled();
 });

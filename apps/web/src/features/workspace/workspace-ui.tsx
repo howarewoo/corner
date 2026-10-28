@@ -225,9 +225,11 @@ export function Progress({
 export function MacroFields({
   value,
   onChange,
+  onBlur,
 }: {
   value: Macros;
   onChange: (value: Macros) => void;
+  onBlur?: () => void;
 }) {
   return (
     <div className="macro-fields">
@@ -240,6 +242,7 @@ export function MacroFields({
             max={key === 'calories' ? 10000 : key === 'carbs' ? 2500 : 1500}
             step="any"
             value={value[key as keyof Macros]}
+            onBlur={onBlur}
             onChange={(e) => onChange({ ...value, [key]: Number(e.target.value) })}
           />
         </Field>
