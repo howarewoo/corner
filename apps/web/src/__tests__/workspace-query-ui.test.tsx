@@ -816,6 +816,168 @@ test('workout prefill uses the bounded historical context without recording disp
   );
 });
 
+test('workout row edits and explicitly cleared suggestions stay with dotted domain IDs across moves and deletions', async () => {
+  const session: WorkoutSession = {
+    ...plannedSession,
+    exercises: [
+      {
+        ...plannedSession.exercises[0]!,
+        id: 'squat.v1',
+        sets: [
+          { ...plannedSession.exercises[0]!.sets[0]!, id: 'first.set' },
+          { ...plannedSession.exercises[0]!.sets[0]!, id: 'shared.set' },
+        ],
+      },
+      {
+        ...plannedSession.exercises[0]!,
+        id: 'press.v1',
+        name: 'Synthetic press',
+        targetLoad: { weight: 20, unit: 'kg' },
+        sets: [{ ...plannedSession.exercises[0]!.sets[0]!, id: 'shared.set' }],
+      },
+    ],
+  };
+  const state = createInitialState();
+  state.training.sessions = [session];
+  const mutate = vi.fn(async () => false);
+  render(
+    <QueryClientProvider client={runtime.queryClient}>
+      <TrainingPanel
+        state={state}
+        settings={state.settings}
+        selectedDate={session.date}
+        onDateChange={() => {}}
+        mutate={mutate}
+        busy={false}
+        notify={() => {}}
+        onRefresh={() => {}}
+        onOpenAgent={() => {}}
+      />
+    </QueryClientProvider>,
+  );
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole('button', { name: 'Start workout' }));
+  await user.clear(screen.getByLabelText('Synthetic squat set 2 weight kg', { exact: true }));
+  await user.type(screen.getByLabelText('Synthetic squat set 2 weight kg', { exact: true }), '55');
+  await user.clear(screen.getByLabelText('Synthetic squat set 2 reps in reserve', { exact: true }));
+  await user.clear(screen.getByLabelText('Synthetic press set 1 weight kg', { exact: true }));
+  await user.type(screen.getByLabelText('Synthetic press set 1 weight kg', { exact: true }), '25');
+  await user.click(screen.getByRole('button', { name: 'Move Synthetic squat down' }));
+  await user.click(screen.getByRole('button', { name: 'Remove Synthetic squat set 1' }));
+  expect(screen.getByLabelText('Synthetic squat set 1 weight kg', { exact: true })).toHaveValue(55);
+  expect(
+    screen.getByLabelText('Synthetic squat set 1 reps in reserve', { exact: true }),
+  ).toHaveValue(null);
+  expect(screen.getByLabelText('Synthetic press set 1 weight kg', { exact: true })).toHaveValue(25);
+  await user.click(screen.getByLabelText('Synthetic squat set 1 completed', { exact: true }));
+  await user.click(screen.getByRole('button', { name: 'Save workout' }));
+  await waitFor(() => expect(mutate).toHaveBeenCalledTimes(1));
+  expect(mutate).toHaveBeenCalledWith(
+    {
+      type: 'training.session.save',
+      data: {
+        expectedUpdatedAt: session.updatedAt,
+        session: expect.objectContaining({
+          exercises: [
+            expect.objectContaining({
+              id: 'press.v1',
+              sets: [
+                expect.objectContaining({
+                  id: 'shared.set',
+                  weight: 25,
+                  reps: null,
+                  rir: null,
+                  completed: false,
+                }),
+              ],
+            }),
+            expect.objectContaining({
+              id: 'squat.v1',
+              sets: [
+                expect.objectContaining({
+                  id: 'shared.set',
+                  weight: 55,
+                  reps: 8,
+                  rir: null,
+                  completed: true,
+                }),
+              ],
+            }),
+          ],
+        }),
+      },
+    },
+    'Workout saved',
+  );
+});
+
+test('workout Save clears a failed Complete intent, honors native limits, and waits for actual save success', async () => {
+  const state = createInitialState();
+  state.training.sessions = [structuredClone(plannedSession)];
+  const pendingSave = Promise.withResolvers<boolean>();
+  const mutate = vi
+    .fn()
+    .mockImplementationOnce(() => pendingSave.promise)
+    .mockResolvedValue(true);
+  render(
+    <QueryClientProvider client={runtime.queryClient}>
+      <TrainingPanel
+        state={state}
+        settings={state.settings}
+        selectedDate={plannedSession.date}
+        onDateChange={() => {}}
+        mutate={mutate}
+        busy={false}
+        notify={() => {}}
+        onRefresh={() => {}}
+        onOpenAgent={() => {}}
+      />
+    </QueryClientProvider>,
+  );
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole('button', { name: 'Start workout' }));
+  const plannedMinutes = screen.getByLabelText('Planned minutes');
+  await user.clear(plannedMinutes);
+  await user.type(plannedMinutes, '601');
+  await user.click(screen.getByRole('button', { name: 'Complete workout' }));
+  expect(plannedMinutes).toBeInvalid();
+  expect(mutate).not.toHaveBeenCalled();
+  await user.clear(plannedMinutes);
+  await user.type(plannedMinutes, '45');
+  await user.click(screen.getByRole('button', { name: 'Complete workout' }));
+  expect(
+    await screen.findByText(
+      'Log a completed working set or actual training minutes before completing this workout.',
+    ),
+  ).toBeVisible();
+  expect(mutate).not.toHaveBeenCalled();
+  await user.type(screen.getByLabelText('Session notes'), 'Keep this draft after a failed save');
+  await user.click(screen.getByRole('button', { name: 'Save workout' }));
+  await waitFor(() => expect(mutate).toHaveBeenCalledTimes(1));
+  expect(screen.getByRole('button', { name: 'Save workout' })).toBeDisabled();
+  expect(mutate).toHaveBeenLastCalledWith(
+    {
+      type: 'training.session.save',
+      data: {
+        expectedUpdatedAt: plannedSession.updatedAt,
+        session: expect.objectContaining({
+          status: 'in_progress',
+          notes: 'Keep this draft after a failed save',
+          exercises: plannedSession.exercises,
+        }),
+      },
+    },
+    'Workout saved',
+  );
+  await act(async () => pendingSave.resolve(false));
+  expect(screen.getByLabelText('Session notes')).toHaveValue('Keep this draft after a failed save');
+  await user.click(screen.getByRole('button', { name: 'Save workout' }));
+  await waitFor(() =>
+    expect(screen.queryByRole('dialog', { name: 'Your workout' })).not.toBeInTheDocument(),
+  );
+  expect(mutate).toHaveBeenCalledTimes(2);
+});
+
 test('progress uses lifetime counts, old measurements and explicit historical session details', async () => {
   const stats = {
     sessions: 0,
