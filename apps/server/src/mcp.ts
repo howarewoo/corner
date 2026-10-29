@@ -33,6 +33,12 @@ export async function handleMcp(
       'WWW-Authenticate': `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource/mcp", error="invalid_token"`,
     });
   const parsedBody = request.method === 'POST' ? await readJson(request) : undefined;
+  if (Array.isArray(parsedBody))
+    throw new ApiError(400, 'INVALID_INPUT', 'Use one tool call per request; JSON-RPC batches are not supported.');
+  // Keep client-selected JSON-RPC IDs within the raw-read result's framing allowance.
+  if (parsedBody && typeof parsedBody === 'object' && 'id' in parsedBody &&
+      new TextEncoder().encode(JSON.stringify(parsedBody.id)).byteLength > 256)
+    throw new ApiError(400, 'INVALID_INPUT', 'Use a JSON-RPC request ID of at most 256 encoded bytes.');
   const transport = new WebStandardStreamableHTTPServerTransport({
     sessionIdGenerator: undefined,
     enableJsonResponse: true,
