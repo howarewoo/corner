@@ -19,7 +19,9 @@ import { createReadMcpServer } from '../mcp-reads.js';
 import { registerNutritionWrites } from '../mcp-writes.js';
 import { registerTrainingWrites } from '../mcp-training.js';
 import { registerImports, workoutImportSchema, type WorkoutImportInput } from '../mcp-imports.js';
-import { workoutImportAdapter, MAX_MCP_REQUEST_BYTES, type CompletedWorkoutSource } from '../additive-import.js';
+import { workoutImportAdapter, MAX_MCP_REQUEST_BYTES, type WorkoutSource } from '../additive-import.js';
+import { routineImportAdapter, recipeImportAdapter, mealPlanImportAdapter, foodLogImportAdapter,
+  checkInImportAdapter, scheduledDateImportAdapter, groceryCheckImportAdapter, type ImportAdapter } from '../additive-import.js';
 import { handleMcp } from '../mcp.js';
 import { ApiError, readJson } from '../http.js';
 import { validatePersistedRecords } from '../persisted-records.js';
@@ -30,7 +32,7 @@ let store: WorkspaceStore;
 const resources: Array<{ client: Client; server: McpServer }> = [];
 const access: DelegatedAccess = { ownerId: 'alice', clientId: 'importer', grantId: 'grant', scopes: ['workouts:import'] };
 const timestamp = '2026-10-28T12:00:00.000Z';
-function workout(id = 'history'): CompletedWorkoutSource {
+function workout(id = 'history'): WorkoutSource {
   return { id, templateId: 'historical-routine-not-present', date: '2026-10-28', name: 'Recorded lifting',
     kind: 'strength', status: 'completed', unit: 'kg', plannedMinutes: null,
     durationMinutes: null, rounds: null, sessionRpe: null, readiness: null, notes: '', changeReason: '',
@@ -150,21 +152,25 @@ test('source changes, destination collisions, duplicate identities and invalid f
     error instanceof z.ZodError && error.issues.some(
       (issue) => issue.path.join('.') === 'exercises.0.sets.0.weight',
     ));
-  const notCompleted = args('planned', 1);
-  const planned = notCompleted.records[0].workout;
-  planned.status = 'planned';
-  planned.plannedMinutes = 30;
-  planned.exercises = planned.exercises.map((exercise) => ({
-    ...exercise, targetSets: 1, repMin: 8, repMax: 8, restSeconds: 60, sets: [],
-  }));
-  assert.equal(WorkoutSessionSchema.safeParse({
-    ...planned, createdAt: timestamp, updatedAt: timestamp,
-  }).success, true);
-  await assert.rejects(direct(notCompleted), (error: unknown) =>
-    error instanceof z.ZodError && error.issues.length === 1 &&
-    error.issues[0].path.length === 1 && error.issues[0].path[0] === 'status');
   assert.deepEqual(await store.exportSnapshot('alice'), before);
   assert.equal((await database.query('SELECT count(*)::int AS n FROM mutation_receipts')).rows[0].n, 1);
+});
+
+test('bulk workouts accept every native-valid status without implicit scheduling or routines', async () => {
+  const records = (['planned', 'in_progress', 'completed', 'skipped'] as const).map((status) => ({
+    ...workout(status), status, plannedMinutes: 30, durationMinutes: status === 'completed' ? 10 : null,
+    exercises: workout(status).exercises.map((exercise) => ({
+      ...exercise, targetSets: 1, repMin: 8, repMax: 8, restSeconds: 60, sets: [],
+    })),
+  }));
+  for (const record of records) assert.equal(WorkoutSessionSchema.safeParse({
+    ...record, createdAt: timestamp, updatedAt: timestamp,
+  }).success, true);
+  await direct(args('all-statuses', 0, records));
+  const state = (await store.exportSnapshot('alice')).state;
+  assert.deepEqual(state.training.sessions.map(({ status }) => status).sort(), records.map(({ status }) => status).sort());
+  assert.deepEqual(state.training.scheduledDates, []);
+  assert.deepEqual(state.training.templates, []);
 });
 
 test('owner lock serializes concurrent retries, competing sources and isolated owners', async () => {
@@ -334,4 +340,183 @@ test('provenance-only recovery remains nonempty and owner deletion cascades only
   await database.query("DELETE FROM workspace_metadata WHERE user_id='alice'");
   const rows = (await database.query('SELECT user_id FROM workspace_import_sources')).rows;
   assert.deepEqual(rows, [{ user_id: 'bob' }]);
+});
+
+test('each native collection has independent import-only visibility and revision discovery', async () => {
+  for (const domain of ['routines', 'recipes', 'meal-plans', 'food-logs', 'check-ins', 'scheduled-dates', 'grocery-checks']) {
+    const { client } = await connect({ ...access, scopes: [`${domain}:import`] });
+    assert.deepEqual((await client.listTools()).tools.map(({ name }) => name).sort(),
+      ['get_workspace_revision', `import_${domain.replaceAll('-', '_')}`].sort());
+    assert.deepEqual((await client.callTool({ name: 'get_workspace_revision', arguments: {} })).structuredContent, { revision: 0 });
+  }
+});
+
+async function nativeImport<T>(adapter: ImportAdapter<T>, records: T[], operationId: string, ownerId = 'alice') {
+  const revision = (await store.exportSnapshot(ownerId)).revision;
+  const scope = `${adapter.recordType}:import`;
+  const input = { operationId, expectedRevision: revision, sourceNamespace: 'native-archive',
+    records: records.map((record) => ({ sourceRecordId: adapter.destinationId(record).length <= 240
+      ? adapter.destinationId(record) : 'long-native-key', record })) };
+  return store.delegatedImport({ ...access, ownerId, scopes: [scope] }, scope,
+    `import_${adapter.recordType.replaceAll('-', '_')}`, input, operationId, revision,
+    input.sourceNamespace, input.records, adapter);
+}
+
+const nativeRecipe = {
+  id: 'soup', name: 'Original soup', description: '', category: 'main' as const,
+  prepMinutes: 0, cookMinutes: 0, nutrition: { calories: 0, protein: 0, carbs: 0, fat: 0 },
+  ingredients: [{ name: 'Water', quantity: 0, unit: 'ml', aisle: 'Other', optional: false }],
+  steps: ['Serve'], storage: '', variation: '', tags: [], color: '#112233',
+  source: 'manual' as const, favorite: false, pdf: '/recipes/soup.pdf',
+};
+
+test('routine and recipe imports retain native zero/false metadata without changing settings or snapshots', async () => {
+  const configured = createInitialState();
+  configured.settings.name = 'Configured owner';
+  configured.settings.timezone = 'Pacific/Auckland';
+  await store.replaceImport('alice', 'configured', configured, 0);
+  const { sets: _sets, ...exercise } = workout().exercises[0];
+  const routine = { id: 'routine', name: 'Native routine', kind: 'strength' as const,
+    description: '', durationMinutes: 0, exercises: [{ ...exercise, targetSets: 1, repMin: 1, repMax: 1, restSeconds: 0 }] };
+  await nativeImport(routineImportAdapter, [routine], 'routine-import');
+  await nativeImport(recipeImportAdapter, [nativeRecipe], 'recipe-import');
+  const state = (await store.exportSnapshot('alice')).state;
+  assert.deepEqual(state.settings, configured.settings);
+  assert.equal(state.training.templates[0].durationMinutes, 0);
+  assert.equal(state.training.templates[0].exercises[0].restSeconds, 0);
+  assert.deepEqual(state.training.sessions, []);
+  assert.deepEqual(state.training.scheduledDates, []);
+  const { createdAt, ...recipe } = state.recipes[0];
+  assert.ok(createdAt);
+  assert.deepEqual(recipe, nativeRecipe);
+  await assert.rejects(nativeImport(routineImportAdapter, [{ ...routine, id: 'invalid',
+    exercises: [{ ...routine.exercises[0], repMin: 5, repMax: 1 }] }], 'bad-routine'), z.ZodError);
+});
+
+test('active meal plans require an existing owner recipe and roll back earlier batch members', async () => {
+  await nativeImport(recipeImportAdapter, [nativeRecipe], 'recipe-for-plan', 'bob');
+  const plan = { id: 'plan', date: '2010-01-01', slot: 'lunch' as const, recipeId: nativeRecipe.id, servings: 2 };
+  await assert.rejects(nativeImport(mealPlanImportAdapter, [plan], 'foreign-recipe-plan'), errorCode('INVALID_INPUT'));
+  await nativeImport(recipeImportAdapter, [nativeRecipe], 'owner-recipe');
+  const before = await store.exportSnapshot('alice');
+  await assert.rejects(nativeImport(mealPlanImportAdapter, [plan, { ...plan, id: 'missing-plan', recipeId: 'missing' }],
+    'atomic-plan'), errorCode('INVALID_INPUT'));
+  assert.deepEqual(await store.exportSnapshot('alice'), before);
+  await nativeImport(mealPlanImportAdapter, [plan], 'valid-plan');
+  assert.deepEqual((await store.exportSnapshot('alice')).state.plan, [plan]);
+  assert.deepEqual((await store.exportSnapshot('alice')).state.training.scheduledDates, []);
+});
+
+test('food logs preserve orphan snapshot links and per-serving values while enforcing one log per plan atomically', async () => {
+  const food = { id: 'food', date: '2001-01-01', slot: 'dinner' as const, name: 'Historical soup',
+    recipeId: 'deleted-recipe', planEntryId: 'deleted-plan', servings: 3,
+    nutrition: { calories: 100, protein: 0, carbs: 20, fat: 0 } };
+  await nativeImport(foodLogImportAdapter, [food], 'historical-food');
+  const before = await store.exportSnapshot('alice');
+  const { createdAt, ...saved } = before.state.logs[0];
+  assert.ok(createdAt);
+  assert.deepEqual(saved, food);
+  const window = await store.foodWindow('alice', { from: food.date, through: food.date, limit: 50 });
+  assert.equal(window.totals.calories, 300);
+  assert.equal(window.totals.protein, 0);
+  await assert.rejects(nativeImport(foodLogImportAdapter, [
+    { ...food, id: 'unlinked-food', planEntryId: undefined },
+    { ...food, id: 'duplicate-food' },
+  ], 'duplicate-plan-food'), errorCode('DESTINATION_CONFLICT'));
+  assert.deepEqual(await store.exportSnapshot('alice'), before);
+  assert.deepEqual(inspectImport(before.state).state, before.state);
+});
+
+test('check-ins, explicit dates and exact grocery natural keys survive recovery and tombstones', async () => {
+  const checkIn = { id: 'recovery', date: '2000-01-01', bodyWeight: null, waist: null,
+    sleepHours: 0, energy: null, soreness: null, boxingQuality: null, notes: '' };
+  await nativeImport(checkInImportAdapter, [checkIn], 'check-in-zero');
+  await nativeImport(scheduledDateImportAdapter, [{ date: '1999-12-31' }], 'explicit-date');
+  const key = ' Épicerie | 豆腐 '.padEnd(500, ' ');
+  await nativeImport(groceryCheckImportAdapter, [{ key, checked: false }], 'grocery-false');
+  const snapshot = await store.exportSnapshot('alice');
+  assert.deepEqual(snapshot.state.training.checkIns, [checkIn]);
+  assert.deepEqual(snapshot.state.training.scheduledDates, ['1999-12-31']);
+  assert.equal(Object.keys(snapshot.state.groceryChecks)[0], key);
+  assert.equal(snapshot.state.groceryChecks[key], false);
+  const connection = await database.connect();
+  try {
+    await connection.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+    await validatePersistedRecords(connection, (await connection.query('SELECT current_schema() AS schema')).rows[0].schema);
+    await connection.query('ROLLBACK');
+  } finally { connection.release(); }
+  await store.replaceImport('bob', 'recover-native', snapshot.state, 0);
+  assert.deepEqual((await store.exportSnapshot('bob')).state, snapshot.state);
+  assert.equal((await nativeImport(groceryCheckImportAdapter, [{ key, checked: false }], 'recovered-retry', 'bob')).outcomes[0].outcome, 'skipped');
+  await database.query('DELETE FROM workspace_grocery_checks WHERE user_id = $1', ['bob']);
+  assert.equal((await nativeImport(groceryCheckImportAdapter, [{ key, checked: false }], 'deleted-retry', 'bob')).outcomes[0].outcome, 'skipped');
+  await assert.rejects(nativeImport(groceryCheckImportAdapter, [{ key, checked: true }], 'changed-grocery', 'bob'), errorCode('SOURCE_CONFLICT'));
+  const otherSource = { operationId: 'other-source', expectedRevision: (await store.exportSnapshot('alice')).revision,
+    sourceNamespace: 'other', records: [{ sourceRecordId: 'another', record: { key, checked: false } }] };
+  await assert.rejects(store.delegatedImport({ ...access, scopes: ['grocery-checks:import'] }, 'grocery-checks:import',
+    'import_grocery_checks', otherSource, otherSource.operationId, otherSource.expectedRevision,
+    otherSource.sourceNamespace, otherSource.records, groceryCheckImportAdapter), errorCode('DESTINATION_CONFLICT'));
+});
+
+test('native natural-key occupancy conflicts without normalization, implicit dates or source claims', async () => {
+  const state = createInitialState();
+  const key = ' native | café ';
+  state.groceryChecks[key] = false;
+  state.training.scheduledDates = ['2000-01-01'];
+  await store.replaceImport('alice', 'native-occupancy', state, 0);
+  const before = await store.exportSnapshot('alice');
+  await assert.rejects(nativeImport(groceryCheckImportAdapter, [
+    { key: 'new-checkbox', checked: true }, { key, checked: false },
+  ], 'occupied-grocery'), errorCode('DESTINATION_CONFLICT'));
+  await assert.rejects(nativeImport(scheduledDateImportAdapter, [
+    { date: '2000-01-02' }, { date: '2000-01-01' },
+  ], 'occupied-date'), errorCode('DESTINATION_CONFLICT'));
+  assert.deepEqual(await store.exportSnapshot('alice'), before);
+  for (const key of ['__proto__', 'prototype', 'constructor', 'x'.repeat(501)]) {
+    await assert.rejects(nativeImport(groceryCheckImportAdapter, [{ key, checked: true }], `bad-${key.slice(0, 20)}`), z.ZodError);
+  }
+  const invalidPlan = { ...workout('unknown-plan'), status: 'planned' as const };
+  await assert.rejects(direct(args('unknown-plan', 1, [invalidPlan])), z.ZodError);
+  assert.deepEqual(await store.exportSnapshot('alice'), before);
+});
+
+test('new import boundaries reject unsupported nested nutrition and ingredient facts before create or skip', async () => {
+  const unsupportedRecipes = [
+    { ...nativeRecipe, nutrition: { ...nativeRecipe.nutrition, sodium: 42 } },
+    { ...nativeRecipe, ingredients: [{ ...nativeRecipe.ingredients[0], brand: 'Source fact' }] },
+  ];
+  const food = { id: 'food-strict', date: '2001-01-01', slot: 'dinner' as const,
+    name: 'Recorded soup', servings: 2, nutrition: { calories: 100, protein: 0, carbs: 20, fat: 0 } };
+  const unsupportedFood = { ...food, nutrition: { ...food.nutrition, sodium: 42 } };
+  const empty = await store.exportSnapshot('alice');
+  for (const [index, recipe] of unsupportedRecipes.entries())
+    await assert.rejects(nativeImport(recipeImportAdapter, [recipe], `unsupported-recipe-first-${index}`), z.ZodError);
+  await assert.rejects(nativeImport(foodLogImportAdapter, [unsupportedFood], 'unsupported-food-first'), z.ZodError);
+  assert.deepEqual(await store.exportSnapshot('alice'), empty);
+  await nativeImport(recipeImportAdapter, [nativeRecipe], 'strict-recipe-valid');
+  await nativeImport(foodLogImportAdapter, [food], 'strict-food-valid');
+  const beforeChangedFacts = await store.exportSnapshot('alice');
+  for (const [index, recipe] of unsupportedRecipes.entries())
+    await assert.rejects(nativeImport(recipeImportAdapter, [recipe], `unsupported-recipe-later-${index}`), z.ZodError);
+  await assert.rejects(nativeImport(foodLogImportAdapter, [unsupportedFood], 'unsupported-food-later'), z.ZodError);
+  assert.deepEqual(await store.exportSnapshot('alice'), beforeChangedFacts);
+});
+
+test('recovered native-ID tombstones cannot reserve a whitespace alias and cannot be reused by another source', async () => {
+  const tombstone = {
+    sourceNamespace: 'archive', recordType: 'workouts' as const, sourceRecordId: 'deleted-history',
+    sourceFingerprint: fingerprint(workout()), destinationId: ' history ',
+  };
+  const recovery = createInitialState();
+  recovery.importSources = [tombstone];
+  await assert.rejects(store.replaceImport('alice', 'reject-padded-tombstone', recovery, 0), z.ZodError);
+  assert.equal((await store.exportSnapshot('alice')).revision, 0);
+  assert.equal(await store.isEmpty('alice'), true);
+  recovery.importSources = [{ ...tombstone, destinationId: 'history' }];
+  await store.replaceImport('alice', 'recover-canonical-tombstone', recovery, 0);
+  const recovered = await store.exportSnapshot('alice');
+  assert.equal(recovered.state.importSources[0].destinationId, 'history');
+  assert.deepEqual(recovered.state.training.sessions, []);
+  await assert.rejects(direct(args('different-source-after-recovery', recovered.revision)), errorCode('DESTINATION_CONFLICT'));
+  assert.deepEqual(await store.exportSnapshot('alice'), recovered);
 });

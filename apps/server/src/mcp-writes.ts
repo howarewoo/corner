@@ -83,7 +83,7 @@ export function registerNutritionWrites(
       'food-logs:delete',
       'routines:write',
       'workouts:import',
-    ].some((scope) => access.scopes.includes(scope));
+    ].some((scope) => access.scopes.includes(scope)) || access.scopes.some((scope) => scope.endsWith(':import'));
   if (canWrite())
     server.registerTool(
       'get_workspace_revision',

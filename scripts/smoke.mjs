@@ -276,6 +276,8 @@ async function run(mode, port) {
       }
       return response;
     };
+    const importDomains = ['workouts', 'routines', 'recipes', 'meal-plans', 'food-logs', 'check-ins', 'scheduled-dates', 'grocery-checks'];
+    const importScopes = importDomains.map((domain) => `${domain}:import`);
     const registration = await oauthCall('/oauth/register', {
       client_name: 'Compiled Node import-only client', redirect_uris: ['http://127.0.0.1/callback'],
       grant_types: ['authorization_code', 'refresh_token'], response_types: ['code'],
@@ -286,7 +288,7 @@ async function run(mode, port) {
     const verifier = 'node-import-smoke-pkce-verifier-with-at-least-forty-three-characters';
     const authorize = await oauthCall('/oauth/authorize?' + new URLSearchParams({
       client_id: registrationData.client_id, redirect_uri: 'http://127.0.0.1/callback',
-      response_type: 'code', scope: 'workouts:import workouts:read', prompt: 'consent',
+      response_type: 'code', scope: [...importScopes, 'workouts:read'].join(' '), prompt: 'consent',
       resource: origin + '/mcp', code_challenge: createHash('sha256').update(verifier).digest('base64url'),
       code_challenge_method: 'S256', state: 'node-import-state',
     }));
@@ -294,8 +296,8 @@ async function run(mode, port) {
     const uid = new URL(authorize.headers.get('Location'), origin).pathname.split('/').at(-1);
     const consent = await oauthCall(`/api/delegation/consent/${uid}`);
     assert.equal(consent.status, 200);
-    assert.deepEqual((await consent.json()).requestedScopes.sort(), ['workouts:import', 'workouts:read']);
-    const approval = await oauthCall(`/api/delegation/consent/${uid}`, { accepted: true, scopes: ['workouts:import'] });
+    assert.deepEqual((await consent.json()).requestedScopes.sort(), [...importScopes, 'workouts:read'].sort());
+    const approval = await oauthCall(`/api/delegation/consent/${uid}`, { accepted: true, scopes: importScopes });
     assert.equal(approval.status, 200);
     const resumeUrl = new URL((await approval.json()).redirectTo, origin);
     assert.equal(resumeUrl.origin, origin);
@@ -317,7 +319,7 @@ async function run(mode, port) {
       return (await response.json()).result;
     };
     assert.deepEqual((await mcpCall('tools/list')).tools.map((tool) => tool.name).sort(),
-      ['get_workspace_revision', 'import_workouts']);
+      ['get_workspace_revision', ...importDomains.map((domain) => `import_${domain.replaceAll('-', '_')}`)].sort());
     const input = {
       operationId: 'node-import-workout', expectedRevision: workspace.revision, sourceNamespace: 'node-history-archive',
       records: [{ sourceRecordId: 'walk-source', workout: {
@@ -353,6 +355,66 @@ async function run(mode, port) {
     assert.deepEqual(await native.workspace.export(), after);
     assert.equal((await mcpCall('tools/call', { name: 'get_workouts',
       arguments: { ids: ['node-imported-walk'] } })).isError, true);
+    const nativeBefore = await native.workspace.export();
+    let nativeRevision = nativeBefore.revision;
+    const importNative = async (tool, key, record) => {
+      const result = await mcpCall('tools/call', { name: tool, arguments: {
+        operationId: `node-${tool}`, expectedRevision: nativeRevision, sourceNamespace: 'node-native-archive',
+        records: [{ sourceRecordId: tool, [key]: record }],
+      } });
+      assert.equal(result.isError, undefined, JSON.stringify(result));
+      assert.equal(result.structuredContent.outcomes[0].outcome, 'created');
+      nativeRevision = result.structuredContent.revision;
+    };
+    await importNative('import_routines', 'routine', {
+      id: 'node-routine', name: 'Native recovery', kind: 'recovery', description: '',
+      durationMinutes: 0, exercises: [],
+    });
+    await importNative('import_recipes', 'recipe', {
+      id: 'node-recipe', name: 'Native soup', description: '', category: 'main',
+      prepMinutes: 0, cookMinutes: 0, nutrition: { calories: 0, protein: 0, carbs: 0, fat: 0 },
+      ingredients: [{ name: 'Water', quantity: 0, unit: 'ml', aisle: 'Other', optional: false }],
+      steps: ['Serve'], storage: '', variation: '', tags: [], color: '#112233',
+      source: 'manual', favorite: false, pdf: '/recipes/node-soup.pdf',
+    });
+    await importNative('import_meal_plans', 'mealPlan', {
+      id: 'node-plan', date: '2010-01-01', slot: 'lunch', recipeId: 'node-recipe', servings: 2,
+    });
+    await importNative('import_food_logs', 'foodLog', {
+      id: 'node-food', date: '2001-01-01', slot: 'dinner', name: 'Historical snapshot',
+      recipeId: 'deleted-recipe', planEntryId: 'deleted-plan', servings: 3,
+      nutrition: { calories: 100, protein: 0, carbs: 20, fat: 0 },
+    });
+    await importNative('import_check_ins', 'checkIn', {
+      id: 'node-check-in', date: '2000-01-01', bodyWeight: null, waist: null,
+      sleepHours: 0, energy: null, soreness: null, boxingQuality: null, notes: '',
+    });
+    await importNative('import_scheduled_dates', 'scheduledDate', { date: '1999-12-31' });
+    const nativeGroceryKey = ' Épicerie | 豆腐 '.padEnd(500, ' ');
+    await importNative('import_grocery_checks', 'groceryCheck', { key: nativeGroceryKey, checked: false });
+    await importNative('import_workouts', 'workout', {
+      id: 'node-native-plan', date: '1998-01-01', name: 'Explicit native plan', kind: 'recovery',
+      status: 'planned', unit: 'lb', exercises: [], plannedMinutes: 0, durationMinutes: null,
+      rounds: null, sessionRpe: null, readiness: null, notes: '', changeReason: '',
+    });
+    const nativeAfter = await native.workspace.export();
+    assert.equal(nativeAfter.revision, nativeRevision);
+    assert.deepEqual(nativeAfter.state.settings, nativeBefore.state.settings);
+    assert.deepEqual(nativeAfter.state.training.scheduledDates, [...nativeBefore.state.training.scheduledDates, '1999-12-31']);
+    assert.equal(nativeAfter.state.training.templates.find((row) => row.id === 'node-routine').durationMinutes, 0);
+    assert.equal(nativeAfter.state.recipes.find((row) => row.id === 'node-recipe').favorite, false);
+    assert.equal(nativeAfter.state.plan.find((row) => row.id === 'node-plan').recipeId, 'node-recipe');
+    const nativeFood = nativeAfter.state.logs.find((row) => row.id === 'node-food');
+    assert.equal(nativeFood.nutrition.calories * nativeFood.servings, 300);
+    assert.equal(nativeFood.recipeId, 'deleted-recipe');
+    assert.equal(nativeFood.planEntryId, 'deleted-plan');
+    assert.equal(nativeAfter.state.training.checkIns.find((row) => row.id === 'node-check-in').sleepHours, 0);
+    assert.equal(nativeAfter.state.groceryChecks[nativeGroceryKey], false);
+    assert.equal(nativeAfter.state.training.sessions.find((row) => row.id === 'node-native-plan').status, 'planned');
+    const importedFoodWindow = await native.workspace.foodWindow({ from: '2001-01-01', through: '2001-01-01', limit: 50 });
+    assert.equal(importedFoodWindow.totals.calories, 300);
+    assert.equal(importedFoodWindow.totals.protein, 0);
+    assert.equal(importedFoodWindow.entries[0].name, 'Historical snapshot');
     assert.equal(
       (
         await json(

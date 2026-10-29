@@ -28,7 +28,7 @@ export type Settings = {
 
 export type ImportSource = {
   sourceNamespace: string;
-  recordType: 'workouts';
+  recordType: 'workouts' | 'routines' | 'recipes' | 'meal-plans' | 'food-logs' | 'check-ins' | 'scheduled-dates' | 'grocery-checks';
   sourceRecordId: string;
   sourceFingerprint: string;
   destinationId: string;

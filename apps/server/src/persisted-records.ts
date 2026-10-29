@@ -2,7 +2,7 @@ import type { PoolClient } from 'pg';
 import pg from 'pg';
 import { isDeepStrictEqual } from 'node:util';
 import { drizzle } from 'drizzle-orm/node-postgres';
-import { MutationSchema, SettingsSchema } from '@packages/workspace/mutations';
+import { GroceryKeySchema, SettingsSchema } from '@packages/workspace/mutations';
 import {
   WorkoutExerciseSchema,
   TrainingDateSchema,
@@ -175,12 +175,7 @@ export async function validatePersistedRecords(
   await scan<{ date: string }>('workspace_scheduled_dates', ['user_id', 'date'], (row) =>
     TrainingDateSchema.parse(row.date),
   );
-  await scan<{ key: string }>('workspace_grocery_checks', ['user_id', 'key'], (row) => {
-    const mutation = MutationSchema.parse({
-      type: 'grocery.check',
-      data: { key: row.key, checked: true },
-    });
-    if (mutation.type !== 'grocery.check' || mutation.data.key !== row.key)
-      throw new Error('Lossy grocery key.');
-  });
+  await scan<{ key: string }>('workspace_grocery_checks', ['user_id', 'key'], (row) =>
+    GroceryKeySchema.parse(row.key),
+  );
 }
