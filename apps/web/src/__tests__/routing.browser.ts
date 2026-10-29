@@ -175,7 +175,8 @@ test.describe('raw security queries', () => {
     page,
     account,
   }) => {
-    await signIn(page, account, '/settings');
+    // Signup authenticates the shared context without mounting a workspace page.
+    expect((await account.api.account.session()).user?.email).toBe(account.email);
     let workspace = 0;
     await page.route('**/api/rpc/workspace/**', (route) => {
       workspace++;
