@@ -149,11 +149,13 @@ export function createRPCHandler({ config, auth, store }: RPCServices) {
       }),
       mutate: api.workspace.mutate.handler(({ input, context }) => {
         const raw = mutationInputSchema.parse(input);
+        const owner = principal(context);
         return store.mutate(
-          principal(context).userId,
+          owner.userId,
           raw.requestId,
           raw.mutation,
           raw.expectedRevision,
+          owner.name,
         );
       }),
       previewImport: api.workspace.previewImport.handler(({ input, context }) =>

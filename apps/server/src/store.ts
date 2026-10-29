@@ -222,6 +222,7 @@ export class WorkspaceStore {
     requestId: string,
     mutation: unknown,
     expectedRevision?: number,
+    name?: string,
   ): Promise<CommandResult> {
     const parsed = MutationSchema.parse(mutation);
     return this.commit(
@@ -231,6 +232,8 @@ export class WorkspaceStore {
       expectedRevision,
       (connection, current, position) =>
         executeEntityCommand(connection, userId, parsed, current.settings, position),
+      false,
+      name,
     );
   }
 
@@ -346,6 +349,7 @@ export class WorkspaceStore {
       position: () => number,
     ) => Promise<Settings>,
     replayCommittedRevision = false,
+    name?: string,
   ): Promise<CommandResult> {
     userSchema.parse(userId);
     requestIdSchema.parse(requestId);
@@ -355,14 +359,17 @@ export class WorkspaceStore {
       await connection.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${userId}, 0))`);
       const receipt = (
         await connection
-          .select({ payload_hash: mutationReceipts.payload_hash, revision: mutationReceipts.revision })
+          .select({
+            payload_hash: mutationReceipts.payload_hash,
+            revision: mutationReceipts.revision,
+          })
           .from(mutationReceipts)
           .where(
             and(eq(mutationReceipts.user_id, userId), eq(mutationReceipts.request_id, requestId)),
           )
           .limit(1)
       )[0];
-      const current = await this.metadata(connection, userId);
+      const current = await this.metadata(connection, userId, name);
       if (receipt) {
         if (receipt.payload_hash !== hash)
           throw new ApiError(
