@@ -5,6 +5,8 @@ import type { WorkspaceStore } from './store.js';
 import { createReadMcpServer } from './mcp-reads.js';
 import { ApiError, json, readJson } from './http.js';
 import { registerNutritionWrites } from './mcp-writes.js';
+import { registerTrainingWrites } from './mcp-training.js';
+import type { OriginalToolArguments } from './mcp-writes.js';
 
 export function protectedResourceMetadata(origin: string) {
   return json({
@@ -26,7 +28,7 @@ export async function handleMcp(request: Request, store: WorkspaceStore, delegat
   const parsedBody = request.method === 'POST' ? await readJson(request) : undefined;
   const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true, maxRequestBodySize: 192 * 1024 });
   const server = createReadMcpServer(store, access);
-  registerNutritionWrites(server, store, access, (tool) => {
+  const original: OriginalToolArguments = (tool) => {
     if (!parsedBody || typeof parsedBody !== 'object' || Array.isArray(parsedBody))
       throw new ApiError(400, 'INVALID_INPUT', 'Use one tool call per request.');
     if (!('params' in parsedBody) || !parsedBody.params || typeof parsedBody.params !== 'object' || Array.isArray(parsedBody.params))
@@ -35,7 +37,9 @@ export async function handleMcp(request: Request, store: WorkspaceStore, delegat
     if (!('method' in parsedBody) || parsedBody.method !== 'tools/call' || !('name' in params) || params.name !== tool || !('arguments' in params))
       throw new ApiError(400, 'INVALID_INPUT', 'Original tool arguments are required.');
     return params.arguments;
-  });
+  };
+  registerNutritionWrites(server, store, access, original);
+  registerTrainingWrites(server, store, access, original);
   try {
     await server.connect(transport);
     // Authentication is repeated for every request; SDK sessions never become an authority.

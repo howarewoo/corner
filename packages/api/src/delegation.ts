@@ -9,6 +9,9 @@ export const DELEGATED_PERMISSIONS = [
   { scope: 'food-logs:delete', label: 'Delete food logs' },
   { scope: 'recipes:write', label: 'Create and edit recipes' },
   { scope: 'recipes:delete', label: 'Delete recipes' },
+  { scope: 'routines:write', label: 'Create and edit workout routines' },
+  { scope: 'workout-plans:write', label: 'Create and edit unstarted workout plans' },
+  { scope: 'workout-history:write', label: 'Correct existing recorded workout history without changing its status' },
 ] as const;
 
 export type DelegatedScope = (typeof DELEGATED_PERMISSIONS)[number]['scope'];
