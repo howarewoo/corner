@@ -4,7 +4,16 @@ import { RPC_PREFIX } from '@packages/api/protocol';
 import type { Config } from './config.js';
 import { ApiError } from './http.js';
 
-export type Principal = { userId: string; name: string; email: string; sessionId: string };
+export type Principal = {
+  userId: string;
+  name: string;
+  email: string;
+  sessionId: string;
+  managedSession?: {
+    expiresAt: string;
+    emailVerified: boolean;
+  };
+};
 export type CornerAuth = {
   handler(request: Request): Promise<Response>;
   principal(request: Request): Promise<Principal | null>;
@@ -224,7 +233,16 @@ export function createAuth(
         const { user, session } = parsed.data;
         if (session.userId !== user.id || Date.parse(session.expiresAt) <= Date.now()) return null;
         if (config.neonAuthRequireEmailVerification && !user.emailVerified) return null;
-        return { userId: user.id, name: user.name, email: user.email, sessionId: session.id };
+        return {
+          userId: user.id,
+          name: user.name,
+          email: user.email,
+          sessionId: session.id,
+          managedSession: {
+            expiresAt: session.expiresAt,
+            emailVerified: user.emailVerified,
+          },
+        };
       } catch (error) {
         if (error instanceof AccountServiceUnavailable) {
           const requestId = crypto.randomUUID();

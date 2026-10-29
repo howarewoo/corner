@@ -1,6 +1,7 @@
 // Actual workerd requests, PostgreSQL transactions, and local managed-auth fixture.
 // No cloud credentials, real mail, or model calls are used.
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { mkdtemp, readFile, rm, access, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { connect } from 'node:net';
@@ -572,6 +573,108 @@ try {
   assert.equal(food.revision, foodResult.revision);
   assert.equal(food.nextCursor, null);
   assert.deepEqual((await client(bob).workspace.foodWindow(foodInput)).entries, []);
+
+  // Exercise new delegation on the same canonical built Worker and owned DB/Auth
+  // fixture; no alternate issuer, transport, identity, or listener is introduced.
+  const delegatedCookies = new Map(alice.split('; ').map((cookie) => {
+    const offset = cookie.indexOf('=');
+    return [cookie.slice(0, offset), cookie.slice(offset + 1)];
+  }));
+  const delegatedCall = async (path, body, { bearer, form = false, browser = true } = {}) => {
+    const response = await call(path, {
+      method: body === undefined ? 'GET' : 'POST',
+      redirect: 'manual',
+      headers: {
+        ...(browser ? { Origin: origin, Cookie: [...delegatedCookies].map(([key, value]) => `${key}=${value}`).join('; ') } : {}),
+        ...(body === undefined ? {} : { 'Content-Type': form ? 'application/x-www-form-urlencoded' : 'application/json' }),
+        ...(bearer ? { Authorization: `Bearer ${bearer}`, Accept: 'application/json, text/event-stream' } : {}),
+      },
+      body: body === undefined ? undefined : form ? new URLSearchParams(body) : JSON.stringify(body),
+    });
+    for (const cookie of response.headers.getSetCookie()) {
+      const [pair] = cookie.split(';', 1);
+      const offset = pair.indexOf('=');
+      const key = pair.slice(0, offset), value = pair.slice(offset + 1);
+      if (value) delegatedCookies.set(key, value); else delegatedCookies.delete(key);
+    }
+    const text = await response.text();
+    const data = text && response.headers.get('Content-Type')?.includes('application/json') ? JSON.parse(text) : text || {};
+    return { status: response.status, data, headers: response.headers, location: response.headers.get('Location') };
+  };
+  const delegationMetadata = await delegatedCall('/.well-known/oauth-authorization-server');
+  assert.equal(delegationMetadata.status, 200);
+  assert.equal(delegationMetadata.data.issuer, origin);
+  assert.deepEqual(delegationMetadata.data.code_challenge_methods_supported, ['S256']);
+  assert.equal(delegationMetadata.data.end_session_endpoint, undefined);
+  assert.equal(delegationMetadata.data.pushed_authorization_request_endpoint, undefined);
+  const delegatedRegistration = await delegatedCall('/oauth/register', {
+    client_name: 'Canonical Worker read client', redirect_uris: ['http://127.0.0.1/callback'],
+    grant_types: ['authorization_code', 'refresh_token'], response_types: ['code'], token_endpoint_auth_method: 'none',
+  }, { browser: false });
+  assert.equal(delegatedRegistration.status, 201);
+  const delegatedClient = delegatedRegistration.data.client_id;
+  const delegatedVerifier = 'workers-canonical-s256-verifier-'.repeat(3);
+  const delegatedResource = `${origin}/mcp`;
+  const authorization = await delegatedCall('/oauth/authorize?' + new URLSearchParams({
+    client_id: delegatedClient, redirect_uri: 'http://127.0.0.1/callback', response_type: 'code',
+    scope: 'food-logs:read recipes:read offline_access', prompt: 'consent', resource: delegatedResource,
+    code_challenge: createHash('sha256').update(delegatedVerifier).digest('base64url'),
+    code_challenge_method: 'S256', state: 'canonical-worker-owned-state',
+  }));
+  assert.equal(authorization.status, 303);
+  const delegatedUid = new URL(authorization.location, origin).pathname.split('/').at(-1);
+  const consentDocument = await call(`/oauth/consent/${delegatedUid}`);
+  assert.equal(consentDocument.status, 200);
+  assert.equal(consentDocument.headers.get('Cache-Control'), 'private, no-store, max-age=0');
+  const delegatedConsent = await delegatedCall(`/api/delegation/consent/${delegatedUid}`);
+  assert.equal(delegatedConsent.status, 200);
+  assert.deepEqual(delegatedConsent.data.requestedScopes.sort(), ['food-logs:read', 'recipes:read']);
+  const delegatedApproval = await delegatedCall(`/api/delegation/consent/${delegatedUid}`, { accepted: true, scopes: ['food-logs:read'] });
+  assert.equal(delegatedApproval.status, 200);
+  const delegatedResume = await delegatedCall(delegatedApproval.data.redirectTo);
+  assert.equal(delegatedResume.status, 303);
+  const delegatedCallback = new URL(delegatedResume.location);
+  assert.equal(delegatedCallback.origin + delegatedCallback.pathname, 'http://127.0.0.1/callback');
+  assert.equal(delegatedCallback.searchParams.get('state'), 'canonical-worker-owned-state');
+  assert(delegatedCallback.searchParams.get('code'), 'One consent must finish authorization, including offline_access.');
+  const delegatedTokens = await delegatedCall('/oauth/token', {
+    grant_type: 'authorization_code', client_id: delegatedClient, redirect_uri: 'http://127.0.0.1/callback',
+    code: delegatedCallback.searchParams.get('code'), code_verifier: delegatedVerifier, resource: delegatedResource,
+  }, { form: true, browser: false });
+  assert.equal(delegatedTokens.status, 200);
+  assert.equal(delegatedTokens.headers.get('Set-Cookie'), null);
+  const delegatedRead = await delegatedCall('/mcp', {
+    jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'list_food_logs', arguments: foodInput },
+  }, { bearer: delegatedTokens.data.access_token, browser: false });
+  assert.equal(delegatedRead.status, 200);
+  assert.deepEqual(delegatedRead.data.result.structuredContent.entries.map((entry) => entry.id), ['workers-food-record']);
+  assert.equal(delegatedRead.data.result.structuredContent.revision, foodResult.revision);
+  assert.equal(delegatedRead.headers.get('Set-Cookie'), null);
+  const delegatedVisible = await delegatedCall('/mcp', { jsonrpc: '2.0', id: 2, method: 'tools/list' }, { bearer: delegatedTokens.data.access_token, browser: false });
+  assert.deepEqual(delegatedVisible.data.result.tools.map((tool) => tool.name), ['list_food_logs']);
+  const delegatedWrongResource = await delegatedCall('/oauth/token', {
+    grant_type: 'refresh_token', client_id: delegatedClient, refresh_token: delegatedTokens.data.refresh_token, resource: 'https://wrong.example/mcp',
+  }, { form: true, browser: false });
+  assert.equal(delegatedWrongResource.status, 400);
+  const delegatedRefresh = await delegatedCall('/oauth/token', {
+    grant_type: 'refresh_token', client_id: delegatedClient, refresh_token: delegatedTokens.data.refresh_token, resource: delegatedResource,
+  }, { form: true, browser: false });
+  assert.equal(delegatedRefresh.status, 200, 'Wrong audience must roll back provisional rotation.');
+  const delegatedConnections = await delegatedCall('/api/delegation/connections');
+  const delegatedGrant = delegatedConnections.data.connections.find((connection) => connection.clientName === 'Canonical Worker read client');
+  assert(delegatedGrant);
+  const foreignRevoke = await post('/api/delegation/revoke', { id: delegatedGrant.id }, { Cookie: bob });
+  assert.equal(foreignRevoke.status, 404);
+  const [racedRefresh, ownerRevoke] = await Promise.all([
+    delegatedCall('/oauth/token', { grant_type: 'refresh_token', client_id: delegatedClient, refresh_token: delegatedRefresh.data.refresh_token, resource: delegatedResource }, { form: true, browser: false }),
+    delegatedCall('/api/delegation/revoke', { id: delegatedGrant.id }),
+  ]);
+  assert([200, 400].includes(racedRefresh.status));
+  assert.equal(ownerRevoke.status, 200);
+  for (const credential of [delegatedTokens.data.access_token, delegatedRefresh.data.access_token, ...(racedRefresh.status === 200 ? [racedRefresh.data.access_token] : [])]) {
+    assert.equal((await delegatedCall('/mcp', { jsonrpc: '2.0', id: 3, method: 'tools/list' }, { bearer: credential, browser: false })).status, 401);
+  }
+
   const validateRecords = async (migrator) => {
     const connection = await backend.database.connect();
     try {

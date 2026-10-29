@@ -8,6 +8,7 @@ export default defineConfig({
   tablesFilter: [
     'workspace_*',
     'mutation_receipts',
+    'delegation_*',
     'corner_ai_runs',
     'corner_subscription_meta',
     'corner_subscription_accounts',

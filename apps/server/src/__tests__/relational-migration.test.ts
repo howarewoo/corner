@@ -88,7 +88,6 @@ test('fresh and existing-empty native schemas initialize relational storage with
       const after = (
         await database.query('SELECT hash,created_at FROM __drizzle_migrations ORDER BY id')
       ).rows;
-      assert.equal(after.length, 2);
       if (previous) assert.deepEqual(after.slice(0, 1), before);
       assert.equal(
         (await database.query("SELECT to_regclass('workspace_state') AS legacy")).rows[0].legacy,

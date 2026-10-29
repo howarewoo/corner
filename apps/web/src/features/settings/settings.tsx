@@ -6,6 +6,7 @@ import { ArrowDownToLine, LogOut } from 'lucide-react';
 import { Button, WorkspaceHeader } from '@packages/ui';
 import ProfileForm from '../../profile-form';
 import ImportWorkspace from '../../import-workspace';
+import DelegatedConnections from './delegated-connections';
 import type { Mutate, Notify } from '../workspace/types';
 import { download } from '../workspace/utils';
 
@@ -90,6 +91,7 @@ export default function Settings({
           mutate({ type: 'settings.save', data: settings }, 'Your profile is saved')
         }
       />
+      <DelegatedConnections preview={preview} disabled={disabled || busy} notify={notify} />
       <ImportWorkspace
         disabled={disabled || preview}
         onImported={() => notify('Your workspace is imported')}
