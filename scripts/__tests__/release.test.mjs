@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test, after } from 'node:test';
 import { mkdtemp, rm, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
@@ -184,12 +185,10 @@ function fixture(overrides = {}) {
     if (missing) return null;
     if (path.endsWith('/settings'))
       return {
-        bindings: [
-          'DATABASE_URL',
-          'NEON_AUTH_BASE_URL',
-          'BETTER_AUTH_SECRET',
-          'CORNER_TOKEN_ENCRYPTION_KEY',
-        ].map((name) => ({ name, type: 'secret_text' })),
+        bindings: ['DATABASE_URL', 'NEON_AUTH_BASE_URL'].map((name) => ({
+          name,
+          type: 'secret_text',
+        })),
       };
     return {
       deployments: [
@@ -914,12 +913,19 @@ test('first bootstrap recovers from transient public failure without migrating o
   process.env.CORNER_WORKER_SECRETS_JSON = JSON.stringify({
     DATABASE_URL: process.env.DATABASE_URL,
     NEON_AUTH_BASE_URL: 'https://auth.example.invalid/neondb/auth',
-    BETTER_AUTH_SECRET: 'synthetic-session-secret-over-thirty-two-characters',
-    CORNER_TOKEN_ENCRYPTION_KEY: Buffer.alloc(32, 42).toString('base64'),
+    retainedOpaqueConfiguration: { encrypted: 'synthetic-preserved-bytes' },
   });
+  const retainedSecretsJson = process.env.CORNER_WORKER_SECRETS_JSON;
   const invocations = [];
   f.options.execute = (binary, args) => {
     invocations.push(args);
+    if (args.includes('--secrets-file')) {
+      assert.deepEqual(JSON.parse(readFileSync(args[args.indexOf('--secrets-file') + 1], 'utf8')), {
+        DATABASE_URL: process.env.DATABASE_URL,
+        NEON_AUTH_BASE_URL: 'https://auth.example.invalid/neondb/auth',
+      });
+      assert.equal(process.env.CORNER_WORKER_SECRETS_JSON, retainedSecretsJson);
+    }
     f.effects.push(args.includes('--apply') ? 'migrate' : 'deploy');
     return `Current Version ID: ${versionId}`;
   };
@@ -1052,8 +1058,6 @@ test('explicit adoption pins the existing Worker before migration and again befo
   process.env.CORNER_WORKER_SECRETS_JSON = JSON.stringify({
     DATABASE_URL: process.env.DATABASE_URL,
     NEON_AUTH_BASE_URL: 'https://auth.example.invalid/neondb/auth',
-    BETTER_AUTH_SECRET: 'synthetic-session-secret-over-thirty-two-characters',
-    CORNER_TOKEN_ENCRYPTION_KEY: Buffer.alloc(32, 42).toString('base64'),
   });
   try {
     for (const scenario of ['changed-before-migration', 'changed-during-migration', 'stable']) {
@@ -1219,12 +1223,10 @@ test('explicit rollback completes only after live data validation and public che
     f.options.cf = async (path) =>
       path.endsWith('/settings')
         ? {
-            bindings: [
-              'DATABASE_URL',
-              'NEON_AUTH_BASE_URL',
-              'BETTER_AUTH_SECRET',
-              'CORNER_TOKEN_ENCRYPTION_KEY',
-            ].map((name) => ({ name, type: 'secret_text' })),
+            bindings: ['DATABASE_URL', 'NEON_AUTH_BASE_URL'].map((name) => ({
+              name,
+              type: 'secret_text',
+            })),
           }
         : { deployments: [{ versions: [{ version_id: oldVersion, percentage: 100 }] }] };
     if (failPublic) {
@@ -1501,9 +1503,7 @@ function cutoverFixture({
     return { id: 10, payload: documentBaseline };
   };
   f.github.schema = async () => {
-    const latestSchema = [...f.records]
-      .reverse()
-      .find((row) => row.phase === 'schema-attempted');
+    const latestSchema = [...f.records].reverse().find((row) => row.phase === 'schema-attempted');
     return latestSchema
       ? { id: 21 + f.records.lastIndexOf(latestSchema), payload: latestSchema }
       : null;
@@ -1526,7 +1526,8 @@ function cutoverFixture({
   };
   const origApi = f.github.api;
   f.github.api = async (path) => {
-    if (path === 'deployments/10') return { id: 10, environment: 'production', payload: documentBaseline };
+    if (path === 'deployments/10')
+      return { id: 10, environment: 'production', payload: documentBaseline };
     return origApi(path);
   };
   f.github.artifact = async (reference) => ({
@@ -1579,12 +1580,10 @@ function cutoverFixture({
     if (missing) return null;
     if (path.endsWith('/settings'))
       return {
-        bindings: [
-          'DATABASE_URL',
-          'NEON_AUTH_BASE_URL',
-          'BETTER_AUTH_SECRET',
-          'CORNER_TOKEN_ENCRYPTION_KEY',
-        ].map((name) => ({ name, type: 'secret_text' })),
+        bindings: ['DATABASE_URL', 'NEON_AUTH_BASE_URL'].map((name) => ({
+          name,
+          type: 'secret_text',
+        })),
       };
     return {
       deployments: [{ versions: [{ version_id: liveVersion, percentage: 100 }] }],
@@ -1717,9 +1716,7 @@ test('first preserving cutover run succeeds and pre-cutover abort remains allowe
   };
   let currentSchemaRecord = { id: 15, payload: priorFailedSchema };
   f.github.schema = async () => {
-    const latestSchema = [...f.records]
-      .reverse()
-      .find((row) => row.phase === 'schema-attempted');
+    const latestSchema = [...f.records].reverse().find((row) => row.phase === 'schema-attempted');
     return latestSchema
       ? { id: 21 + f.records.lastIndexOf(latestSchema), payload: latestSchema }
       : currentSchemaRecord;
@@ -1772,9 +1769,7 @@ test('first preserving cutover run succeeds and pre-cutover abort remains allowe
   const f2 = cutoverFixture();
   await f2.setupMigratorFile();
   f2.github.schema = async () => {
-    const latestSchema = [...f2.records]
-      .reverse()
-      .find((row) => row.phase === 'schema-attempted');
+    const latestSchema = [...f2.records].reverse().find((row) => row.phase === 'schema-attempted');
     return latestSchema
       ? { id: 21 + f2.records.lastIndexOf(latestSchema), payload: latestSchema }
       : currentSchemaRecord;

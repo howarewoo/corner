@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { useForm, useStore } from '@tanstack/react-form';
 import { useMutation } from '@tanstack/react-query';
 import { ArrowUpFromLine, Loader2 } from 'lucide-react';
 import { Alert, Button, Field, FieldLabel, Input } from '@packages/ui';
@@ -27,12 +28,26 @@ export default function ImportWorkspace({
   const [candidate, setCandidate] = useState<unknown>(null);
   const [summary, setSummary] = useState<Record<string, unknown> | null>(null);
   const [fileName, setFileName] = useState('');
-  const [confirmation, setConfirmation] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const selection = useRef(0);
   const intent = useRef<string | null>(null);
   const importRevision = useRef(0);
+  const committing = useRef(false);
+  const form = useForm({
+    defaultValues: { confirmation: '' },
+    validators: {
+      onChange: ({ value }) =>
+        value.confirmation.trim() === 'IMPORT' ? undefined : 'Type IMPORT to confirm',
+    },
+    onSubmitMeta: { selection: 0 },
+    onSubmit: async ({ meta }) => {
+      if (meta.selection !== selection.current) return;
+      await commit();
+    },
+  });
+  const submitting = useStore(form.store, (state) => state.isSubmitting);
+  const canConfirm = useStore(form.store, (state) => state.values.confirmation.trim() === 'IMPORT');
   useEffect(
     () => () => {
       selection.current += 1;
@@ -43,7 +58,7 @@ export default function ImportWorkspace({
     const sequence = ++selection.current;
     setCandidate(null);
     setSummary(null);
-    setConfirmation('');
+    form.reset();
     setError('');
     intent.current = null;
     if (!file) return;
@@ -76,10 +91,18 @@ export default function ImportWorkspace({
       if (selection.current === sequence) setBusy(false);
     }
   }
-  async function commit(event: FormEvent) {
-    event.preventDefault();
+  async function commit() {
     if (generation !== sessionLifetime()) return;
-    if (disabled || busy || !candidate || !summary || confirmation.trim() !== 'IMPORT') return;
+    if (
+      disabled ||
+      busy ||
+      committing.current ||
+      !candidate ||
+      !summary ||
+      form.state.values.confirmation.trim() !== 'IMPORT'
+    )
+      return;
+    committing.current = true;
     const current = selection.current;
     setBusy(true);
     setError('');
@@ -94,11 +117,12 @@ export default function ImportWorkspace({
         onImported();
         setCandidate(null);
         setSummary(null);
-        setConfirmation('');
+        form.reset();
       }
     } catch (failure) {
       if (current === selection.current) setError(errorMessage(failure));
     } finally {
+      committing.current = false;
       if (current === selection.current) setBusy(false);
     }
   }
@@ -120,7 +144,7 @@ export default function ImportWorkspace({
           id="import-file"
           type="file"
           accept=".json,application/json"
-          disabled={disabled || busy}
+          disabled={disabled || busy || submitting}
           onChange={(event) => void inspect(event.target.files?.[0])}
         />
       </Field>
@@ -131,7 +155,12 @@ export default function ImportWorkspace({
         </p>
       )}
       {summary && (
-        <form onSubmit={commit}>
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (!committing.current) void form.handleSubmit({ selection: selection.current });
+          }}
+        >
           <div className="import-summary">
             <h3>Review your import</h3>
             <p>{fileName}</p>
@@ -150,21 +179,26 @@ export default function ImportWorkspace({
               workspace.
             </p>
           </div>
-          <Field className="field">
-            <FieldLabel htmlFor="import-confirmation">Type IMPORT to confirm</FieldLabel>
-            <Input
-              id="import-confirmation"
-              autoComplete="off"
-              value={confirmation}
-              onChange={(event) => setConfirmation(event.target.value)}
-              disabled={disabled || busy}
-            />
-          </Field>
+          <form.Field name="confirmation">
+            {(field) => (
+              <Field className="field">
+                <FieldLabel htmlFor="import-confirmation">Type IMPORT to confirm</FieldLabel>
+                <Input
+                  id="import-confirmation"
+                  autoComplete="off"
+                  value={field.state.value}
+                  onBlur={field.handleBlur}
+                  onChange={(event) => field.handleChange(event.target.value)}
+                  disabled={disabled || busy || submitting}
+                />
+              </Field>
+            )}
+          </form.Field>
           <Button
             variant="default"
             size="default"
             type="submit"
-            disabled={disabled || busy || confirmation.trim() !== 'IMPORT'}
+            disabled={disabled || busy || submitting || !canConfirm}
           >
             {busy ? <Loader2 className="spin" size={16} /> : <ArrowUpFromLine size={16} />}
             {busy ? 'Importing…' : 'Import my records'}

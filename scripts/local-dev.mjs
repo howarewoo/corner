@@ -479,7 +479,6 @@ async function serve(config, engine, port) {
           '@packages/nutrition',
           '@packages/training',
           '@packages/workspace',
-          '@packages/agent',
           '@packages/api',
         ].map((name) => `--filter=${name}`),
       ],

@@ -1,6 +1,7 @@
 // Actual workerd requests, PostgreSQL transactions, and local managed-auth fixture.
 // No cloud credentials, real mail, or model calls are used.
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { mkdtemp, readFile, rm, access, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { connect } from 'node:net';
@@ -59,7 +60,9 @@ const recoveryMode = previousArtifact
 const forwardOnly = recoveryMode === 'forward-only';
 const preserving = recoveryMode === 'preserving';
 if (options['--preserving'] && !preserving)
-  throw new Error('--preserving requires a document-v1 previous artifact and relational-v1 candidate.');
+  throw new Error(
+    '--preserving requires a document-v1 previous artifact and relational-v1 candidate.',
+  );
 const directory = await mkdtemp(join(tmpdir(), 'corner-workers-smoke-'));
 const origin = 'https://corner.example.test';
 const cleanup = new AsyncDisposableStack();
@@ -109,11 +112,13 @@ try {
     DATABASE_URL: backend.databaseUrl,
     NEON_AUTH_BASE_URL: backend.authUrl,
     NEON_AUTH_REQUIRE_EMAIL_VERIFICATION: 'false',
-    BETTER_AUTH_SECRET: 'synthetic-workers-session-binding-secret-over-32-characters',
-    CORNER_TOKEN_ENCRYPTION_KEY: Buffer.alloc(32, 42).toString('base64'),
   };
   let workerNumber = 0;
-  const startWorker = async (config, candidate = true, { mainOverride, forbidOutbound = false } = {}) => {
+  const startWorker = async (
+    config,
+    candidate = true,
+    { mainOverride, forbidOutbound = false } = {},
+  ) => {
     const miniflareRequire = createRequire(require.resolve('wrangler'));
     const { Miniflare, convertV4MiniflareOptions, WebSocketPair, Response, Log } = await import(
       miniflareRequire.resolve('miniflare')
@@ -208,10 +213,20 @@ try {
         modules: true,
         modulesRoot: dirname(bundle),
         scriptPath: bundle,
-        bindings,
+        bindings: {
+          ...bindings,
+          ...(options['--previous-config'] && config === options['--previous-config']
+            ? {
+                BETTER_AUTH_SECRET: 'synthetic-workers-session-binding-secret-over-32-characters',
+                CORNER_TOKEN_ENCRYPTION_KEY: Buffer.alloc(32, 42).toString('base64'),
+              }
+            : {}),
+        },
         outboundService: async (request) => {
           if (forbidOutbound)
-            assert.fail(`Maintenance Worker must not make outbound DB/Auth requests (${request.url}).`);
+            assert.fail(
+              `Maintenance Worker must not make outbound DB/Auth requests (${request.url}).`,
+            );
           if (
             request.headers.get('Upgrade')?.toLowerCase() === 'websocket' ||
             new URL(request.url).origin === proxyUrl.origin
@@ -315,12 +330,15 @@ try {
       assert.equal(previousWrite.status, 200, await previousWrite.clone().text());
       // Document-generation get includes state; relational get is bootstrap-only.
       const snapshotProcedure = previousArtifact.generation === 'document-v1' ? 'get' : 'export';
-      const response = await worker.fetch(new URL(`/api/rpc/workspace/${snapshotProcedure}`, origin), {
-        method: 'POST',
-        headers: { Origin: origin, 'Content-Type': 'application/json', Cookie: priorCookie },
-        body: '{}',
-        signal: AbortSignal.timeout(20_000),
-      });
+      const response = await worker.fetch(
+        new URL(`/api/rpc/workspace/${snapshotProcedure}`, origin),
+        {
+          method: 'POST',
+          headers: { Origin: origin, 'Content-Type': 'application/json', Cookie: priorCookie },
+          body: '{}',
+          signal: AbortSignal.timeout(20_000),
+        },
+      );
       assert.equal(response.status, 200, await response.clone().text());
       const previousSnapshot = (await response.json()).json;
       priorState = { state: previousSnapshot.state, revision: previousSnapshot.revision };
@@ -372,15 +390,19 @@ try {
       validationUrl.searchParams.delete('options');
       process.env.DATABASE_URL_UNPOOLED = validationUrl.href;
       try {
-        await validateCutoverCandidate({
-          ...candidateArtifact,
-          directory: dirname(options['--config']),
-        }, operationId, async () => ({
-          ...candidateMigrator,
-          // The existing disposable fixture isolates schemas through libpq options,
-          // forbidden on production unpooled URLs. Keep its real pool factory here.
-          createDatabase: () => candidateMigrator.createDatabase(backend.databaseUrl),
-        }));
+        await validateCutoverCandidate(
+          {
+            ...candidateArtifact,
+            directory: dirname(options['--config']),
+          },
+          operationId,
+          async () => ({
+            ...candidateMigrator,
+            // The existing disposable fixture isolates schemas through libpq options,
+            // forbidden on production unpooled URLs. Keep its real pool factory here.
+            createDatabase: () => candidateMigrator.createDatabase(backend.databaseUrl),
+          }),
+        );
       } finally {
         if (previousUnpooled === undefined) delete process.env.DATABASE_URL_UNPOOLED;
         else process.env.DATABASE_URL_UNPOOLED = previousUnpooled;
@@ -551,6 +573,682 @@ try {
   assert.equal(food.revision, foodResult.revision);
   assert.equal(food.nextCursor, null);
   assert.deepEqual((await client(bob).workspace.foodWindow(foodInput)).entries, []);
+
+  // Exercise new delegation on the same canonical built Worker and owned DB/Auth
+  // fixture; no alternate issuer, transport, identity, or listener is introduced.
+  const delegatedCookies = new Map(
+    alice.split('; ').map((cookie) => {
+      const offset = cookie.indexOf('=');
+      return [cookie.slice(0, offset), cookie.slice(offset + 1)];
+    }),
+  );
+  const delegatedCall = async (path, body, { bearer, form = false, browser = true } = {}) => {
+    const response = await call(path, {
+      method: body === undefined ? 'GET' : 'POST',
+      redirect: 'manual',
+      headers: {
+        ...(browser
+          ? {
+              Origin: origin,
+              Cookie: [...delegatedCookies].map(([key, value]) => `${key}=${value}`).join('; '),
+            }
+          : {}),
+        ...(body === undefined
+          ? {}
+          : { 'Content-Type': form ? 'application/x-www-form-urlencoded' : 'application/json' }),
+        ...(bearer
+          ? { Authorization: `Bearer ${bearer}`, Accept: 'application/json, text/event-stream' }
+          : {}),
+      },
+      body:
+        body === undefined ? undefined : form ? new URLSearchParams(body) : JSON.stringify(body),
+    });
+    for (const cookie of response.headers.getSetCookie()) {
+      const [pair] = cookie.split(';', 1);
+      const offset = pair.indexOf('=');
+      const key = pair.slice(0, offset),
+        value = pair.slice(offset + 1);
+      if (value) delegatedCookies.set(key, value);
+      else delegatedCookies.delete(key);
+    }
+    const text = await response.text();
+    const data =
+      text && response.headers.get('Content-Type')?.includes('application/json')
+        ? JSON.parse(text)
+        : text || {};
+    return {
+      status: response.status,
+      data,
+      headers: response.headers,
+      location: response.headers.get('Location'),
+    };
+  };
+  const delegationMetadata = await delegatedCall('/.well-known/oauth-authorization-server');
+  assert.equal(delegationMetadata.status, 200);
+  assert.equal(delegationMetadata.data.issuer, origin);
+  assert.deepEqual(delegationMetadata.data.code_challenge_methods_supported, ['S256']);
+  assert.equal(delegationMetadata.data.end_session_endpoint, undefined);
+  assert.equal(delegationMetadata.data.pushed_authorization_request_endpoint, undefined);
+  const delegatedRegistration = await delegatedCall(
+    '/oauth/register',
+    {
+      client_name: 'Canonical Worker read client',
+      redirect_uris: ['http://127.0.0.1/callback'],
+      grant_types: ['authorization_code', 'refresh_token'],
+      response_types: ['code'],
+      token_endpoint_auth_method: 'none',
+    },
+    { browser: false },
+  );
+  assert.equal(delegatedRegistration.status, 201);
+  const delegatedClient = delegatedRegistration.data.client_id;
+  const delegatedVerifier = 'workers-canonical-s256-verifier-'.repeat(3);
+  const delegatedResource = `${origin}/mcp`;
+  const authorization = await delegatedCall(
+    '/oauth/authorize?' +
+      new URLSearchParams({
+        client_id: delegatedClient,
+        redirect_uri: 'http://127.0.0.1/callback',
+        response_type: 'code',
+        scope: 'food-logs:read recipes:read offline_access',
+        prompt: 'consent',
+        resource: delegatedResource,
+        code_challenge: createHash('sha256').update(delegatedVerifier).digest('base64url'),
+        code_challenge_method: 'S256',
+        state: 'canonical-worker-owned-state',
+      }),
+  );
+  assert.equal(authorization.status, 303);
+  const delegatedUid = new URL(authorization.location, origin).pathname.split('/').at(-1);
+  const consentDocument = await call(`/oauth/consent/${delegatedUid}`);
+  assert.equal(consentDocument.status, 200);
+  assert.equal(consentDocument.headers.get('Cache-Control'), 'private, no-store, max-age=0');
+  const delegatedConsent = await delegatedCall(`/api/delegation/consent/${delegatedUid}`);
+  assert.equal(delegatedConsent.status, 200);
+  assert.deepEqual(delegatedConsent.data.requestedScopes.sort(), [
+    'food-logs:read',
+    'recipes:read',
+  ]);
+  const delegatedApproval = await delegatedCall(`/api/delegation/consent/${delegatedUid}`, {
+    accepted: true,
+    scopes: ['food-logs:read'],
+  });
+  assert.equal(delegatedApproval.status, 200);
+  const delegatedResume = await delegatedCall(delegatedApproval.data.redirectTo);
+  assert.equal(delegatedResume.status, 303);
+  const delegatedCallback = new URL(delegatedResume.location);
+  assert.equal(delegatedCallback.origin + delegatedCallback.pathname, 'http://127.0.0.1/callback');
+  assert.equal(delegatedCallback.searchParams.get('state'), 'canonical-worker-owned-state');
+  assert(
+    delegatedCallback.searchParams.get('code'),
+    'One consent must finish authorization, including offline_access.',
+  );
+  const delegatedTokens = await delegatedCall(
+    '/oauth/token',
+    {
+      grant_type: 'authorization_code',
+      client_id: delegatedClient,
+      redirect_uri: 'http://127.0.0.1/callback',
+      code: delegatedCallback.searchParams.get('code'),
+      code_verifier: delegatedVerifier,
+      resource: delegatedResource,
+    },
+    { form: true, browser: false },
+  );
+  assert.equal(delegatedTokens.status, 200);
+  assert.equal(delegatedTokens.headers.get('Set-Cookie'), null);
+  const delegatedRead = await delegatedCall(
+    '/mcp',
+    {
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'tools/call',
+      params: { name: 'list_food_logs', arguments: foodInput },
+    },
+    { bearer: delegatedTokens.data.access_token, browser: false },
+  );
+  assert.equal(delegatedRead.status, 200);
+  assert.deepEqual(
+    delegatedRead.data.result.structuredContent.entries.map((entry) => entry.id),
+    ['workers-food-record'],
+  );
+  assert.equal(delegatedRead.data.result.structuredContent.revision, foodResult.revision);
+  assert.equal(delegatedRead.headers.get('Set-Cookie'), null);
+  const delegatedVisible = await delegatedCall(
+    '/mcp',
+    { jsonrpc: '2.0', id: 2, method: 'tools/list' },
+    { bearer: delegatedTokens.data.access_token, browser: false },
+  );
+  assert.deepEqual(
+    delegatedVisible.data.result.tools.map((tool) => tool.name),
+    ['list_food_logs'],
+  );
+  const delegatedWrongResource = await delegatedCall(
+    '/oauth/token',
+    {
+      grant_type: 'refresh_token',
+      client_id: delegatedClient,
+      refresh_token: delegatedTokens.data.refresh_token,
+      resource: 'https://wrong.example/mcp',
+    },
+    { form: true, browser: false },
+  );
+  assert.equal(delegatedWrongResource.status, 400);
+  const delegatedRefresh = await delegatedCall(
+    '/oauth/token',
+    {
+      grant_type: 'refresh_token',
+      client_id: delegatedClient,
+      refresh_token: delegatedTokens.data.refresh_token,
+      resource: delegatedResource,
+    },
+    { form: true, browser: false },
+  );
+  assert.equal(delegatedRefresh.status, 200, 'Wrong audience must roll back provisional rotation.');
+  const delegatedConnections = await delegatedCall('/api/delegation/connections');
+  const delegatedGrant = delegatedConnections.data.connections.find(
+    (connection) => connection.clientName === 'Canonical Worker read client',
+  );
+  assert(delegatedGrant);
+  const foreignRevoke = await post(
+    '/api/delegation/revoke',
+    { id: delegatedGrant.id },
+    { Cookie: bob },
+  );
+  assert.equal(foreignRevoke.status, 404);
+  const [racedRefresh, ownerRevoke] = await Promise.all([
+    delegatedCall(
+      '/oauth/token',
+      {
+        grant_type: 'refresh_token',
+        client_id: delegatedClient,
+        refresh_token: delegatedRefresh.data.refresh_token,
+        resource: delegatedResource,
+      },
+      { form: true, browser: false },
+    ),
+    delegatedCall('/api/delegation/revoke', { id: delegatedGrant.id }),
+  ]);
+  assert([200, 400].includes(racedRefresh.status));
+  assert.equal(ownerRevoke.status, 200);
+  for (const credential of [
+    delegatedTokens.data.access_token,
+    delegatedRefresh.data.access_token,
+    ...(racedRefresh.status === 200 ? [racedRefresh.data.access_token] : []),
+  ]) {
+    assert.equal(
+      (
+        await delegatedCall(
+          '/mcp',
+          { jsonrpc: '2.0', id: 3, method: 'tools/list' },
+          { bearer: credential, browser: false },
+        )
+      ).status,
+      401,
+    );
+  }
+
+  // Worker/Neon transactions must preserve the same guarded nutrition effects as Node.
+  const nutritionToken = async (scopes) => {
+    const registration = await delegatedCall(
+      '/oauth/register',
+      {
+        client_name: `Canonical Worker writes ${scopes.join(' ')}`,
+        redirect_uris: ['http://127.0.0.1/callback'],
+        grant_types: ['authorization_code', 'refresh_token'],
+        response_types: ['code'],
+        token_endpoint_auth_method: 'none',
+      },
+      { browser: false },
+    );
+    assert.equal(registration.status, 201);
+    const started = await delegatedCall(
+      '/oauth/authorize?' +
+        new URLSearchParams({
+          client_id: registration.data.client_id,
+          redirect_uri: 'http://127.0.0.1/callback',
+          response_type: 'code',
+          scope: scopes.join(' '),
+          prompt: 'consent',
+          resource: delegatedResource,
+          code_challenge: createHash('sha256').update(delegatedVerifier).digest('base64url'),
+          code_challenge_method: 'S256',
+          state: 'worker-nutrition-state',
+        }),
+    );
+    assert.equal(started.status, 303);
+    const uid = new URL(started.location, origin).pathname.split('/').at(-1);
+    const consent = await delegatedCall(`/api/delegation/consent/${uid}`);
+    assert.equal(consent.status, 200);
+    assert.deepEqual(consent.data.requestedScopes.slice().sort(), scopes.slice().sort());
+    const approval = await delegatedCall(`/api/delegation/consent/${uid}`, {
+      accepted: true,
+      scopes,
+    });
+    assert.equal(approval.status, 200);
+    const resumed = await delegatedCall(approval.data.redirectTo);
+    assert.equal(resumed.status, 303);
+    const callback = new URL(resumed.location);
+    assert.equal(callback.origin + callback.pathname, 'http://127.0.0.1/callback');
+    assert.equal(callback.searchParams.get('state'), 'worker-nutrition-state');
+    assert(callback.searchParams.get('code'));
+    const tokens = await delegatedCall(
+      '/oauth/token',
+      {
+        grant_type: 'authorization_code',
+        client_id: registration.data.client_id,
+        redirect_uri: 'http://127.0.0.1/callback',
+        code: callback.searchParams.get('code'),
+        code_verifier: delegatedVerifier,
+        resource: delegatedResource,
+      },
+      { form: true, browser: false },
+    );
+    assert.equal(tokens.status, 200);
+    return tokens.data.access_token;
+  };
+  const nutritionWriter = await nutritionToken([
+    'meal-plans:write',
+    'recipes:write',
+    'food-logs:write',
+  ]);
+  const nutritionDelete = await nutritionToken(['recipes:delete']);
+  const nutritionCall = async (bearer, name, args) => {
+    const response = await delegatedCall(
+      '/mcp',
+      {
+        jsonrpc: '2.0',
+        id: 4,
+        method: 'tools/call',
+        params: { name, arguments: args },
+      },
+      { bearer, browser: false },
+    );
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('Set-Cookie'), null);
+    return response.data.result;
+  };
+  const deleteCatalog = await delegatedCall(
+    '/mcp',
+    { jsonrpc: '2.0', id: 5, method: 'tools/list' },
+    { bearer: nutritionDelete, browser: false },
+  );
+  assert.deepEqual(deleteCatalog.data.result.tools.map((tool) => tool.name).sort(), [
+    'delete_recipe',
+    'get_workspace_revision',
+  ]);
+  const nutritionBefore = await snapshot(alice);
+  const nutritionMetadata = (await nutritionCall(nutritionWriter, 'get_workspace_revision', {}))
+    .structuredContent;
+  assert.deepEqual(nutritionMetadata, { revision: nutritionBefore.revision });
+  assert.deepEqual(
+    (await nutritionCall(nutritionDelete, 'get_workspace_revision', {})).structuredContent,
+    nutritionMetadata,
+  );
+  let nutritionRevision = nutritionMetadata.revision;
+  const workerRecipe = {
+    id: 'worker-mcp-recipe',
+    name: 'Explicit Worker oats',
+    description: '',
+    category: 'breakfast',
+    prepMinutes: 1,
+    cookMinutes: 0,
+    nutrition: { calories: 100, protein: 10, carbs: 10, fat: 2 },
+    ingredients: [{ name: 'Oats', quantity: 100, unit: 'g', aisle: 'Grains' }],
+    steps: ['Mix'],
+    storage: '',
+    variation: '',
+    tags: [],
+    color: '#234b35',
+    source: 'manual',
+    favorite: false,
+    createdAt: '2026-10-28T12:00:00.000Z',
+  };
+  const workerMeal = {
+    id: 'worker-mcp-meal',
+    date: '2026-10-28',
+    slot: 'breakfast',
+    recipeId: workerRecipe.id,
+    servings: 1,
+  };
+  const recipeApplied = await nutritionCall(nutritionWriter, 'create_recipe', {
+    operationId: 'worker-mcp-create-recipe',
+    expectedRevision: nutritionRevision,
+    recipe: workerRecipe,
+  });
+  assert.deepEqual(recipeApplied.structuredContent, { revision: ++nutritionRevision });
+  const mealArguments = {
+    operationId: 'worker-mcp-create-meal',
+    expectedRevision: nutritionRevision,
+    changes: [{ action: 'create', entry: workerMeal }],
+  };
+  assert.deepEqual(
+    (await nutritionCall(nutritionWriter, 'edit_meal_plans', mealArguments)).structuredContent,
+    { revision: ++nutritionRevision },
+  );
+  const workerFood = {
+    id: 'worker-mcp-food',
+    date: workerMeal.date,
+    slot: workerMeal.slot,
+    name: 'Explicit historical snapshot',
+    nutrition: { calories: 123, protein: 8, carbs: 16, fat: 3 },
+    servings: 2,
+    recipeId: workerRecipe.id,
+    createdAt: workerRecipe.createdAt,
+  };
+  assert.deepEqual(
+    (
+      await nutritionCall(nutritionWriter, 'create_food_log', {
+        operationId: 'worker-mcp-create-food',
+        expectedRevision: nutritionRevision,
+        entry: workerFood,
+      })
+    ).structuredContent,
+    { revision: ++nutritionRevision },
+  );
+  const nutritionApplied = await snapshot(alice);
+  assert.equal(nutritionApplied.revision, nutritionRevision);
+  assert.deepEqual(
+    nutritionApplied.state.plan.find((entry) => entry.id === workerMeal.id),
+    workerMeal,
+  );
+  assert.deepEqual(
+    nutritionApplied.state.logs.find((entry) => entry.id === workerFood.id),
+    workerFood,
+  );
+  const failedBatch = await nutritionCall(nutritionWriter, 'edit_meal_plans', {
+    operationId: 'worker-mcp-atomic-failure',
+    expectedRevision: nutritionRevision,
+    changes: [
+      { action: 'update', id: workerMeal.id, patch: { servings: 9 } },
+      { action: 'update', id: 'missing-worker-meal', patch: { servings: 2 } },
+    ],
+  });
+  assert.equal(failedBatch.isError, true);
+  assert.equal(failedBatch.structuredContent.code, 'NOT_FOUND');
+  assert.deepEqual(await snapshot(alice), nutritionApplied);
+  assert.deepEqual(
+    (await nutritionCall(nutritionWriter, 'edit_meal_plans', mealArguments)).structuredContent,
+    { revision: nutritionRevision - 1 },
+  );
+  assert.deepEqual(await snapshot(alice), nutritionApplied);
+  const deleteArguments = {
+    operationId: 'worker-mcp-delete-recipe',
+    expectedRevision: nutritionRevision,
+    id: workerRecipe.id,
+  };
+  assert.equal(
+    (await nutritionCall(nutritionWriter, 'delete_recipe', deleteArguments)).isError,
+    true,
+  );
+  const inUse = await nutritionCall(nutritionDelete, 'delete_recipe', deleteArguments);
+  assert.equal(inUse.isError, true);
+  assert.equal(inUse.structuredContent.code, 'INVALID_INPUT');
+  assert.deepEqual(await snapshot(alice), nutritionApplied);
+  // Plan deletion is deliberately manual-only; the delegated delete cannot cascade it.
+  const removedPlan = await client(alice).workspace.mutate({
+    requestId: 'worker-owner-remove-source-plan',
+    mutation: { type: 'plan.delete', data: { id: workerMeal.id } },
+  });
+  assert.deepEqual(removedPlan, { revision: ++nutritionRevision });
+  const deletedRecipe = await nutritionCall(nutritionDelete, 'delete_recipe', {
+    ...deleteArguments,
+    expectedRevision: nutritionRevision,
+  });
+  assert.deepEqual(deletedRecipe.structuredContent, { revision: ++nutritionRevision });
+  const nutritionAfter = await snapshot(alice);
+  assert.equal(nutritionAfter.revision, nutritionRevision);
+  assert.equal(
+    nutritionAfter.state.recipes.some((entry) => entry.id === workerRecipe.id),
+    false,
+  );
+  assert.deepEqual(nutritionAfter.state.logs, [...nutritionBefore.state.logs, workerFood]);
+  assert.equal(
+    (await snapshot(bob)).state.logs.some((entry) => entry.id === workerFood.id),
+    false,
+  );
+
+  // Training grants use the same actual Worker/OAuth path, separately from planning and nutrition.
+  const trainingPlanner = await nutritionToken(['routines:write', 'workout-plans:write']);
+  const trainingHistorian = await nutritionToken(['workout-history:write']);
+  const historyCatalog = await delegatedCall(
+    '/mcp',
+    { jsonrpc: '2.0', id: 6, method: 'tools/list' },
+    { bearer: trainingHistorian, browser: false },
+  );
+  assert.deepEqual(historyCatalog.data.result.tools.map((tool) => tool.name).sort(), [
+    'get_workout_versions',
+    'update_workout_history',
+  ]);
+  const trainingTimestamp = '2026-10-28T12:00:00.000Z';
+  const workerTarget = {
+    id: 'worker-squat',
+    name: 'Squat',
+    loadType: 'total',
+    targetSets: 2,
+    repMin: 6,
+    repMax: 8,
+    targetRir: 2,
+    restSeconds: 120,
+    notes: 'Keep target',
+  };
+  const workerStrength = {
+    id: 'worker-strength-history',
+    date: '2026-10-28',
+    name: 'Recorded strength',
+    kind: 'strength',
+    status: 'completed',
+    unit: 'kg',
+    exercises: [
+      {
+        ...workerTarget,
+        sets: [{ id: 'worker-set', weight: 60, reps: 6, rir: 2, completed: true, kind: 'working' }],
+      },
+    ],
+    plannedMinutes: 35,
+    durationMinutes: 32,
+    rounds: null,
+    sessionRpe: 7,
+    readiness: 4,
+    notes: 'Keep history notes',
+    changeReason: '',
+    createdAt: trainingTimestamp,
+    updatedAt: trainingTimestamp,
+  };
+  const workerSkipped = {
+    ...workerStrength,
+    id: 'worker-skipped-history',
+    status: 'skipped',
+    exercises: [],
+    durationMinutes: null,
+    sessionRpe: null,
+    readiness: null,
+    notes: 'Skipped due to travel',
+  };
+  for (const session of [workerStrength, workerSkipped]) {
+    await client(alice).workspace.mutate({
+      requestId: `worker-owner-seed-${session.id}`,
+      mutation: { type: 'training.session.save', data: { session, expectedUpdatedAt: null } },
+    });
+  }
+  const trainingBefore = await snapshot(alice);
+  let trainingRevision = trainingBefore.revision;
+  const workerRoutine = {
+    id: 'worker-routine',
+    name: 'Worker strength routine',
+    kind: 'strength',
+    description: 'Keep description',
+    durationMinutes: 35,
+    exercises: [workerTarget],
+  };
+  assert.deepEqual(
+    (
+      await nutritionCall(trainingPlanner, 'create_routine', {
+        operationId: 'worker-create-routine',
+        expectedRevision: trainingRevision,
+        routine: workerRoutine,
+      })
+    ).structuredContent,
+    { revision: ++trainingRevision },
+  );
+  const workerPlan = {
+    id: 'worker-workout-plan',
+    date: '2026-10-29',
+    name: 'Worker planned strength',
+    kind: 'strength',
+    unit: 'kg',
+    exercises: [workerTarget],
+    plannedMinutes: 35,
+    notes: 'Keep plan notes',
+    changeReason: '',
+  };
+  const workoutBatch = {
+    operationId: 'worker-create-workout-batch',
+    expectedRevision: trainingRevision,
+    changes: [
+      { action: 'create', entry: workerPlan },
+      {
+        action: 'create',
+        entry: { ...workerPlan, id: 'worker-workout-plan-two', date: '2026-10-30' },
+      },
+    ],
+  };
+  assert.deepEqual(
+    (await nutritionCall(trainingPlanner, 'edit_workout_plans', workoutBatch)).structuredContent,
+    { revision: ++trainingRevision },
+  );
+  const planVersions = (
+    await nutritionCall(trainingPlanner, 'get_workout_versions', { ids: [workerPlan.id] })
+  ).structuredContent;
+  assert.equal(planVersions.revision, trainingRevision);
+  assert.deepEqual(
+    planVersions.sessions.map((entry) => Object.keys(entry).sort()),
+    [['id', 'updatedAt']],
+  );
+  assert.equal(planVersions.sessions[0].id, workerPlan.id);
+  const beforeRoutineEdit = await snapshot(alice);
+  assert.deepEqual(
+    (
+      await nutritionCall(trainingPlanner, 'update_routine', {
+        operationId: 'worker-edit-routine',
+        expectedRevision: trainingRevision,
+        id: workerRoutine.id,
+        patch: { durationMinutes: 40 },
+      })
+    ).structuredContent,
+    { revision: ++trainingRevision },
+  );
+  const afterRoutineEdit = await snapshot(alice);
+  assert.deepEqual(
+    afterRoutineEdit.state.training.sessions,
+    beforeRoutineEdit.state.training.sessions,
+  );
+  assert.equal(
+    afterRoutineEdit.state.training.templates.find((entry) => entry.id === workerRoutine.id)
+      .description,
+    workerRoutine.description,
+  );
+  const actualStrength = afterRoutineEdit.state.training.sessions.find(
+    (entry) => entry.id === workerStrength.id,
+  );
+  const protectedBatch = await nutritionCall(trainingPlanner, 'edit_workout_plans', {
+    operationId: 'worker-protected-workout-batch',
+    expectedRevision: trainingRevision,
+    changes: [
+      { action: 'create', entry: { ...workerPlan, id: 'worker-must-rollback' } },
+      {
+        action: 'update',
+        id: actualStrength.id,
+        expectedUpdatedAt: actualStrength.updatedAt,
+        patch: { notes: 'Must not replace actuals' },
+      },
+    ],
+  });
+  assert.equal(protectedBatch.structuredContent.code, 'HISTORY_PROTECTED');
+  assert.deepEqual(await snapshot(alice), afterRoutineEdit);
+  assert.deepEqual(
+    (await nutritionCall(trainingPlanner, 'edit_workout_plans', workoutBatch)).structuredContent,
+    { revision: trainingRevision - 1 },
+  );
+  assert.deepEqual(await snapshot(alice), afterRoutineEdit);
+  const correctedExercises = actualStrength.exercises.map((exercise) => ({
+    ...exercise,
+    sets: exercise.sets.map((set) => ({ ...set, reps: 8 })),
+  }));
+  const strengthCorrection = {
+    operationId: 'worker-correct-strength',
+    expectedRevision: trainingRevision,
+    id: actualStrength.id,
+    expectedUpdatedAt: actualStrength.updatedAt,
+    patch: { exercises: correctedExercises },
+  };
+  const historyVersions = (
+    await nutritionCall(trainingHistorian, 'get_workout_versions', { ids: [actualStrength.id] })
+  ).structuredContent;
+  assert.deepEqual(historyVersions, {
+    revision: trainingRevision,
+    sessions: [{ id: actualStrength.id, updatedAt: actualStrength.updatedAt }],
+  });
+  strengthCorrection.expectedUpdatedAt = historyVersions.sessions[0].updatedAt;
+  assert.equal(
+    (await nutritionCall(trainingPlanner, 'update_workout_history', strengthCorrection)).isError,
+    true,
+  );
+  assert.deepEqual(
+    (await nutritionCall(trainingHistorian, 'update_workout_history', strengthCorrection))
+      .structuredContent,
+    { revision: ++trainingRevision },
+  );
+  const afterStrength = await snapshot(alice);
+  const savedStrength = afterStrength.state.training.sessions.find(
+    (entry) => entry.id === actualStrength.id,
+  );
+  assert.deepEqual(savedStrength, {
+    ...actualStrength,
+    exercises: correctedExercises,
+    updatedAt: savedStrength.updatedAt,
+  });
+  assert.notEqual(savedStrength.updatedAt, actualStrength.updatedAt);
+  assert.equal(
+    (
+      await nutritionCall(trainingHistorian, 'update_workout_history', {
+        ...strengthCorrection,
+        operationId: 'worker-stale-strength',
+        expectedRevision: trainingRevision,
+      })
+    ).structuredContent.code,
+    'RECORD_CONFLICT',
+  );
+  const actualSkipped = afterStrength.state.training.sessions.find(
+    (entry) => entry.id === workerSkipped.id,
+  );
+  assert.deepEqual(
+    (
+      await nutritionCall(trainingHistorian, 'update_workout_history', {
+        operationId: 'worker-correct-skipped',
+        expectedRevision: trainingRevision,
+        id: actualSkipped.id,
+        expectedUpdatedAt: actualSkipped.updatedAt,
+        patch: { notes: 'Skipped due to delayed flight' },
+      })
+    ).structuredContent,
+    { revision: ++trainingRevision },
+  );
+  const trainingAfter = await snapshot(alice);
+  const savedSkipped = trainingAfter.state.training.sessions.find(
+    (entry) => entry.id === actualSkipped.id,
+  );
+  assert.deepEqual(savedSkipped, {
+    ...actualSkipped,
+    notes: 'Skipped due to delayed flight',
+    updatedAt: savedSkipped.updatedAt,
+  });
+  assert.notEqual(savedSkipped.updatedAt, actualSkipped.updatedAt);
+  assert.equal(trainingAfter.revision, trainingRevision);
+  assert.equal(
+    (await snapshot(bob)).state.training.sessions.some((entry) => entry.id === workerStrength.id),
+    false,
+  );
   const validateRecords = async (migrator) => {
     const connection = await backend.database.connect();
     try {
@@ -624,18 +1322,6 @@ try {
         },
       },
       { type: 'grocery.check', data: { key: 'compatibility:rice', checked: true } },
-      {
-        type: 'request.save',
-        data: {
-          id: 'compatibility-request',
-          prompt: 'Candidate-written dinner request',
-          calories: 600,
-          protein: 40,
-          maxMinutes: 30,
-          status: 'pending',
-          createdAt: '2026-10-23T12:00:00.000Z',
-        },
-      },
       {
         type: 'training.checkin.save',
         data: {
@@ -728,28 +1414,19 @@ try {
     );
     assert.equal((await state(bob)).settings.name, 'Bob');
   }
-  const connection = (await (await rpc('ai/connection', undefined, { Cookie: alice })).json()).json;
-  assert.equal(connection.enabled, false);
-  assert.equal(connection.available, false);
-  const disabledConnection = await rpc('ai/connect', {}, { Cookie: alice });
-  assert.equal(disabledConnection.status, 409);
-  const disabledError = (await disabledConnection.json()).json;
-  assert.equal(disabledError.code, 'CORNER_ERROR');
-  assert.equal(typeof disabledError.data.code, 'string');
-  assert.equal(
-    (
-      await rpc(
-        'agent/start',
-        {
-          requestId: 'workers-plan-request-123',
-          prompt: 'Plan my training',
-          referenceDate: '2026-10-23',
-        },
-        { Cookie: alice },
-      )
-    ).status,
-    503,
+  for (const path of ['ai/connection', 'ai/connect', 'agent/start']) {
+    const retired = await rpc(path, {}, { Cookie: alice });
+    assert.equal(retired.status, 404);
+    assert.match(retired.headers.get('Cache-Control'), /no-store/);
+  }
+  const callback = await worker.fetch(
+    new URL('/auth/callback?code=synthetic&state=synthetic', origin),
+    {
+      headers: { Cookie: alice },
+    },
   );
+  assert.equal(callback.status, 404);
+  assert.match(callback.headers.get('Cache-Control'), /no-store/);
   assert.equal((await post('/api/auth/sign-out', {}, { Cookie: alice })).status, 200);
   const signedOut = await rpc('workspace/get', undefined, { Cookie: alice });
   assert.equal(signedOut.status, 401);
@@ -758,5 +1435,5 @@ try {
   await cleanup.disposeAsync();
 }
 process.stdout.write(
-  `Passed fullstack Worker assets, version identity, canonical origin, secure account cookies, isolated PostgreSQL writes/retries/rollback, clean candidate database shutdown, sign-out, and hosted AI gate${previousMigrator ? ', including prior-schema writes and candidate/recovery compatibility' : ''}.\nNo live cloud, account email, or model requests were made.\n`,
+  `Passed fullstack Worker assets, version identity, canonical origin, secure account cookies, isolated PostgreSQL writes/retries/rollback, clean candidate database shutdown, sign-out, and retired AI route rejection${previousMigrator ? ', including prior-schema writes and candidate/recovery compatibility' : ''}.\nNo live cloud, account email, or model requests were made.\n`,
 );

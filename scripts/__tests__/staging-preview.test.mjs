@@ -21,8 +21,6 @@ function environment() {
   const secrets = {
     DATABASE_URL: 'postgresql://owner:synthetic@ep-staging-pooler.example/neondb',
     NEON_AUTH_BASE_URL: 'https://staging-auth.example/neondb/auth',
-    BETTER_AUTH_SECRET: 's'.repeat(32),
-    CORNER_TOKEN_ENCRYPTION_KEY: Buffer.alloc(32, 1).toString('base64'),
   };
   return {
     CORNER_STAGING_ORIGIN: origin,
@@ -58,6 +56,14 @@ test('Preview rejects production origins, extra runtime bindings, and enabled or
 
 test('Preview refuses a migration connection to a different database or owner', () => {
   const env = environment();
+  const currentSecrets = JSON.parse(env.CORNER_WORKER_SECRETS_JSON);
+  env.CORNER_WORKER_SECRETS_JSON = JSON.stringify({
+    ...currentSecrets,
+    retainedOpaqueConfiguration: { encrypted: 'synthetic-preserved-bytes' },
+  });
+  const retainedEnvironment = structuredClone(env);
+  assert.deepEqual(previewCredentials(env), currentSecrets);
+  assert.deepEqual(env, retainedEnvironment);
   for (const direct of [
     'postgresql://owner:synthetic@ep-production.example/neondb',
     'postgresql://other:synthetic@ep-staging.example/neondb',
@@ -179,12 +185,10 @@ async function uploadingScenario(t, workerName = 'corner') {
             env: {
               CORNER_ORIGIN: { type: 'plain_text', text: origin },
               ...Object.fromEntries(
-                [
-                  'DATABASE_URL',
-                  'NEON_AUTH_BASE_URL',
-                  'BETTER_AUTH_SECRET',
-                  'CORNER_TOKEN_ENCRYPTION_KEY',
-                ].map((name) => [name, { type: 'secret_text' }]),
+                ['DATABASE_URL', 'NEON_AUTH_BASE_URL'].map((name) => [
+                  name,
+                  { type: 'secret_text' },
+                ]),
               ),
             },
           }
@@ -492,12 +496,7 @@ async function completionScenario(t) {
       ),
       CF_VERSION_METADATA: { type: 'version_metadata' },
       ...Object.fromEntries(
-        [
-          'DATABASE_URL',
-          'NEON_AUTH_BASE_URL',
-          'BETTER_AUTH_SECRET',
-          'CORNER_TOKEN_ENCRYPTION_KEY',
-        ].map((name) => [name, { type: 'secret_text' }]),
+        ['DATABASE_URL', 'NEON_AUTH_BASE_URL'].map((name) => [name, { type: 'secret_text' }]),
       ),
     },
   };

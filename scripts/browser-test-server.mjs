@@ -37,8 +37,6 @@ try {
     CORNER_HOST: '127.0.0.1',
     CORNER_PORT: '43141',
     CORNER_DATA_DIR: temporary,
-    BETTER_AUTH_SECRET: 'synthetic-browser-test-secret-at-least-32-characters',
-    CORNER_TOKEN_ENCRYPTION_KEY: Buffer.alloc(32, 73).toString('base64'),
     DATABASE_URL: backend.databaseUrl,
     NEON_AUTH_BASE_URL: backend.authUrl,
     NEON_AUTH_REQUIRE_EMAIL_VERIFICATION: 'false',

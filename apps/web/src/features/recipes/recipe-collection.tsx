@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { ArrowUpRight, Clock3, Heart, Plus, Search, Sparkles } from 'lucide-react';
+import { ArrowUpRight, Clock3, Heart, Plus, Search } from 'lucide-react';
 import type { AppState } from '@packages/workspace/types';
 import type { Recipe } from '@packages/nutrition/types';
 import {
@@ -16,7 +16,7 @@ import {
   ToggleGroupItem,
   WorkspaceHeader,
 } from '@packages/ui';
-import type { Mutate, Overlay, View } from '../workspace/types';
+import type { Mutate, Overlay } from '../workspace/types';
 import { Empty, MacroLine, ResourceStatus, ResourcePaging } from '../workspace/workspace-ui';
 import { useRecordPage } from '../workspace/resources';
 
@@ -30,7 +30,6 @@ export function useRecipeFilters() {
 export default function RecipeCollection({
   state,
   disabled,
-  navigate,
   setOverlay,
   openRecipe,
   mutate,
@@ -38,7 +37,6 @@ export default function RecipeCollection({
 }: {
   state?: AppState;
   disabled: boolean;
-  navigate: (view: View) => void;
   setOverlay: (overlay: Overlay) => void;
   openRecipe: (recipe: Recipe) => void;
   mutate: Mutate;
@@ -72,20 +70,14 @@ export default function RecipeCollection({
         eyebrow="KEEP THE GOOD ONES"
         description="Reliable favorites, with enough variety to keep things interesting."
         actions={
-          <>
-            <Button variant="outline" size="default" onClick={() => navigate('studio')}>
-              <Sparkles size={16} />
-              Recipe studio
-            </Button>
-            <Button
-              variant="default"
-              size="default"
-              onClick={() => setOverlay({ kind: 'recipeForm' })}
-            >
-              <Plus size={16} />
-              New recipe
-            </Button>
-          </>
+          <Button
+            variant="default"
+            size="default"
+            onClick={() => setOverlay({ kind: 'recipeForm' })}
+          >
+            <Plus size={16} />
+            New recipe
+          </Button>
         }
       />
       <div className="recipe-toolbar">

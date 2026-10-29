@@ -73,8 +73,6 @@ export async function fetchMaintenance(
         DATABASE_URL: env.DATABASE_URL,
         NEON_AUTH_BASE_URL: env.NEON_AUTH_BASE_URL,
         NEON_AUTH_REQUIRE_EMAIL_VERIFICATION: env.NEON_AUTH_REQUIRE_EMAIL_VERIFICATION,
-        BETTER_AUTH_SECRET: env.BETTER_AUTH_SECRET,
-        CORNER_TOKEN_ENCRYPTION_KEY: env.CORNER_TOKEN_ENCRYPTION_KEY,
       },
       { dataDir: '/tmp/corner' },
     );
@@ -110,7 +108,8 @@ export async function fetchMaintenance(
         versionId,
       );
     }
-    const message = 'Corner is temporarily unavailable for scheduled maintenance. Please try again shortly.';
+    const message =
+      'Corner is temporarily unavailable for scheduled maintenance. Please try again shortly.';
     if (url.pathname === '/api/rpc' || url.pathname.startsWith('/api/rpc/')) {
       return secure(
         Response.json(

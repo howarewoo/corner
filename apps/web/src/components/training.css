@@ -38,12 +38,6 @@
   color: var(--ink);
   background: var(--surface-hover);
 }
-.training-unread-dot {
-  width: 7px;
-  height: 7px;
-  background: currentColor;
-  border-radius: 50%;
-}
 .training-metrics {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -133,8 +127,7 @@
   align-items: start;
 }
 .training-week-layout > *,
-.training-progress-grid > *,
-.training-coach-layout > * {
+.training-progress-grid > * {
   min-width: 0;
 }
 .training-day-content > .section-heading {
@@ -281,9 +274,7 @@
 .training-routine-note > svg {
   color: var(--forest);
 }
-.training-routine-note h3,
-.training-coach-nudge h3,
-.coach-how-it-works h3 {
+.training-routine-note h3 {
   margin: 14px 0 12px;
   font-size: 22px;
   line-height: 1.3;
@@ -291,8 +282,7 @@
   letter-spacing: -0.5px;
   color: var(--ink);
 }
-.training-routine-note p,
-.training-coach-nudge p {
+.training-routine-note p {
   font-size: 14px;
   color: var(--muted-foreground);
   line-height: 1.75;
@@ -323,19 +313,6 @@
 }
 .training-routine-note .inline-link {
   margin-top: 15px;
-}
-.training-coach-nudge {
-  padding: 26px 4px 0;
-}
-.training-coach-nudge > svg {
-  color: var(--forest);
-}
-.training-coach-nudge h3 {
-  font-size: 19px;
-  margin: 9px 0;
-}
-.training-coach-nudge .inline-link {
-  margin-top: 10px;
 }
 .training-empty {
   padding: 39px 26px;
@@ -447,7 +424,7 @@
   flex-direction: column;
   gap: 10px;
 }
-.training-checkin-button {
+.ui-button.training-checkin-button {
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -456,6 +433,13 @@
   height: auto;
   padding: 14px;
   white-space: normal;
+}
+.training-checkin-button > span {
+  flex: 1;
+  min-width: 0;
+}
+.training-checkin-button > svg {
+  flex-shrink: 0;
 }
 .training-checkin-button b {
   display: block;
@@ -557,173 +541,6 @@
 .training-history-row:hover b {
   text-decoration: underline;
   text-underline-offset: 4px;
-}
-
-/* Coach reviews. */
-.training-coach-layout {
-  display: grid;
-  grid-template-columns: minmax(0, 1.7fr) minmax(270px, 1fr);
-  gap: 28px;
-  align-items: start;
-}
-.coach-reviews {
-  display: flex;
-  flex-direction: column;
-  gap: 24px;
-}
-.coach-review {
-  padding: 28px;
-}
-.coach-review-heading {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 20px;
-}
-.coach-review-heading h3 {
-  margin-top: 7px;
-  color: var(--ink);
-  font-size: 22px;
-  line-height: 1.4;
-  font-weight: 600;
-  letter-spacing: -0.4px;
-}
-.coach-review-summary {
-  margin-top: 20px;
-  color: var(--text);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  font-size: 14px;
-  line-height: 1.85;
-}
-.coach-changes {
-  margin-top: 26px;
-}
-.coach-changes > h4 {
-  color: var(--ink);
-  font-size: 15px;
-  font-weight: 600;
-}
-.coach-change {
-  padding: 22px 0;
-}
-.coach-change + .coach-change {
-  margin-top: 12px;
-}
-.coach-change h5 {
-  color: var(--ink);
-  margin: 0 0 15px;
-  font-size: 16px;
-  font-weight: 600;
-}
-.coach-change-comparison {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 20px minmax(0, 1fr);
-  gap: 17px;
-  align-items: center;
-}
-.coach-change-comparison > div {
-  background: var(--paper);
-  border-radius: 16px;
-  padding: 15px;
-  min-width: 0;
-}
-.coach-change-comparison > div > span {
-  font-size: 12px;
-  color: var(--muted-foreground);
-}
-.coach-change-comparison p {
-  color: var(--ink);
-  font-size: 14px;
-  line-height: 1.65;
-  margin: 5px 0;
-  font-weight: 500;
-}
-.coach-change-comparison small {
-  color: var(--muted-foreground);
-  font-size: 12px;
-}
-.coach-change-comparison.coach-change-saved {
-  grid-template-columns: minmax(0, 1fr);
-}
-.coach-exercise-comparison {
-  padding-top: 14px;
-}
-.coach-exercise-comparison h6 {
-  color: var(--ink);
-  margin: 0;
-  font-size: 13px;
-  font-weight: 600;
-}
-.coach-exercise-comparison > p {
-  margin-top: 8px;
-  color: var(--muted-foreground);
-  font-size: 13px;
-  line-height: 1.75;
-}
-.coach-stale-note {
-  margin-top: 20px;
-  font-size: 13px;
-  line-height: 1.75;
-}
-.coach-change-reason {
-  color: var(--text);
-  font-size: 14px;
-  line-height: 1.75;
-  margin-top: 17px;
-}
-.coach-change-details {
-  margin-top: 14px;
-}
-.coach-change-summary {
-  color: var(--forest);
-  cursor: pointer;
-  font-size: 13px;
-  min-height: 40px;
-  padding: 10px 0;
-  font-weight: 600;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  background: transparent;
-  border: 0;
-}
-.coach-change-summary:hover {
-  text-decoration: underline;
-}
-.coach-change-details ul {
-  margin: 5px 0 0;
-  padding-left: 20px;
-}
-.coach-change-details li {
-  padding: 6px 0;
-  font-size: 13px;
-  color: var(--text);
-}
-.coach-change-details li b,
-.coach-change-details li span,
-.coach-change-details li small {
-  display: block;
-}
-.coach-change-details li b {
-  font-weight: 500;
-  color: var(--ink);
-}
-.coach-change-details li span,
-.coach-change-details li small {
-  color: var(--muted-foreground);
-  margin-top: 4px;
-}
-.coach-change-details > p {
-  color: var(--muted-foreground);
-  font-size: 13px;
-  line-height: 1.75;
-}
-.coach-review-actions {
-  margin-top: 24px;
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
 }
 
 /* Session editing keeps targets and actual performance distinct. */
@@ -1055,26 +872,13 @@
 }
 
 @media (max-width: 1180px) {
-  .training-week-layout,
-  .training-coach-layout {
+  .training-week-layout {
     grid-template-columns: minmax(0, 1fr);
   }
   .training-week-aside {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 25px;
-  }
-  .training-coach-nudge {
-    padding: 24px 5px;
-  }
-  .coach-how-it-works ol {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 27px;
-    padding-left: 20px;
-  }
-  .coach-how-it-works li {
-    margin-bottom: 0;
   }
   .training-metrics > div {
     padding: 0 16px;
@@ -1145,15 +949,8 @@
     max-width: 88px;
     justify-content: flex-end;
   }
-  .training-progress-card,
-  .coach-review {
+  .training-progress-card {
     padding: 25px;
-  }
-  .coach-change-comparison {
-    gap: 9px;
-  }
-  .coach-change-comparison > div {
-    padding: 13px;
   }
 }
 
@@ -1188,9 +985,6 @@
   }
   .training-week-aside {
     grid-template-columns: minmax(0, 1fr);
-  }
-  .training-coach-nudge {
-    padding: 5px 4px 0;
   }
   .workout-card {
     padding: 23px 21px;
@@ -1230,8 +1024,7 @@
   .training-routine-note {
     padding: 24px;
   }
-  .training-progress-card,
-  .coach-review {
+  .training-progress-card {
     padding: 23px 21px;
   }
   .training-progress-card .section-heading h2 {
@@ -1239,20 +1032,6 @@
   }
   .training-week-bar-row {
     gap: 10px;
-  }
-  .coach-review-heading {
-    flex-wrap: wrap;
-    gap: 12px;
-  }
-  .coach-review-heading h3 {
-    font-size: 21px;
-  }
-  .coach-change-comparison {
-    grid-template-columns: minmax(0, 1fr);
-  }
-  .coach-change-comparison > svg {
-    transform: rotate(90deg);
-    margin-left: 12px;
   }
   .workout-editor {
     gap: 21px;
@@ -1317,10 +1096,6 @@
   .training-tabs [data-slot='tabs-trigger'] > svg {
     width: 16px;
     height: 16px;
-  }
-  .training-unread-dot {
-    width: 5px;
-    height: 5px;
   }
 }
 

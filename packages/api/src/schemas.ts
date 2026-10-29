@@ -1,6 +1,5 @@
 import { z } from 'zod';
 import { MutationSchema } from '@packages/workspace/mutations';
-import { FoodDescriptionSchema } from '@packages/nutrition/food-estimate';
 import { DateSchema } from '@packages/nutrition/schemas';
 
 export const foodWindowSchema = z
@@ -46,30 +45,3 @@ export const importPreviewInputSchema = z.object({ state: z.unknown() }).strict(
 export const importInputSchema = z
   .object({ state: z.unknown(), requestId: requestIdSchema, expectedRevision: revisionSchema })
   .strict();
-const draftRequestId = z
-  .string()
-  .min(1)
-  .max(120)
-  .regex(/^[a-zA-Z0-9_:.\-]+$/);
-export const RecipeInputSchema = z
-  .object({
-    requestId: draftRequestId,
-    prompt: z.string().trim().min(8).max(1600),
-    calories: z.number().int().min(150).max(1500),
-    protein: z.number().int().min(5).max(120),
-    maxMinutes: z.number().int().min(5).max(120),
-  })
-  .strict();
-export const FoodInputSchema = z
-  .object({ requestId: draftRequestId, description: FoodDescriptionSchema })
-  .strict();
-export const runInputSchema = z
-  .object({
-    id: z
-      .string()
-      .min(1)
-      .max(120)
-      .regex(/^[a-zA-Z0-9-]+$/),
-  })
-  .strict();
-export const applyInputSchema = runInputSchema.extend({ requestId: z.string().min(1).max(120) });

@@ -2,7 +2,7 @@
 
 ## Read the relevant guidance
 
-- [README.md](README.md): prerequisites, local startup, manual/AI workflows, imports, and backups.
+- [README.md](README.md): prerequisites, local startup, manual workflows, imports, and backups.
 - [PRODUCT.md](PRODUCT.md): audience, current scope, agreed hosted direction, and open decisions. Read before changing product behavior or priorities.
 - [DESIGN.md](DESIGN.md): incumbent visual and interaction system. Read before changing UI components, styles, or responsive behavior.
 - [ARCHITECTURE.md](ARCHITECTURE.md): responsibilities, data flows, and safety boundaries. Read before changing component boundaries, shared contracts, persistence, authentication, or cross-component flows.
@@ -62,9 +62,9 @@ A layout migration must update discovery, relative imports, and TypeScript inclu
 
 ## Select verification for the change
 
-- **Domain schemas, calculations, or mutation rules:** run `pnpm run check`, consuming server/web suites, and the build. Nutrition, training, workspace, and agent exports compile into their owning `packages/<domain>/dist`; a direct workspace command does not automatically rebuild dependencies as Turbo does.
+- **Domain schemas, calculations, or mutation rules:** run `pnpm run check`, consuming server/web suites, and the build. Nutrition, training, and workspace exports compile into their owning `packages/<domain>/dist`; direct workspace commands do not automatically rebuild dependencies as Turbo does.
 - **UI behavior:** run the relevant Vitest web suite; run `pnpm run test:browser` when account, food-log, or workout journeys are affected. Inspect the actual changed screen at desktop and phone widths. Component tests and emulated WebKit do not prove real-iPhone usability.
-- **Account or AI lifecycle:** run the affected server suite and web suite when controls change. Provider/mail fixtures are simulated; do not use real grants, paid inference, or email delivery without explicit authorization.
+- **Account lifecycle:** run affected server/web suites. Mail fixtures are simulated; no live email without explicit authorization.
 - **HTTP runtime, origin/proxy handling, development configuration, or workspace integration:** build, then exercise the relevant production/development smoke checks. Broaden to both smoke checks when changing the shared startup/origin contract.
 - **Deployment:** use the checks and manual account/recovery scenario in `HOSTING.md`. Node smoke success does not prove Docker execution, certificates, inbox delivery, or live model access.
 - **Documentation only:** check local paths, anchors, commands, and source claims. Do not install dependencies or launch application/provider workflows just to validate prose.
@@ -86,11 +86,10 @@ Production is one full-stack Worker named `corner`; staging is native Preview `s
 ## Boundaries and pitfalls
 
 - Package names follow their folders: `apps/<name>/package.json` uses `<name>`; `packages/<name>/package.json` uses `@packages/<name>`.
-- Import domain code directly through the owning `@packages/nutrition/<module>`, `@packages/training/<module>`, `@packages/workspace/<module>`, or `@packages/agent/<module>` export, never relative paths into another workspace. Nutrition and training are independent; workspace composes them, and agent depends on that composition. Put credentials, database access, and provider I/O in the server, never domain or browser modules.
-- Preserve owner-scoped reads/writes, request fingerprinting, atomic proposal application, and stale-proposal rejection. Ordinary manual mutations do not all carry `expectedRevision`; inspect the actual route and record-level concurrency rules before claiming otherwise.
-- AI proposes plans and targets; users approve changes and record actual food, measurements, and training. Preserve server/shared validation that protects started and recorded workouts. Draft recipes and food estimates must remain editable before saving.
-- Hosted mode currently has no enabled AI provider. The agreed direction is an approved hosted ChatGPT integration, not permission to bypass the local gate, reuse local tokens publicly, or introduce an implicit separately billed fallback.
-- Data paths resolve from the repository root. `data/`, local private keys, `.env` files, database URLs, and provider credentials are private user data. Preserve old SQLite backups during cutover. Never regenerate existing keys or expose credentials through static assets, source packages, or `VITE_` variables.
-- Keep one Corner process: Postgres persistence does not make in-memory agent tasks multi-instance-safe. Preserve transaction-scoped owner locks, single-connection atomic state/receipt/proposal commits, and provider generation/refresh protections.
+- Import domain code through its owning `@packages/nutrition/<module>`, `@packages/training/<module>`, or `@packages/workspace/<module>` export, never relative paths into another workspace. Keep credentials, database access, and external I/O server-side.
+- Preserve owner-scoped reads/writes, original request fingerprinting, atomic state/receipt commits, and record-level concurrency. Ordinary manual mutations do not all carry `expectedRevision`.
+- All assistance, model connections, and request/review mutation commands are retired. Preserve historical recipe/training request/review schemas and import/export without restoring executable archive commands.
+- Data paths resolve from the repository root. Preserve existing private configuration, encrypted provider archives, AI-run rows, original keys, backups, migrations, and receipts. Never regenerate or expose keys. Application runtime requires no model secrets; local controller Auth/password/control secrets and TLS remain independent and required.
+- Keep the existing one-process Node topology and transaction-scoped owner locks. Final retirement release requires separate owner/operator backup confirmation and revocation of any existing ChatGPT grants; source removal is not evidence those gates passed.
 - Neon Auth owns managed accounts, sessions, and SMTP. Register the exact application origin; configure OTP verification and keep `NEON_AUTH_REQUIRE_EMAIL_VERIFICATION` aligned with the branch policy. `DATABASE_URL` is pooled; use `DATABASE_URL_UNPOOLED` for explicit migrations and backups.
 - [scripts/package.py](scripts/package.py) uses an explicit root-file allowlist. It currently omits `AGENTS.md`, `PRODUCT.md`, `DESIGN.md`, and `ARCHITECTURE.md`; these guides are repository-checkout guidance, not contents of the generated source ZIP. Packaging changes are separate implementation work.

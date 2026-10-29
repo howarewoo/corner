@@ -101,11 +101,7 @@ export type TrainingMutation =
   | { type: 'training.session.delete'; data: { id: string; expectedUpdatedAt: string } }
   | { type: 'training.week'; data: { weekStart: string } }
   | { type: 'training.template.save'; data: WorkoutTemplate }
-  | { type: 'training.checkin.save'; data: TrainingCheckIn }
-  | { type: 'training.request.save'; data: TrainingRequest }
-  | { type: 'training.review.save'; data: TrainingReview }
-  | { type: 'training.review.apply'; data: { id: string } }
-  | { type: 'training.review.dismiss'; data: { id: string } };
+  | { type: 'training.checkin.save'; data: TrainingCheckIn };
 export type TrainingStats = {
   sessions: number;
   strengthSessions: number;

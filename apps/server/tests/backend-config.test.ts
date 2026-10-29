@@ -23,18 +23,24 @@ afterEach(() => {
   for (const path of directories.splice(0)) rmSync(path, { recursive: true, force: true });
 });
 
-test('local startup preserves private random keys and restricts directory/file permissions', () => {
+test('local startup creates no AI keys and preserves existing private configuration bytes and permissions', () => {
   const dataDir = temporary();
+  const file = join(dataDir, 'private-config.json');
   const first = loadConfig({ ...neonEnvironment, CORNER_DATA_DIR: dataDir });
-  const second = loadConfig({ ...neonEnvironment, CORNER_DATA_DIR: dataDir });
   assert.equal(first.origin, 'http://127.0.0.1:3000');
   assert.equal(first.host, '127.0.0.1');
   assert.equal(first.port, 3000);
-  assert.equal(first.authSecret, second.authSecret);
-  assert.equal(first.tokenEncryptionKey.length, 32);
-  assert.deepEqual(first.tokenEncryptionKey, second.tokenEncryptionKey);
-  assert.equal(statSync(dataDir).mode & 0o777, 0o700);
-  assert.equal(statSync(join(dataDir, 'private-config.json')).mode & 0o777, 0o600);
+  assert.equal(existsSync(file), false);
+  const retained = JSON.stringify({
+    authSecret: 'retained-session-binding-key',
+    tokenEncryptionKey: 'retained-encryption-key',
+    extra: 'preserved',
+  });
+  writeFileSync(file, retained, { mode: 0o640 });
+  const mode = statSync(file).mode;
+  loadConfig({ ...neonEnvironment, CORNER_DATA_DIR: dataDir });
+  assert.equal(readFileSync(file, 'utf8'), retained);
+  assert.equal(statSync(file).mode, mode);
 });
 
 test('development keeps the browser origin separate from its loopback API listener', () => {
@@ -118,33 +124,23 @@ test('relative data paths resolve from the repository root even when a workspace
     });
     assert.equal(config.dataDir, dataDir);
     assert.equal(existsSync(join(otherWorkingDirectory, 'private-config.json')), false);
-    assert.equal(existsSync(join(dataDir, 'private-config.json')), true);
+    assert.equal(existsSync(join(dataDir, 'private-config.json')), false);
   } finally {
     process.chdir(previousWorkingDirectory);
   }
 });
 
-test('supplied secrets stay out of the local config and hosted settings fail closed', () => {
+test('hosted startup needs no retired AI secrets and still rejects insecure origins', () => {
   const dataDir = join(temporary(), 'no-filesystem-required');
   const env = {
     ...neonEnvironment,
     CORNER_DATA_DIR: dataDir,
     CORNER_DEPLOYMENT: 'hosted',
     CORNER_ORIGIN: 'https://corner.example',
-    BETTER_AUTH_SECRET: 'unit-test-secret-of-more-than-thirty-two-characters',
-    CORNER_TOKEN_ENCRYPTION_KEY: Buffer.alloc(32, 7).toString('base64'),
   };
-  assert.throws(
-    () => loadConfig({ ...neonEnvironment, ...env, BETTER_AUTH_SECRET: undefined }),
-    /Hosted deployments require/,
-  );
   assert.throws(
     () => loadConfig({ ...neonEnvironment, ...env, CORNER_ORIGIN: 'http://corner.example' }),
     /HTTPS/,
-  );
-  assert.throws(
-    () => loadConfig({ ...neonEnvironment, ...env, CORNER_TOKEN_ENCRYPTION_KEY: 'not-a-key' }),
-    /32-byte/,
   );
   assert.equal(loadConfig(env).deployment, 'hosted');
   assert.equal(existsSync(dataDir), false);
@@ -174,13 +170,13 @@ test('proxy trust requires an explicitly supplied independent secret', () => {
       .proxySecret,
     proxySecret,
   );
-  assert(!readFileSync(join(dataDir, 'private-config.json'), 'utf8').includes(proxySecret));
+  assert.equal(existsSync(join(dataDir, 'private-config.json')), false);
 });
 
-test('damaged saved secrets are never silently replaced', () => {
+test('unused damaged saved secrets are neither read nor replaced', () => {
   const dataDir = temporary();
   const file = join(dataDir, 'private-config.json');
   writeFileSync(file, '{broken');
-  assert.throws(() => loadConfig({ ...neonEnvironment, CORNER_DATA_DIR: dataDir }), /Restore/);
+  loadConfig({ ...neonEnvironment, CORNER_DATA_DIR: dataDir });
   assert.equal(readFileSync(file, 'utf8'), '{broken');
 });

@@ -12,7 +12,7 @@ import {
 } from '@packages/nutrition/schemas';
 import { createInitialState } from '@packages/workspace/initial-state';
 import { createTrainingState, TrainingStateSchema } from '@packages/training/workouts';
-import type { AppState, Mutation } from '@packages/workspace/types';
+import type { AppState } from '@packages/workspace/types';
 import { ApiError } from './http.js';
 import { requestIdSchema, revisionSchema } from '@packages/api/schemas';
 import type { Settings } from '@packages/workspace/types';
@@ -25,6 +25,7 @@ import {
   type FoodWindow,
 } from '@packages/api/workspace-data';
 import { exportRelational, importRelational } from './workspace-portability.js';
+import type { DelegatedAccess } from './delegation.js';
 
 export type WorkspaceSnapshot = { state: AppState; revision: number };
 export type ImportCounts = {
@@ -221,48 +222,51 @@ export class WorkspaceStore {
     requestId: string,
     mutation: unknown,
     expectedRevision?: number,
+    name?: string,
   ): Promise<CommandResult> {
+    const parsed = MutationSchema.parse(mutation);
     return this.commit(
       userId,
       requestId,
       { kind: 'mutation', mutation, expectedRevision },
       expectedRevision,
       (connection, current, position) =>
-        executeEntityCommand(
-          connection,
-          userId,
-          MutationSchema.parse(mutation),
-          current.settings,
-          position,
-        ),
+        executeEntityCommand(connection, userId, parsed, current.settings, position),
+      false,
+      name,
     );
   }
 
-  async applyBatch(
-    userId: string,
-    requestId: string,
-    mutations: Mutation[],
+  /** The caller supplies original JSON, not SDK-normalized arguments. */
+  async delegatedWrite(
+    access: DelegatedAccess,
+    scope: string,
+    tool: string,
+    originalArguments: unknown,
+    operationId: string,
     expectedRevision: number,
-    onApplied?: (connection: Transaction) => Promise<void>,
+    update: (
+      connection: Transaction,
+      current: WorkspaceBootstrap,
+      position: () => number,
+    ) => Promise<void>,
   ): Promise<CommandResult> {
+    if (!access.scopes.includes(scope))
+      throw new ApiError(403, 'INSUFFICIENT_SCOPE', 'This connection does not permit this change.');
+    requestIdSchema.parse(operationId);
+    revisionSchema.parse(expectedRevision);
+    const requestId = `mcp:${fingerprint([access.clientId, access.grantId, operationId])}`;
     return this.commit(
-      userId,
+      access.ownerId,
       requestId,
-      { kind: 'batch', mutations, expectedRevision },
+      { kind: 'delegated', tool, arguments: originalArguments },
       expectedRevision,
       async (connection, current, position) => {
-        const parsed = z.array(MutationSchema).min(1).max(200).parse(mutations);
-        let settings = current.settings;
-        for (const command of parsed)
-          settings = await executeEntityCommand(connection, userId, command, settings, position);
-        return settings;
+        await update(connection, current, position);
+        return current.settings;
       },
-      onApplied,
+      true,
     );
-  }
-
-  inspectImport(rawState: unknown) {
-    return inspectImport(rawState);
   }
 
   async isEmpty(userId: string, connection: Database = this.db): Promise<boolean> {
@@ -344,7 +348,8 @@ export class WorkspaceStore {
       current: WorkspaceBootstrap,
       position: () => number,
     ) => Promise<Settings>,
-    onApplied?: (connection: Transaction) => Promise<void>,
+    replayCommittedRevision = false,
+    name?: string,
   ): Promise<CommandResult> {
     userSchema.parse(userId);
     requestIdSchema.parse(requestId);
@@ -354,14 +359,17 @@ export class WorkspaceStore {
       await connection.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${userId}, 0))`);
       const receipt = (
         await connection
-          .select({ payload_hash: mutationReceipts.payload_hash })
+          .select({
+            payload_hash: mutationReceipts.payload_hash,
+            revision: mutationReceipts.revision,
+          })
           .from(mutationReceipts)
           .where(
             and(eq(mutationReceipts.user_id, userId), eq(mutationReceipts.request_id, requestId)),
           )
           .limit(1)
       )[0];
-      const current = await this.metadata(connection, userId);
+      const current = await this.metadata(connection, userId, name);
       if (receipt) {
         if (receipt.payload_hash !== hash)
           throw new ApiError(
@@ -369,8 +377,7 @@ export class WorkspaceStore {
             'REQUEST_ID_REUSED',
             'This request identifier was already used for a different change.',
           );
-        await onApplied?.(connection);
-        return { revision: current.revision };
+        return { revision: replayCommittedRevision ? receipt.revision : current.revision };
       }
       if (expectedRevision !== undefined && current.revision !== expectedRevision)
         throw new ApiError(
@@ -448,7 +455,6 @@ export class WorkspaceStore {
             ),
           ),
         );
-      await onApplied?.(connection);
       return { revision };
     });
   }

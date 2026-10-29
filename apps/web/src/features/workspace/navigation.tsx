@@ -1,25 +1,16 @@
-import {
-  Home,
-  Sparkles,
-  CalendarDays,
-  UtensilsCrossed,
-  ShoppingBasket,
-  Dumbbell,
-} from 'lucide-react';
+import { Home, CalendarDays, UtensilsCrossed, ShoppingBasket, Dumbbell } from 'lucide-react';
 import type { View } from './types';
 
 export const viewPaths: Record<View, string> = {
   today: '/',
-  agent: '/agent',
   workouts: '/workouts',
   planner: '/planner',
   recipes: '/recipes',
   groceries: '/groceries',
-  studio: '/studio',
   settings: '/settings',
 };
-export const isNutritionView = (v: View): v is 'planner' | 'recipes' | 'groceries' | 'studio' =>
-  v === 'planner' || v === 'recipes' || v === 'groceries' || v === 'studio';
+export const isNutritionView = (v: View): v is 'planner' | 'recipes' | 'groceries' =>
+  v === 'planner' || v === 'recipes' || v === 'groceries';
 export const sidebarGroups = [
   {
     items: [
@@ -28,12 +19,6 @@ export const sidebarGroups = [
         label: 'Today',
         href: viewPaths.today,
         icon: <Home size={18} strokeWidth={1.8} />,
-      },
-      {
-        id: 'agent' as const,
-        label: 'My agent',
-        href: viewPaths.agent,
-        icon: <Sparkles size={18} strokeWidth={1.8} />,
       },
     ],
   },
@@ -57,12 +42,6 @@ export const sidebarGroups = [
         label: 'Grocery list',
         href: viewPaths.groceries,
         icon: <ShoppingBasket size={18} strokeWidth={1.8} />,
-      },
-      {
-        id: 'studio' as const,
-        label: 'Recipe studio',
-        href: viewPaths.studio,
-        icon: <UtensilsCrossed size={18} strokeWidth={1.8} />,
       },
     ],
   },

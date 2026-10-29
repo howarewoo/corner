@@ -402,7 +402,10 @@ export async function plan({
   );
   need(
     preservingCutover
-      ? !bootstrap && !rollbackId && provisionedVersionId === null && cutoverId.test(operationId ?? '')
+      ? !bootstrap &&
+          !rollbackId &&
+          provisionedVersionId === null &&
+          cutoverId.test(operationId ?? '')
       : !operationId,
     'Preserving cutover requires an explicit operator release and valid operation ID without bootstrap or rollback',
   );
@@ -901,7 +904,11 @@ async function executePreservingCutover({
     need(version && expectedVersionIds.includes(version), message);
     return version;
   };
-  const deployExactVersion = async (versionId, cfgArgs = common, expected = [maintenanceVersionId]) => {
+  const deployExactVersion = async (
+    versionId,
+    cfgArgs = common,
+    expected = [maintenanceVersionId],
+  ) => {
     await assertSingleLiveVersion(expected, 'Live Worker drifted before pinned traffic transition');
     wrangler(['versions', 'deploy', `${versionId}@100%`, ...cfgArgs, '--yes']);
     await assertSingleLiveVersion(
@@ -938,13 +945,7 @@ async function executePreservingCutover({
       initialDb.phase === 'untouched',
       'Database already has an active or completed cutover state; inspect before starting cutover',
     );
-    const maintOut = wrangler([
-      'versions',
-      'upload',
-      ...maintenanceCommon,
-      '--no-bundle',
-      ...vars,
-    ]);
+    const maintOut = wrangler(['versions', 'upload', ...maintenanceCommon, '--no-bundle', ...vars]);
     maintenanceVersionId = maintOut.match(/Worker Version ID:\s*([a-f0-9-]{36})/)?.[1];
     need(
       uuid.test(maintenanceVersionId ?? ''),
@@ -957,10 +958,7 @@ async function executePreservingCutover({
       'Candidate upload did not return an exact Worker version ID',
     );
     await reverify();
-    await github.record(
-      { ...baseMaintenancePayload(), phase: 'maintenance-uploaded' },
-      'success',
-    );
+    await github.record({ ...baseMaintenancePayload(), phase: 'maintenance-uploaded' }, 'success');
     currentPhase = 'maintenance-uploaded';
   } else {
     need(
@@ -988,10 +986,7 @@ async function executePreservingCutover({
     }
     await checkMaintenance(p.origin, maintenanceVersionId);
     if (currentPhase === 'maintenance-uploaded') {
-      await github.record(
-        { ...baseMaintenancePayload(), phase: 'maintenance-active' },
-        'success',
-      );
+      await github.record({ ...baseMaintenancePayload(), phase: 'maintenance-active' }, 'success');
       currentPhase = 'maintenance-active';
     }
     dbState = inspectDbPhase();
@@ -1052,10 +1047,7 @@ async function executePreservingCutover({
     await reverify();
     await validateCutover(candidate, p.operationId);
     if (currentPhase !== 'cutover-validated') {
-      await github.record(
-        { ...baseMaintenancePayload(), phase: 'cutover-validated' },
-        'success',
-      );
+      await github.record({ ...baseMaintenancePayload(), phase: 'cutover-validated' }, 'success');
       currentPhase = 'cutover-validated';
     }
     assertBaseline(currentBaselineId, (await github.baseline())?.id);
@@ -1151,12 +1143,12 @@ async function executePreservingCutover({
   } catch (error) {
     if (!publicVerified) {
       try {
-        await deployExactVersion(maintenanceVersionId, maintenanceCommon, [candidateVersionId, maintenanceVersionId]);
+        await deployExactVersion(maintenanceVersionId, maintenanceCommon, [
+          candidateVersionId,
+          maintenanceVersionId,
+        ]);
         await checkMaintenance(p.origin, maintenanceVersionId);
-        await github.record(
-          { ...baseMaintenancePayload(), phase: 'cutover-validated' },
-          'success',
-        );
+        await github.record({ ...baseMaintenancePayload(), phase: 'cutover-validated' }, 'success');
       } catch (restoreError) {
         throw new AggregateError(
           [error, restoreError],
@@ -1320,18 +1312,12 @@ export async function promote({
     bootstrapSecrets = JSON.parse(
       need(process.env.CORNER_WORKER_SECRETS_JSON, 'Bootstrap requires protected Worker secrets'),
     );
-    const names = [
-      'DATABASE_URL',
-      'NEON_AUTH_BASE_URL',
-      'BETTER_AUTH_SECRET',
-      'CORNER_TOKEN_ENCRYPTION_KEY',
-    ];
+    const names = ['DATABASE_URL', 'NEON_AUTH_BASE_URL'];
     need(
       bootstrapSecrets.DATABASE_URL === process.env.DATABASE_URL &&
         names.every(
           (key) => typeof bootstrapSecrets[key] === 'string' && bootstrapSecrets[key].length > 0,
-        ) &&
-        Object.keys(bootstrapSecrets).every((key) => names.includes(key)),
+        ),
       'Invalid bootstrap Worker secrets',
     );
     const auth = new URL(bootstrapSecrets.NEON_AUTH_BASE_URL);
@@ -1339,18 +1325,11 @@ export async function promote({
       auth.protocol === 'https:' && !auth.username && !auth.password && !auth.search && !auth.hash,
       'Invalid bootstrap auth binding',
     );
-    const key = bootstrapSecrets.CORNER_TOKEN_ENCRYPTION_KEY;
-    need(
-      bootstrapSecrets.BETTER_AUTH_SECRET.length >= 32 &&
-        /^[A-Za-z0-9+/]{43}=$/.test(key) &&
-        Buffer.from(key, 'base64').length === 32 &&
-        Buffer.from(key, 'base64').toString('base64') === key,
-      'Invalid bootstrap session/encryption binding',
-    );
     need(
       ['postgres:', 'postgresql:'].includes(new URL(bootstrapSecrets.DATABASE_URL).protocol),
       'Invalid bootstrap database binding',
     );
+    bootstrapSecrets = Object.fromEntries(names.map((name) => [name, bootstrapSecrets[name]]));
   }
   need(process.env.DATABASE_URL_UNPOOLED, 'Protected unpooled migration connection is required');
   const candidate = await github.artifact(p, join(work, 'candidate'));
@@ -1363,7 +1342,12 @@ export async function promote({
     const serving = baseline
       ? await github.artifact(baseline.payload, join(work, 'serving-generation'))
       : undefined;
-    assertQualificationGeneration(p.qualification, candidate, serving, Boolean(p.preservingCutover));
+    assertQualificationGeneration(
+      p.qualification,
+      candidate,
+      serving,
+      Boolean(p.preservingCutover),
+    );
   }
   const toolVersion = createRequire(new URL('../apps/server/package.json', import.meta.url))(
     'wrangler/package.json',
@@ -1403,12 +1387,7 @@ export async function promote({
   if (!p.bootstrap) {
     const settings = await cf(`workers/scripts/${target.workerName}/settings`);
     need(
-      [
-        'DATABASE_URL',
-        'NEON_AUTH_BASE_URL',
-        'BETTER_AUTH_SECRET',
-        'CORNER_TOKEN_ENCRYPTION_KEY',
-      ].every((name) =>
+      ['DATABASE_URL', 'NEON_AUTH_BASE_URL'].every((name) =>
         settings.bindings?.some(
           (binding) => binding.name === name && binding.type === 'secret_text',
         ),
@@ -1747,12 +1726,7 @@ export async function resume({
   );
   const settings = await cf(`workers/scripts/${target.workerName}/settings`);
   need(
-    [
-      'DATABASE_URL',
-      'NEON_AUTH_BASE_URL',
-      'BETTER_AUTH_SECRET',
-      'CORNER_TOKEN_ENCRYPTION_KEY',
-    ].every((name) =>
+    ['DATABASE_URL', 'NEON_AUTH_BASE_URL'].every((name) =>
       settings.bindings?.some((binding) => binding.name === name && binding.type === 'secret_text'),
     ),
     'Production Worker is missing required protected secret bindings',

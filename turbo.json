@@ -30,13 +30,7 @@
       "dependsOn": ["^build"],
       "cache": false,
       "persistent": true,
-      "passThroughEnv": [
-        "CORNER_*",
-        "BETTER_AUTH_SECRET",
-        "DATABASE_URL",
-        "NEON_AUTH_*",
-        "NODE_EXTRA_CA_CERTS"
-      ]
+      "passThroughEnv": ["CORNER_*", "DATABASE_URL", "NEON_AUTH_*", "NODE_EXTRA_CA_CERTS"]
     },
     "@packages/api#dev": {
       "dependsOn": ["build"],
@@ -54,11 +48,6 @@
       "persistent": true
     },
     "@packages/workspace#dev": {
-      "dependsOn": ["build"],
-      "cache": false,
-      "persistent": true
-    },
-    "@packages/agent#dev": {
       "dependsOn": ["build"],
       "cache": false,
       "persistent": true

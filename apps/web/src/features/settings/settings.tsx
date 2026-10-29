@@ -6,7 +6,7 @@ import { ArrowDownToLine, LogOut } from 'lucide-react';
 import { Button, WorkspaceHeader } from '@packages/ui';
 import ProfileForm from '../../profile-form';
 import ImportWorkspace from '../../import-workspace';
-import { AgentConnection } from '../../agent-panel';
+import DelegatedConnections from './delegated-connections';
 import type { Mutate, Notify } from '../workspace/types';
 import { download } from '../workspace/utils';
 
@@ -20,7 +20,6 @@ export default function Settings({
   signingOut,
   onSignOut,
   notify,
-  readState,
   mutate,
 }: {
   state?: AppState;
@@ -32,7 +31,6 @@ export default function Settings({
   signingOut?: boolean;
   onSignOut?: () => void;
   notify: Notify;
-  readState: () => Promise<void>;
   mutate: Mutate;
 }) {
   const generation = useRef(sessionLifetime()).current;
@@ -82,8 +80,8 @@ export default function Settings({
       />
       <p className="profile-help">Signed in as {accountEmail}</p>
       <p className="profile-help" style={{ marginBottom: 24 }}>
-        Workspace exports include recipes, plans, food and training logs, and your profile. Agent
-        request history is not included.
+        Workspace exports include recipes, plans, food and training logs, your profile, and
+        supported historical requests and reviews. They are not complete installation backups.
       </p>
       <ProfileForm
         key={JSON.stringify(settings)}
@@ -93,13 +91,11 @@ export default function Settings({
           mutate({ type: 'settings.save', data: settings }, 'Your profile is saved')
         }
       />
+      <DelegatedConnections preview={preview} disabled={disabled || busy} notify={notify} />
       <ImportWorkspace
         disabled={disabled || preview}
         onImported={() => notify('Your workspace is imported')}
       />
-      <div style={{ marginTop: 32 }}>
-        <AgentConnection onChanged={() => void readState()} compact />
-      </div>
     </>
   );
 }

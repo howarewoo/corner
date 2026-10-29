@@ -185,10 +185,9 @@ if (import.meta.main) {
   } catch (error) {
     const code =
       error instanceof Error &&
-      [
-        'PRESERVING_DOCUMENT_CUTOVER_REFUSED',
-        'DOCUMENT_CUTOVER_INSPECTION_REFUSED',
-      ].includes(error.message)
+      ['PRESERVING_DOCUMENT_CUTOVER_REFUSED', 'DOCUMENT_CUTOVER_INSPECTION_REFUSED'].includes(
+        error.message,
+      )
         ? error.message
         : 'SCHEMA_MIGRATION_FAILED';
     process.stderr.write(`${code}\n`);

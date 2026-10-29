@@ -23,7 +23,6 @@ export default function WorkspaceOverlays({
   selectedDate,
   disabled,
   busy,
-  aiAvailable,
   overlay,
   setOverlay,
   confirmation,
@@ -35,7 +34,6 @@ export default function WorkspaceOverlays({
   selectedDate: string;
   disabled: boolean;
   busy: boolean;
-  aiAvailable: boolean;
   overlay: Overlay;
   setOverlay: (overlay: Overlay) => void;
   confirmation: Confirmation | null;
@@ -122,7 +120,6 @@ export default function WorkspaceOverlays({
           food={overlay.food}
           date={selectedDate}
           busy={disabled}
-          aiAvailable={aiAvailable}
           onClose={() => setOverlay(null)}
           onSave={async (food) => {
             if (await mutate({ type: 'log.save', data: food }, 'Food log saved')) setOverlay(null);

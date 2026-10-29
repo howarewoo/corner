@@ -51,6 +51,9 @@ export function developmentServer(environment: Record<string, string | undefined
       // the API's exact-origin checks. The proxy changes only the transport.
       '/api': { target, changeOrigin: false },
       '/auth/callback': { target, changeOrigin: false },
+      '^/oauth/(?:authorize|token|register|revoke|jwks)(?:$|[/?])': { target, changeOrigin: false },
+      '/.well-known': { target, changeOrigin: false },
+      '^/mcp(?:$|[/?])': { target, changeOrigin: false },
     },
     fs: {
       strict: true,
@@ -60,7 +63,6 @@ export function developmentServer(environment: Record<string, string | undefined
         fileURLToPath(new URL('../../packages/nutrition/dist', import.meta.url)),
         fileURLToPath(new URL('../../packages/training/dist', import.meta.url)),
         fileURLToPath(new URL('../../packages/workspace/dist', import.meta.url)),
-        fileURLToPath(new URL('../../packages/agent/dist', import.meta.url)),
         fileURLToPath(new URL('../../packages/api/dist', import.meta.url)),
         fileURLToPath(new URL('../../packages/ui/src', import.meta.url)),
         fileURLToPath(new URL('../../node_modules', import.meta.url)),
@@ -90,6 +92,19 @@ export default defineConfig(({ command }) => {
     plugins: [
       react(),
       tailwindcss(),
+      {
+        name: 'corner-oauth-document-privacy',
+        apply: 'serve',
+        configureServer(server) {
+          server.middlewares.use((request, response, next) => {
+            if (request.url?.split('?', 1)[0]?.startsWith('/oauth/')) {
+              response.setHeader('Cache-Control', 'private, no-store, max-age=0');
+              response.setHeader('Referrer-Policy', 'no-referrer');
+            }
+            next();
+          });
+        },
+      },
       {
         name: 'corner-ui-license',
         generateBundle() {
