@@ -42,7 +42,7 @@ const deleteSchema = z.object({ ...guard, id: PlanEntrySchema.shape.id }).strict
 export type OriginalToolArguments = (tool: string) => unknown;
 
 export function registerNutritionWrites(server: McpServer, store: WorkspaceStore, access: DelegatedAccess, original: OriginalToolArguments): void {
-  const canWrite = () => ['meal-plans:write', 'recipes:write', 'recipes:delete', 'food-logs:write', 'food-logs:delete'].some((scope) => access.scopes.includes(scope));
+  const canWrite = () => ['meal-plans:write', 'recipes:write', 'recipes:delete', 'food-logs:write', 'food-logs:delete', 'routines:write'].some((scope) => access.scopes.includes(scope));
   if (canWrite()) server.registerTool('get_workspace_revision', {
     description: 'Read only the current workspace revision, without records or settings. Call before a new write or after REVISION_CONFLICT, review the intended change, then explicitly submit with expectedRevision and a new operationId. Does not reserve a revision or rebase a write.',
     inputSchema: z.object({}).strict(),
