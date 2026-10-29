@@ -1,4 +1,5 @@
 import { useContext, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useForm } from '@tanstack/react-form';
 import * as UI from '@packages/ui';
 import { ArrowRight, Bookmark, Check, Dumbbell, Info, Plus, Search, Settings2 } from 'lucide-react';
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from 'recharts';
@@ -9,7 +10,7 @@ import { CatalogThemeContext } from './catalog-theme';
 
 // Compositions sourced from the live shadcn Base UI documentation on 2026-10-23.
 // Each ID maps to https://ui.shadcn.com/docs/components/base/<id>.
-// Native Form composition follows https://ui.shadcn.com/docs/forms and Field.
+// Form composes TanStack Form state with shared Field and native constraints.
 const exercises = ['Dumbbell press', 'Goblet squat', 'Romanian deadlift', 'Seated row'];
 const sampleChart = [
   { day: 'Mon', planned: 5, recorded: 4 },
@@ -132,6 +133,10 @@ export function ExpandedSpecimen({ id }: { id: string }) {
   const [enabled, setEnabled] = useState(false);
   const [confirmationOpen, setConfirmationOpen] = useState(false);
   const [value, setValue] = useState(id === 'drawer' ? '45' : '');
+  const previewForm = useForm({
+    defaultValues: { name: '' },
+    onSubmit: ({ value }) => setStatus(`Preview form submitted: ${value.name.trim()}.`),
+  });
   const [choice, setChoice] = useState<string | null>(null);
   const [date, setDate] = useState<Date | undefined>(new Date(2026, 9, 23));
   const [page, setPage] = useState(1);
@@ -566,19 +571,24 @@ export function ExpandedSpecimen({ id }: { id: string }) {
           className="specimen-stack max-w-md"
           onSubmit={(event) => {
             event.preventDefault();
-            setStatus(`Preview form submitted: ${value.trim()}.`);
+            void previewForm.handleSubmit();
           }}
         >
           <UI.Field>
             <UI.FieldLabel htmlFor="form-name">Sample session name</UI.FieldLabel>
-            <UI.Input
-              id="form-name"
-              required
-              minLength={3}
-              value={value}
-              onChange={(event) => setValue(event.target.value)}
-              placeholder="Name the session"
-            />
+            <previewForm.Field name="name">
+              {(field) => (
+                <UI.Input
+                  id="form-name"
+                  required
+                  minLength={3}
+                  value={field.state.value}
+                  onChange={(event) => field.handleChange(event.target.value)}
+                  onBlur={field.handleBlur}
+                  placeholder="Name the session"
+                />
+              )}
+            </previewForm.Field>
             <UI.FieldDescription>
               The browser validates this form. Nothing is sent to a server.
             </UI.FieldDescription>
@@ -589,7 +599,7 @@ export function ExpandedSpecimen({ id }: { id: string }) {
               variant="outline"
               type="button"
               onClick={() => {
-                setValue('');
+                previewForm.reset();
                 setStatus('Preview form reset.');
               }}
             >

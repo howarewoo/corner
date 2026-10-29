@@ -3,7 +3,7 @@ import { afterEach, beforeEach, test } from 'node:test';
 import type { Pool } from 'pg';
 import type { Hono } from 'hono';
 import { createInitialState } from '@packages/workspace/initial-state';
-import { createApp, type AppEnvironment } from '../app.js';
+import { createApp } from '../app.js';
 import type { Config } from '../config.js';
 import { ApiError } from '../http.js';
 import { createQueries } from '../queries.js';
@@ -23,8 +23,6 @@ const config: Config = {
   port: 3000,
   dataDir: '/tmp',
   deployment: 'local',
-  authSecret: 'workspace-name-test-secret-long-enough-to-use',
-  tokenEncryptionKey: Buffer.alloc(32, 7),
 };
 const signupName = 'Fresh trainee Ω';
 const food = {
@@ -42,7 +40,7 @@ const food = {
 const grocery = { type: 'grocery.check' as const, data: { key: 'oats|g', checked: true } };
 let db: Pool;
 let store: WorkspaceStore;
-let app: Hono<AppEnvironment>;
+let app: Hono;
 let cookie: string;
 let userId: string;
 

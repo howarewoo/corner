@@ -408,3 +408,5 @@ export const subscriptionGenerations = pgTable('corner_subscription_generations'
   user_id: text().primaryKey(),
   generation: bigint({ mode: 'number' }).notNull(),
 });
+
+export * from './delegation-schema.js';

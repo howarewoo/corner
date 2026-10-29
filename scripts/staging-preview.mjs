@@ -18,12 +18,7 @@ import {
 const workerName = 'corner';
 const previewName = 'staging';
 const kind = 'corner-staging-preview';
-const secretNames = [
-  'DATABASE_URL',
-  'NEON_AUTH_BASE_URL',
-  'BETTER_AUTH_SECRET',
-  'CORNER_TOKEN_ENCRYPTION_KEY',
-];
+const secretNames = ['DATABASE_URL', 'NEON_AUTH_BASE_URL'];
 class PreviewError extends Error {}
 const need = (value, message) => {
   if (!value) throw new PreviewError(message);
@@ -70,7 +65,6 @@ export function previewCredentials(environment = process.env) {
   );
   need(
     secrets &&
-      Object.keys(secrets).length === secretNames.length &&
       secretNames.every((name) => typeof secrets[name] === 'string' && secrets[name].length > 0) &&
       secrets.DATABASE_URL === environment.DATABASE_URL,
     'Invalid Preview secret bindings',
@@ -94,19 +88,11 @@ export function previewCredentials(environment = process.env) {
     auth.protocol === 'https:' && !auth.username && !auth.password && !auth.search && !auth.hash,
     'Invalid Preview Auth binding',
   );
-  const key = secrets.CORNER_TOKEN_ENCRYPTION_KEY;
-  need(
-    secrets.BETTER_AUTH_SECRET.length >= 32 &&
-      /^[A-Za-z0-9+/]{43}=$/.test(key) &&
-      Buffer.from(key, 'base64').length === 32 &&
-      Buffer.from(key, 'base64').toString('base64') === key,
-    'Invalid Preview session/encryption bindings',
-  );
   need(
     environment.CORNER_STAGING_ACCESS_CLIENT_ID && environment.CORNER_STAGING_ACCESS_CLIENT_SECRET,
     'Preview Access service credentials required',
   );
-  return secrets;
+  return Object.fromEntries(secretNames.map((name) => [name, secrets[name]]));
 }
 
 function command(binary, args, options = {}) {

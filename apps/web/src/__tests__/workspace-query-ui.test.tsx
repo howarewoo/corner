@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { useRef } from 'react';
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { onlineManager, QueryClientProvider, useMutation } from '@tanstack/react-query';
 import { expect, test, vi } from 'vitest';
@@ -21,6 +21,7 @@ import RecipePicker from '../features/meal-planner/recipe-picker';
 import TrainingPanel from '../components/training-panel';
 import type { WorkoutSession } from '@packages/training/types';
 import Settings from '../features/settings/settings';
+import ImportWorkspace from '../import-workspace';
 import { download } from '../features/workspace/utils';
 import type * as WorkspaceUtils from '../features/workspace/utils';
 import { MAX_WORKSPACE_TRANSFER_BYTES } from '@packages/api/workspace-data';
@@ -32,7 +33,6 @@ vi.mock('../features/workspace/utils', async (importOriginal) => {
 const bootstrap = (revision: number): Bootstrap => ({
   revision,
   settings: createInitialState().settings,
-  aiAvailable: false,
 });
 
 const accountUnavailable = () =>
@@ -194,12 +194,11 @@ test.each(['SIGN_IN_REQUIRED', 'INVALID_INPUT'] as const)(
 );
 
 test.each(['stale', 'failed'] as const)(
-  'reconnect refreshes %s workspace resources but not provider connections',
+  'reconnect refreshes %s workspace resources',
   async (initial) => {
     let revision = 1;
     let fail = initial === 'failed';
-    const calls = mockHttp((call) => {
-      if (call.path === '/api/rpc/ai/connection') return json({ json: {} });
+    mockHttp((call) => {
       if (call.path === '/api/rpc/workspace/get') {
         if (fail) throw new TypeError('Network unavailable');
         return json({ json: bootstrap(revision) });
@@ -212,14 +211,12 @@ test.each(['stale', 'failed'] as const)(
     function Consumer() {
       const workspace = runtime.useWorkspace();
       const resource = runtime.useResource('food', undefined, food);
-      const connection = runtime.useConnection();
       return (
         <>
           <output aria-label="Workspace">
             {workspace.isError ? 'error' : workspace.data?.revision}
           </output>
           <output aria-label="Food">{resource.isError ? 'error' : resource.data?.revision}</output>
-          <output aria-label="Connection">{connection.status}</output>
         </>
       );
     }
@@ -231,7 +228,6 @@ test.each(['stale', 'failed'] as const)(
     await waitFor(() => {
       expect(screen.getByLabelText('Workspace')).toHaveTextContent(fail ? 'error' : '1');
       expect(screen.getByLabelText('Food')).toHaveTextContent(fail ? 'error' : '1');
-      expect(screen.getByLabelText('Connection')).toHaveTextContent('success');
     });
     try {
       act(() => {
@@ -247,7 +243,6 @@ test.each(['stale', 'failed'] as const)(
         expect(screen.getByLabelText('Food')).toHaveTextContent('2');
       });
       expect(food).toHaveBeenCalledTimes(2);
-      expect(calls.filter((call) => call.path === '/api/rpc/ai/connection')).toHaveLength(1);
     } finally {
       act(() => {
         onlineManager.setOnline(true);
@@ -634,7 +629,10 @@ test('Today respects logged planned-meal membership even when its food entry is 
 });
 
 test('the selected recipe remains actionable when it is outside the current picker page', async () => {
-  const add = vi.fn();
+  const { promise, resolve } = Promise.withResolvers<void>();
+  const add = vi.fn(
+    (_recipe: Recipe, _date: string, _slot: string, _servings: number, _entryId: string) => promise,
+  );
   mockHttp((call) => {
     if (call.path === '/api/rpc/workspace/page')
       return json({
@@ -665,8 +663,18 @@ test('the selected recipe remains actionable when it is outside the current pick
   );
   const submit = await screen.findByRole('button', { name: 'Add to plan' });
   await waitFor(() => expect(submit).toBeEnabled());
-  await userEvent.setup().click(submit);
-  expect(add).toHaveBeenCalledWith(savedRecipe, '2026-10-24', 'breakfast', 1, expect.any(String));
+  const user = userEvent.setup();
+  await user.clear(screen.getByRole('spinbutton', { name: 'Servings' }));
+  await user.type(screen.getByRole('spinbutton', { name: 'Servings' }), '2');
+  await user.click(submit);
+  await waitFor(() =>
+    expect(add).toHaveBeenCalledWith(savedRecipe, '2026-10-24', 'breakfast', 2, expect.any(String)),
+  );
+  expect(submit).toBeDisabled();
+  await user.click(submit);
+  expect(add).toHaveBeenCalledTimes(1);
+  await act(async () => resolve());
+  await waitFor(() => expect(submit).toBeEnabled());
 });
 
 test('query ingestion checks the write floor again when its cache key is still empty', async () => {
@@ -783,8 +791,6 @@ test('workout prefill uses the bounded historical context without recording disp
         mutate={mutate}
         busy={false}
         notify={() => {}}
-        onRefresh={() => {}}
-        onOpenAgent={() => {}}
       />
     </QueryClientProvider>,
   );
@@ -814,6 +820,164 @@ test('workout prefill uses the bounded historical context without recording disp
     },
     'Workout saved',
   );
+});
+
+test('workout row edits and explicitly cleared suggestions stay with dotted domain IDs across moves and deletions', async () => {
+  const session: WorkoutSession = {
+    ...plannedSession,
+    exercises: [
+      {
+        ...plannedSession.exercises[0]!,
+        id: 'squat.v1',
+        sets: [
+          { ...plannedSession.exercises[0]!.sets[0]!, id: 'first.set' },
+          { ...plannedSession.exercises[0]!.sets[0]!, id: 'shared.set' },
+        ],
+      },
+      {
+        ...plannedSession.exercises[0]!,
+        id: 'press.v1',
+        name: 'Synthetic press',
+        targetLoad: { weight: 20, unit: 'kg' },
+        sets: [{ ...plannedSession.exercises[0]!.sets[0]!, id: 'shared.set' }],
+      },
+    ],
+  };
+  const state = createInitialState();
+  state.training.sessions = [session];
+  const mutate = vi.fn(async () => false);
+  render(
+    <QueryClientProvider client={runtime.queryClient}>
+      <TrainingPanel
+        state={state}
+        settings={state.settings}
+        selectedDate={session.date}
+        onDateChange={() => {}}
+        mutate={mutate}
+        busy={false}
+        notify={() => {}}
+      />
+    </QueryClientProvider>,
+  );
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole('button', { name: 'Start workout' }));
+  await user.clear(screen.getByLabelText('Synthetic squat set 2 weight kg', { exact: true }));
+  await user.type(screen.getByLabelText('Synthetic squat set 2 weight kg', { exact: true }), '55');
+  await user.clear(screen.getByLabelText('Synthetic squat set 2 reps in reserve', { exact: true }));
+  await user.clear(screen.getByLabelText('Synthetic press set 1 weight kg', { exact: true }));
+  await user.type(screen.getByLabelText('Synthetic press set 1 weight kg', { exact: true }), '25');
+  await user.click(screen.getByRole('button', { name: 'Move Synthetic squat down' }));
+  await user.click(screen.getByRole('button', { name: 'Remove Synthetic squat set 1' }));
+  expect(screen.getByLabelText('Synthetic squat set 1 weight kg', { exact: true })).toHaveValue(55);
+  expect(
+    screen.getByLabelText('Synthetic squat set 1 reps in reserve', { exact: true }),
+  ).toHaveValue(null);
+  expect(screen.getByLabelText('Synthetic press set 1 weight kg', { exact: true })).toHaveValue(25);
+  await user.click(screen.getByLabelText('Synthetic squat set 1 completed', { exact: true }));
+  await user.click(screen.getByRole('button', { name: 'Save workout' }));
+  await waitFor(() => expect(mutate).toHaveBeenCalledTimes(1));
+  expect(mutate).toHaveBeenCalledWith(
+    {
+      type: 'training.session.save',
+      data: {
+        expectedUpdatedAt: session.updatedAt,
+        session: expect.objectContaining({
+          exercises: [
+            expect.objectContaining({
+              id: 'press.v1',
+              sets: [
+                expect.objectContaining({
+                  id: 'shared.set',
+                  weight: 25,
+                  reps: null,
+                  rir: null,
+                  completed: false,
+                }),
+              ],
+            }),
+            expect.objectContaining({
+              id: 'squat.v1',
+              sets: [
+                expect.objectContaining({
+                  id: 'shared.set',
+                  weight: 55,
+                  reps: 8,
+                  rir: null,
+                  completed: true,
+                }),
+              ],
+            }),
+          ],
+        }),
+      },
+    },
+    'Workout saved',
+  );
+});
+
+test('workout Save clears a failed Complete intent, honors native limits, and waits for actual save success', async () => {
+  const state = createInitialState();
+  state.training.sessions = [structuredClone(plannedSession)];
+  const pendingSave = Promise.withResolvers<boolean>();
+  const mutate = vi
+    .fn()
+    .mockImplementationOnce(() => pendingSave.promise)
+    .mockResolvedValue(true);
+  render(
+    <QueryClientProvider client={runtime.queryClient}>
+      <TrainingPanel
+        state={state}
+        settings={state.settings}
+        selectedDate={plannedSession.date}
+        onDateChange={() => {}}
+        mutate={mutate}
+        busy={false}
+        notify={() => {}}
+      />
+    </QueryClientProvider>,
+  );
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole('button', { name: 'Start workout' }));
+  const plannedMinutes = screen.getByLabelText('Planned minutes');
+  await user.clear(plannedMinutes);
+  await user.type(plannedMinutes, '601');
+  await user.click(screen.getByRole('button', { name: 'Complete workout' }));
+  expect(plannedMinutes).toBeInvalid();
+  expect(mutate).not.toHaveBeenCalled();
+  await user.clear(plannedMinutes);
+  await user.type(plannedMinutes, '45');
+  await user.click(screen.getByRole('button', { name: 'Complete workout' }));
+  expect(
+    await screen.findByText(
+      'Log a completed working set or actual training minutes before completing this workout.',
+    ),
+  ).toBeVisible();
+  expect(mutate).not.toHaveBeenCalled();
+  await user.type(screen.getByLabelText('Session notes'), 'Keep this draft after a failed save');
+  await user.click(screen.getByRole('button', { name: 'Save workout' }));
+  await waitFor(() => expect(mutate).toHaveBeenCalledTimes(1));
+  expect(screen.getByRole('button', { name: 'Save workout' })).toBeDisabled();
+  expect(mutate).toHaveBeenLastCalledWith(
+    {
+      type: 'training.session.save',
+      data: {
+        expectedUpdatedAt: plannedSession.updatedAt,
+        session: expect.objectContaining({
+          status: 'in_progress',
+          notes: 'Keep this draft after a failed save',
+          exercises: plannedSession.exercises,
+        }),
+      },
+    },
+    'Workout saved',
+  );
+  await act(async () => pendingSave.resolve(false));
+  expect(screen.getByLabelText('Session notes')).toHaveValue('Keep this draft after a failed save');
+  await user.click(screen.getByRole('button', { name: 'Save workout' }));
+  await waitFor(() =>
+    expect(screen.queryByRole('dialog', { name: 'Your workout' })).not.toBeInTheDocument(),
+  );
+  expect(mutate).toHaveBeenCalledTimes(2);
 });
 
 test('progress uses lifetime counts, old measurements and explicit historical session details', async () => {
@@ -880,8 +1044,6 @@ test('progress uses lifetime counts, old measurements and explicit historical se
         mutate={async () => true}
         busy={false}
         notify={() => {}}
-        onRefresh={() => {}}
-        onOpenAgent={() => {}}
       />
     </QueryClientProvider>,
   );
@@ -950,17 +1112,6 @@ test('a full export above the former browser cap can be uploaded, previewed, and
         },
       });
     if (call.path === '/api/rpc/workspace/import') return json({ json: { revision: 1 } });
-    if (call.path === '/api/rpc/ai/connection')
-      return json({
-        json: {
-          available: false,
-          connected: false,
-          enabled: false,
-          state: 'unavailable',
-          model: null,
-          models: [],
-        },
-      });
   });
   render(
     <QueryClientProvider client={runtime.queryClient}>
@@ -971,7 +1122,6 @@ test('a full export above the former browser cap can be uploaded, previewed, and
         busy={false}
         accountEmail="synthetic@corner.test"
         notify={() => {}}
-        readState={async () => {}}
         mutate={async () => true}
       />
     </QueryClientProvider>,
@@ -1003,6 +1153,97 @@ test('a full export above the former browser cap can be uploaded, previewed, and
   expect(imported.body?.json).toEqual({
     state: full,
     expectedRevision: 0,
+    requestId: expect.any(String),
+  });
+});
+
+test('changing the import file clears confirmation and failed commits retain the exact preview pins for retry', async () => {
+  const first = createInitialState();
+  const second = { ...createInitialState(), recipes: [savedRecipe] };
+  let fail = true;
+  const calls = mockHttp((call) => {
+    if (call.path === '/api/rpc/workspace/previewImport')
+      return json({ json: { revision: 17, canImport: true, summary: { recipes: 1 } } });
+    if (call.path === '/api/rpc/workspace/import') {
+      if (fail) return accountUnavailable();
+      return json({ json: { revision: 18 } });
+    }
+  });
+  const onImported = vi.fn();
+  render(
+    <QueryClientProvider client={runtime.queryClient}>
+      <ImportWorkspace disabled={false} onImported={onImported} />
+    </QueryClientProvider>,
+  );
+  const user = userEvent.setup();
+  for (const [index, state] of [first, second].entries()) {
+    const file = new File([JSON.stringify(state)], `corner-${index}.json`, {
+      type: 'application/json',
+    });
+    Object.defineProperty(file, 'text', { value: async () => JSON.stringify(state) });
+    await user.upload(screen.getByLabelText('Corner export · JSON'), file);
+    await screen.findByRole('heading', { name: 'Review your import' });
+    expect(screen.getByLabelText('Type IMPORT to confirm')).toHaveValue('');
+    expect(screen.getByRole('button', { name: 'Import my records' })).toBeDisabled();
+    await user.type(screen.getByLabelText('Type IMPORT to confirm'), 'IMPORT');
+  }
+  await user.keyboard('[Enter]');
+  await screen.findByRole('alert');
+  expect(onImported).not.toHaveBeenCalled();
+  expect(screen.getByLabelText('Type IMPORT to confirm')).toHaveValue('IMPORT');
+  fail = false;
+  await user.dblClick(screen.getByRole('button', { name: 'Import my records' }));
+  await waitFor(() => expect(onImported).toHaveBeenCalledTimes(1));
+  const commits = calls.filter((call) => call.path === '/api/rpc/workspace/import');
+  expect(commits).toHaveLength(2);
+  expect(commits[0].body?.json).toEqual({
+    state: second,
+    expectedRevision: 17,
+    requestId: expect.any(String),
+  });
+  expect(commits[1].body).toEqual(commits[0].body);
+});
+
+test('a retired import preview cannot restore its candidate or typed confirmation', async () => {
+  const stale = Promise.withResolvers<Response>();
+  const first = createInitialState();
+  const second = { ...createInitialState(), recipes: [savedRecipe] };
+  let previews = 0;
+  const calls = mockHttp((call) => {
+    if (call.path === '/api/rpc/workspace/previewImport') {
+      if (++previews === 1) return stale.promise;
+      return json({ json: { revision: 23, canImport: true, summary: { recipes: 1 } } });
+    }
+    if (call.path === '/api/rpc/workspace/import') return json({ json: { revision: 24 } });
+  });
+  const onImported = vi.fn();
+  render(
+    <QueryClientProvider client={runtime.queryClient}>
+      <ImportWorkspace disabled={false} onImported={onImported} />
+    </QueryClientProvider>,
+  );
+  for (const [index, state] of [first, second].entries()) {
+    const file = new File([JSON.stringify(state)], `selection-${index}.json`, {
+      type: 'application/json',
+    });
+    Object.defineProperty(file, 'text', { value: async () => JSON.stringify(state) });
+    // Model an already queued selection event while the previous preview is in flight.
+    fireEvent.change(screen.getByLabelText('Corner export · JSON'), { target: { files: [file] } });
+    await waitFor(() => expect(previews).toBe(index + 1));
+  }
+  await screen.findByRole('heading', { name: 'Review your import' });
+  const user = userEvent.setup();
+  await user.type(screen.getByLabelText('Type IMPORT to confirm'), 'IMPORT');
+  await act(async () => {
+    stale.resolve(json({ json: { revision: 1, canImport: true, summary: { recipes: 0 } } }));
+  });
+  expect(screen.getByText('selection-1.json')).toBeVisible();
+  expect(screen.getByLabelText('Type IMPORT to confirm')).toHaveValue('IMPORT');
+  await user.click(screen.getByRole('button', { name: 'Import my records' }));
+  await waitFor(() => expect(onImported).toHaveBeenCalledTimes(1));
+  expect(calls.find((call) => call.path === '/api/rpc/workspace/import')?.body?.json).toEqual({
+    state: second,
+    expectedRevision: 23,
     requestId: expect.any(String),
   });
 });

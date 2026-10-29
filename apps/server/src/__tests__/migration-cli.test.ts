@@ -72,10 +72,7 @@ test('migration CLI validates preserving-cutover and inspect-cutover arguments b
   for (const [args, env] of [
     [['--preserving-cutover', '--operation-id', 'op-2026-10-27'], unsafeEnv],
     [['--preserving-cutover', '--operation-id=op-2026-10-27'], unsafeEnv],
-    [
-      ['--preserving-cutover'],
-      { ...unsafeEnv, CORNER_CUTOVER_OPERATION_ID: 'op-2026-10-27' },
-    ],
+    [['--preserving-cutover'], { ...unsafeEnv, CORNER_CUTOVER_OPERATION_ID: 'op-2026-10-27' }],
     [['--inspect-cutover'], unsafeEnv],
     [['--inspect-cutover', '--operation-id', 'op-2026-10-27'], unsafeEnv],
   ] as const) {

@@ -14,15 +14,15 @@ Corner's intended primary audience is performance-focused trainees managing thei
 
 ## Product Purpose
 
-Bring meal planning, nutrition tracking, workouts, and progress into one daily tool, with optional AI assistance that adapts plans to the person's goals, constraints, schedule, and recorded results.
+Bring manual meal planning, nutrition tracking, workouts, and progress into one daily tool.
 
-The agreed direction is a future hosted service. Near-term priorities are daily tracking usability, especially on phones; better AI planning; and hosted product readiness. This direction does not mean a public service or hosted AI integration is available today.
+Near-term priorities are daily tracking usability, especially on phones, and hosted product readiness. Corner does not host model inference. Optional owner-approved MCP connections let a separately chosen client use only its granted workspace permissions; they do not expose that client's conversations or memories to Corner.
 
 ## Operating Context
 
 Today, Corner is a self-hostable web application using managed Neon Auth email/password accounts and owner-scoped Neon Postgres workspaces. Local setup is documented in [README.md](README.md); Cloudflare Workers and the optional single-server HTTPS deployment are documented in [HOSTING.md](HOSTING.md).
 
-A person can optionally edit their profile or import a Corner JSON export, then plan meals and training, record what actually happened, and review progress. Manual tools work without an AI connection. Corner sign-in and ChatGPT authorization are separate; losing model access must not prevent manual tracking.
+A person can optionally edit their profile or import a Corner JSON export, then plan meals and training, record what actually happened, and review progress.
 
 Corner does not read ChatGPT conversations, memories, an original Corner Site, or another person's workspace. Existing personal data enters through an owner-selected import, not account matching or background synchronization.
 
@@ -34,34 +34,31 @@ Corner does not read ChatGPT conversations, memories, an original Corner Site, o
 - Workout plans, reusable routines, editable set targets and actual results, check-ins, progress views, and an attributed exercise catalog.
 - Managed accounts, verification-code entry, and password recovery. Neon owns delivery; production requires custom SMTP and matching verification policy.
 - Previewed imports into empty workspaces, workspace JSON export, and individual recipe text downloads. Workspace exports exclude credentials and separate agent request history; they are not complete installation backups.
-- Optional local ChatGPT authorization for planning, recipe drafts, and food estimates. Model access depends on the connected account. Drafts and estimates require user review before saving.
-- AI proposals can change plans and targets only after explicit approval. They cannot invent food eaten, measurements, or completed training, or overwrite started or recorded workouts. Applying a stale proposal is rejected.
+- Manual recipe creation/editing and direct food logging remain available. Historical recipe requests and training requests/reviews survive supported workspace import/export as archive data, without executable request or review commands.
+- Optional delegated MCP reads for workout history, routines, dated meal plans, food logs and recipes; separately selectable dated meal-plan creation/editing, food-log creation/editing/deletion, recipe creation/editing/deletion, routine creation/editing, unstarted workout planning and existing-history corrections; session-bound consent and Settings revocation. Delete permissions are independent of create/edit permissions, and workout planning never grants history correction. Granted writes apply autonomously without per-change Corner approval. History corrections retain lifecycle status; planning cannot replace started or recorded activity. No delegated plan/history deletion, workout start/completion, proposals, model connections or inference are exposed.
 
-The Node runtime remains one Corner process, backed by Neon Postgres; its agent tasks still run in memory. The hosted-only Cloudflare Workers runtime supports manual tools and persisted history without starting inference or running process-wide recovery. Hosted mode has no enabled AI connection or alternate inference provider on either platform.
+Node remains one Corner process backed by Neon Postgres. Cloudflare Workers serves the same manual tools. Neither runtime connects models or starts inference.
 
 ### Agreed direction
 
-Pursue an **approved hosted ChatGPT integration** using eligible users' ChatGPT access. Approval, the applicable integration contract, and live authorization/inference verification are prerequisites; local grants must not be repurposed for public hosting. No switch to separately billed API usage is implied by this direction.
-
-Account isolation, user-authored activity records, and explicit approval of AI changes are durable constraints. Storage and deployment topology may evolve while preserving those guarantees. See [ARCHITECTURE.md](ARCHITECTURE.md) for current boundaries and flows.
+Improve manual nutrition/training workflows while preserving account isolation and user-authored activity records. See [ARCHITECTURE.md](ARCHITECTURE.md) for current boundaries and flows.
 
 ### Open decisions
 
-Hosted capacity targets, pricing, launch criteria, and any future distributed AI-worker topology remain undecided. Storage and account services use Neon; hosted manual tracking can run on Cloudflare Workers. An approved hosted AI implementation remains dependent on access to its real provider contract.
+Hosted capacity targets, pricing, and launch criteria remain undecided. Storage and account services use Neon; hosted manual tracking can run on Cloudflare Workers.
 
 ## Evidence on Hand
 
-- [README.md](README.md): current setup, representative workflows, data portability, and provider references.
+- [README.md](README.md): current setup, representative workflows, and data portability.
 - [HOSTING.md](HOSTING.md): current deployment and backup procedures, with deployment verification limits.
 - [RELEASE-NOTES.md](RELEASE-NOTES.md): unreleased baseline and local verification limits, not proof of a live hosted service.
-- [Web UI](apps/web/src/), [nutrition](packages/nutrition/src/), [training](packages/training/src/), [workspace](packages/workspace/src/), and [agent rules](packages/agent/src/): implemented workflows and terminology.
+- [Web UI](apps/web/src/), [nutrition](packages/nutrition/src/), [training](packages/training/src/), and [workspace](packages/workspace/src/): implemented workflows and terminology.
 - [Exercise provenance](packages/training/src/data/exercises-source.json) and [third-party notice](apps/web/public/licenses/exercises-dataset-NOTICE.md): catalog evidence and attribution.
 
-The repository does not supply a public deployment, approved hosted AI credentials, real account consent evidence, or a completed browser visual review. Do not fabricate those assets or infer them from mocked provider tests.
+The repository does not establish a public deployment or completed browser visual review. Preserve original backups, keys, provider archives, and historical receipts/migrations. Before final retirement release, the operator must confirm backups and revoke any existing ChatGPT grants; source removal does not establish either gate.
 
 ## Product Principles
 
 - **Recorded activity is ground truth.** Keep planned loads, meals, and targets distinct from what the user actually performed or ate.
-- **Assistance stays reviewable.** Explain proposed changes and uncertainty; ask for missing material facts rather than inventing personal context.
-- **Daily use comes first.** Improve routine logging and plan review, including phone use, without making an AI connection a prerequisite.
+- **Daily use comes first.** Improve routine manual logging and plan review, including phone use.
 - **Safety survives architectural change.** Preserve ownership, private credentials, and explicit user approval as storage and hosting evolve.

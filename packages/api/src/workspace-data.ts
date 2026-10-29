@@ -6,7 +6,7 @@ import type { AppState, Settings } from '@packages/workspace/types';
 /** Compact workspace JSON/file limit; RPC envelopes have a separate small allowance. */
 export const MAX_WORKSPACE_TRANSFER_BYTES = 32 * 1024 * 1024;
 
-export type Bootstrap = { settings: Settings; revision: number; aiAvailable: boolean };
+export type Bootstrap = { settings: Settings; revision: number };
 export type CommandResult = { revision: number };
 export type FoodWindow = {
   revision: number;
@@ -20,9 +20,6 @@ export type Resources = {
   sessions: AppState['training']['sessions'][number];
   templates: AppState['training']['templates'][number];
   checkIns: AppState['training']['checkIns'][number];
-  recipeRequests: AppState['requests'][number];
-  trainingRequests: AppState['training']['requests'][number];
-  reviews: AppState['training']['reviews'][number];
   scheduledDates: string;
   groceryChecks: { key: string; checked: boolean };
 };
@@ -32,9 +29,6 @@ export const resourceSchema = z.enum([
   'sessions',
   'templates',
   'checkIns',
-  'recipeRequests',
-  'trainingRequests',
-  'reviews',
   'scheduledDates',
   'groceryChecks',
 ]);

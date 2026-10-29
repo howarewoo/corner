@@ -60,6 +60,12 @@ test('offline handling leaves account, API, external, asset, and write requests 
     '/api/rpc/workspace/get',
     '/auth/callback?code=private-code',
     '/account/reset-password?token=private-token',
+    '/oauth/authorize?code=private-code',
+    '/oauth/consent/private-interaction',
+    '/oauth/sign-in?returnTo=private-request',
+    '/mcp',
+    '/.well-known/oauth-authorization-server',
+    '/.well-known/oauth-protected-resource/mcp',
     'https://other.test/',
   ])
     assert.equal(dispatch(path), undefined, path);

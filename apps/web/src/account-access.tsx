@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type FormEvent } from 'react';
+import { useForm, useStore } from '@tanstack/react-form';
 import { useLocation, useNavigate } from 'react-router';
 import { ArrowRight, Check, ChevronLeft, Eye, EyeOff, Loader2, Mail } from 'lucide-react';
 import { createAuthClient, isAuthError } from '@neondatabase/auth';
@@ -79,9 +80,11 @@ function readableError(failure: unknown): string {
 export default function AccountAccess({
   onSignedIn,
   initialRoute = emptyRoute,
+  accountReturnTo,
 }: {
   onSignedIn: () => Promise<void>;
   initialRoute?: AccountRoute;
+  accountReturnTo?: string;
 }) {
   const location = useLocation();
   const navigate = useNavigate();
@@ -95,12 +98,7 @@ export default function AccountAccess({
   const [mode, setMode] = useState<Mode>(() =>
     initialRoute.kind === 'reset' ? (initialRoute.token ? 'reset' : 'reset-invalid') : 'signin',
   );
-  const [name, setName] = useState('');
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
   const [passwordVisible, setPasswordVisible] = useState(false);
-  const [confirmation, setConfirmation] = useState('');
-  const [verificationCode, setVerificationCode] = useState('');
   const policyQuery = useQuery({
     queryKey: ['policy'],
     queryFn: ({ signal }) => rpc.account.policy(undefined, { signal }),
@@ -110,7 +108,7 @@ export default function AccountAccess({
   const policyError = policyQuery.error
     ? 'Account options could not be loaded. Please try again.'
     : '';
-  const [busy, setBusy] = useState(false);
+  const [requestBusy, setRequestBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const active = useRef(true);
@@ -123,6 +121,67 @@ export default function AccountAccess({
   const confirmationInput = useRef<HTMLInputElement>(null);
   const onSignedInRef = useRef(onSignedIn);
   onSignedInRef.current = onSignedIn;
+  const form = useForm({
+    defaultValues: { name: '', email: '', password: '', confirmation: '', verificationCode: '' },
+    onSubmitMeta: { sequence: 0, resend: false },
+    validators: {
+      onSubmit: ({ value }) => {
+        if (!policy || policyLoading || action.current) return;
+        if (mode === 'signin' || mode === 'signup' || mode === 'resend' || mode === 'forgot') {
+          if (
+            !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.email.trim()) ||
+            value.email.trim().length > 254
+          )
+            return 'Enter a valid email address.';
+        }
+        if (mode === 'signup' && !value.name.trim())
+          return 'Enter the name you want to use in Corner.';
+        if (mode === 'signin' || mode === 'signup') {
+          if (
+            !value.password ||
+            value.password.length > 128 ||
+            (mode === 'signup' && value.password.length < 12)
+          )
+            return mode === 'signup'
+              ? 'Use a password between 12 and 128 characters.'
+              : 'Enter your password.';
+        }
+        if (mode === 'reset') {
+          if (value.password.length < 12 || value.password.length > 128)
+            return 'Use a password between 12 and 128 characters.';
+          if (value.password !== value.confirmation) {
+            return 'The passwords don’t match. Enter the same password in both fields.';
+          }
+        }
+      },
+    },
+    onSubmit: async ({ meta }) => {
+      if (!current(meta.sequence)) return;
+      if (meta.resend) await sendVerification();
+      else if (mode === 'signin' || mode === 'signup') await submitCredentials();
+      else if (mode === 'verify') await verifyEmail();
+      else if (mode === 'resend') await sendVerification();
+      else if (mode === 'forgot') await requestReset();
+      else if (mode === 'reset') await resetPassword();
+    },
+  });
+  const submitting = useStore(form.store, (state) => state.isSubmitting);
+  const busy = requestBusy || submitting;
+  const validationError = useStore(form.store, (state) => state.errors[0]);
+  const email = useStore(form.store, (state) => state.values.email);
+  useEffect(() => {
+    if (
+      !busy &&
+      validationError === 'The passwords don’t match. Enter the same password in both fields.'
+    )
+      confirmationInput.current?.focus();
+  }, [busy, validationError]);
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    if (action.current) return;
+    setError('');
+    void form.handleSubmit({ sequence: sequence.current, resend: false });
+  }
 
   const loadPolicy = useCallback(async () => {
     await policyQuery.refetch();
@@ -177,22 +236,23 @@ export default function AccountAccess({
     sequence.current += 1;
     action.current?.controller.abort();
     action.current = null;
-    setBusy(false);
+    setRequestBusy(false);
     setError('');
     setNotice(message);
-    setPassword('');
+    form.reset(
+      { ...form.state.values, password: '', confirmation: '', verificationCode: '' },
+      { keepDefaultValues: true },
+    );
     setPasswordVisible(false);
-    setConfirmation('');
-    setVerificationCode('');
     setMode(next);
     if (next !== 'reset') resetToken.current = null;
-    if (next === 'signin' && initialRoute.kind === 'reset') void navigate('/', { replace: true });
+    if (next === 'signin' && initialRoute.kind === 'reset') void navigate(accountReturnTo ?? '/', { replace: true });
   }
   function begin() {
     if (action.current || !active.current) return null;
     const pending = { id: ++sequence.current, controller: new AbortController() };
     action.current = pending;
-    setBusy(true);
+    setRequestBusy(true);
     setError('');
     setNotice('');
     return pending;
@@ -203,15 +263,8 @@ export default function AccountAccess({
   function finish(id: number) {
     if (current(id)) {
       action.current = null;
-      setBusy(false);
+      setRequestBusy(false);
     }
-  }
-  function emailIsValid() {
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim()) || email.trim().length > 254) {
-      setError('Enter a valid email address.');
-      return false;
-    }
-    return true;
   }
   const unavailableRecovery = (
     <p className="account-recovery-note">
@@ -220,18 +273,10 @@ export default function AccountAccess({
     </p>
   );
 
-  async function submitCredentials(event: FormEvent) {
-    event.preventDefault();
-    if (!policy || policyLoading || action.current || !emailIsValid()) return;
+  async function submitCredentials() {
+    if (!policy || policyLoading || action.current) return;
+    const { name, email, password } = form.state.values;
     const signup = mode === 'signup';
-    if (signup && !name.trim()) {
-      setError('Enter the name you want to use in Corner.');
-      return;
-    }
-    if (!password || password.length > 128 || (signup && password.length < 12)) {
-      setError(signup ? 'Use a password between 12 and 128 characters.' : 'Enter your password.');
-      return;
-    }
     const pending = begin();
     if (!pending) return;
     const submittedEmail = email.trim();
@@ -248,8 +293,8 @@ export default function AccountAccess({
           result.error.code,
         );
       if (!current(pending.id)) return;
-      setEmail(submittedEmail);
-      setPassword('');
+      form.setFieldValue('email', submittedEmail);
+      form.setFieldValue('password', '');
       if (
         policy.emailVerificationRequired &&
         (signup || result.data?.user?.emailVerified === false)
@@ -268,7 +313,7 @@ export default function AccountAccess({
         (failure instanceof RequestError && failure.code === 'EMAIL_NOT_VERIFIED') ||
         (isAuthError(failure) && failure.code === 'email_not_confirmed')
       ) {
-        setEmail(submittedEmail);
+        form.setFieldValue('email', submittedEmail);
         if (policy.emailVerificationRequired) show('verify');
         else {
           show('signin');
@@ -280,10 +325,10 @@ export default function AccountAccess({
     }
   }
 
-  async function sendVerification(event?: FormEvent) {
-    event?.preventDefault();
-    if (!policy?.emailVerificationRequired || policyLoading || action.current || !emailIsValid())
-      return;
+  async function sendVerification() {
+    if (!policy?.emailVerificationRequired || policyLoading || action.current) return;
+    const { email } = form.state.values;
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim()) || email.trim().length > 254) return;
     const pending = begin();
     if (!pending) return;
     const submittedEmail = email.trim();
@@ -294,7 +339,7 @@ export default function AccountAccess({
         pending.controller.signal,
       );
       if (!current(pending.id)) return;
-      setEmail(submittedEmail);
+      form.setFieldValue('email', submittedEmail);
       show(
         'verify',
         'If this address needs verification, a new code will be sent. Check your inbox and spam folder.',
@@ -306,8 +351,8 @@ export default function AccountAccess({
     }
   }
 
-  async function verifyEmail(event: FormEvent) {
-    event.preventDefault();
+  async function verifyEmail() {
+    const { email, verificationCode } = form.state.values;
     if (action.current || !policy?.emailVerificationRequired) return;
     const pending = begin();
     if (!pending) return;
@@ -326,10 +371,9 @@ export default function AccountAccess({
     }
   }
 
-  async function requestReset(event: FormEvent) {
-    event.preventDefault();
-    if (!policy?.passwordResetAvailable || policyLoading || action.current || !emailIsValid())
-      return;
+  async function requestReset() {
+    if (!policy?.passwordResetAvailable || policyLoading || action.current) return;
+    const { email } = form.state.values;
     const pending = begin();
     if (!pending) return;
     const submittedEmail = email.trim();
@@ -338,12 +382,16 @@ export default function AccountAccess({
         '/api/auth/request-password-reset',
         {
           email: submittedEmail,
-          redirectTo: new URL('/account/reset-password', window.location.origin).href,
+          redirectTo: (() => {
+            const destination = new URL('/account/reset-password', window.location.origin);
+            if (accountReturnTo) destination.searchParams.set('oauthReturn', accountReturnTo);
+            return destination.href;
+          })(),
         },
         pending.controller.signal,
       );
       if (!current(pending.id)) return;
-      setEmail(submittedEmail);
+      form.setFieldValue('email', submittedEmail);
       show('reset-sent');
     } catch (failure) {
       if (current(pending.id)) setError(readableError(failure));
@@ -352,20 +400,11 @@ export default function AccountAccess({
     }
   }
 
-  async function resetPassword(event: FormEvent) {
-    event.preventDefault();
+  async function resetPassword() {
+    const { password } = form.state.values;
     if (!policy?.passwordResetAvailable || policyLoading || action.current) return;
     if (!resetToken.current) {
       show('reset-invalid');
-      return;
-    }
-    if (password.length < 12 || password.length > 128) {
-      setError('Use a password between 12 and 128 characters.');
-      return;
-    }
-    if (password !== confirmation) {
-      setError('The passwords don’t match. Enter the same password in both fields.');
-      confirmationInput.current?.focus();
       return;
     }
     const pending = begin();
@@ -390,7 +429,8 @@ export default function AccountAccess({
 
   const credentials = mode === 'signin' || mode === 'signup';
   const resetAvailable = Boolean(policy?.passwordResetAvailable);
-  const disabled = busy || policyLoading || !policy;
+  const pending = busy;
+  const disabled = pending || policyLoading || !policy;
   const loadingLabel = (
     <>
       <Loader2 aria-hidden="true" size={17} className="spin" />
@@ -399,9 +439,9 @@ export default function AccountAccess({
   );
   const feedback = (
     <>
-      {error && (
+      {(error || validationError) && (
         <Alert variant="destructive" className="form-error">
-          {error}
+          {error || validationError}
         </Alert>
       )}
       {notice && (
@@ -490,70 +530,89 @@ export default function AccountAccess({
         )}
         {credentials && (
           <>
-            <form onSubmit={submitCredentials} aria-busy={busy}>
+            <form onSubmit={submit} aria-busy={pending}>
               {mode === 'signup' && (
-                <Field className="field">
-                  <FieldLabel htmlFor="account-name">Your name</FieldLabel>
-                  <Input
-                    id="account-name"
-                    name="name"
-                    required
-                    autoComplete="name"
-                    maxLength={80}
-                    value={name}
-                    disabled={busy}
-                    onChange={(event) => setName(event.target.value)}
-                  />
-                </Field>
+                <form.Field name="name">
+                  {(field) => (
+                    <Field className="field">
+                      <FieldLabel htmlFor="account-name">Your name</FieldLabel>
+                      <Input
+                        id="account-name"
+                        name="name"
+                        required
+                        autoComplete="name"
+                        maxLength={80}
+                        value={field.state.value}
+                        disabled={pending}
+                        onBlur={field.handleBlur}
+                        onChange={(event) => field.handleChange(event.target.value)}
+                      />
+                    </Field>
+                  )}
+                </form.Field>
               )}
-              <Field className="field">
-                <FieldLabel htmlFor="account-email">Email</FieldLabel>
-                <Input
-                  id="account-email"
-                  name="email"
-                  required
-                  type="email"
-                  autoComplete="email"
-                  maxLength={254}
-                  value={email}
-                  disabled={busy}
-                  onChange={(event) => setEmail(event.target.value)}
-                />
-              </Field>
-              <Field className="field">
-                <FieldLabel htmlFor="account-password">Password</FieldLabel>
-                <ButtonGroup className="w-full">
-                  <Input
-                    id="account-password"
-                    name="password"
-                    required
-                    type={passwordVisible ? 'text' : 'password'}
-                    autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
-                    minLength={mode === 'signup' ? 12 : undefined}
-                    maxLength={128}
-                    value={password}
-                    disabled={busy}
-                    aria-describedby={mode === 'signup' ? 'account-password-hint' : undefined}
-                    onChange={(event) => setPassword(event.target.value)}
-                  />
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="icon"
-                    aria-label={passwordVisible ? 'Hide password' : 'Show password'}
-                    aria-controls="account-password"
-                    disabled={busy}
-                    onClick={() => setPasswordVisible((visible) => !visible)}
-                  >
-                    {passwordVisible ? <EyeOff aria-hidden="true" /> : <Eye aria-hidden="true" />}
-                  </Button>
-                </ButtonGroup>
-                {mode === 'signup' && (
-                  <FieldDescription id="account-password-hint">
-                    Use at least 12 characters.
-                  </FieldDescription>
+              <form.Field name="email">
+                {(field) => (
+                  <Field className="field">
+                    <FieldLabel htmlFor="account-email">Email</FieldLabel>
+                    <Input
+                      id="account-email"
+                      name="email"
+                      required
+                      type="email"
+                      autoComplete="email"
+                      maxLength={254}
+                      value={field.state.value}
+                      disabled={pending}
+                      onBlur={field.handleBlur}
+                      onChange={(event) => field.handleChange(event.target.value)}
+                    />
+                  </Field>
                 )}
-              </Field>
+              </form.Field>
+              <form.Field name="password">
+                {(field) => (
+                  <Field className="field">
+                    <FieldLabel htmlFor="account-password">Password</FieldLabel>
+                    <ButtonGroup className="w-full">
+                      <Input
+                        id="account-password"
+                        name="password"
+                        required
+                        type={passwordVisible ? 'text' : 'password'}
+                        autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
+                        minLength={mode === 'signup' ? 12 : undefined}
+                        maxLength={128}
+                        value={field.state.value}
+                        disabled={pending}
+                        onBlur={field.handleBlur}
+                        aria-describedby={mode === 'signup' ? 'account-password-hint' : undefined}
+                        onChange={(event) => field.handleChange(event.target.value)}
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        aria-label={passwordVisible ? 'Hide password' : 'Show password'}
+                        aria-controls="account-password"
+                        disabled={busy}
+                        onClick={() => setPasswordVisible((visible) => !visible)}
+                      >
+                        {passwordVisible ? (
+                          <EyeOff aria-hidden="true" />
+                        ) : (
+                          <Eye aria-hidden="true" />
+                        )}
+                      </Button>
+                    </ButtonGroup>
+                    {mode === 'signup' && (
+                      <FieldDescription id="account-password-hint">
+                        Use at least 12 characters.
+                      </FieldDescription>
+                    )}
+                  </Field>
+                )}
+              </form.Field>
               {feedback}
               <Button
                 variant="default"
@@ -602,22 +661,27 @@ export default function AccountAccess({
             <p>If you don’t see a message, check your spam folder or request another code.</p>
             {feedback}
             {policy?.emailVerificationRequired && (
-              <form onSubmit={verifyEmail} aria-busy={busy}>
-                <Field className="field">
-                  <FieldLabel htmlFor="account-verification-code">Verification code</FieldLabel>
-                  <Input
-                    id="account-verification-code"
-                    name="verificationCode"
-                    required
-                    inputMode="numeric"
-                    autoComplete="one-time-code"
-                    pattern="[0-9]{6}"
-                    maxLength={6}
-                    value={verificationCode}
-                    disabled={busy}
-                    onChange={(event) => setVerificationCode(event.target.value)}
-                  />
-                </Field>
+              <form onSubmit={submit} aria-busy={pending}>
+                <form.Field name="verificationCode">
+                  {(field) => (
+                    <Field className="field">
+                      <FieldLabel htmlFor="account-verification-code">Verification code</FieldLabel>
+                      <Input
+                        id="account-verification-code"
+                        name="verificationCode"
+                        required
+                        inputMode="numeric"
+                        autoComplete="one-time-code"
+                        pattern="[0-9]{6}"
+                        maxLength={6}
+                        value={field.state.value}
+                        disabled={pending}
+                        onBlur={field.handleBlur}
+                        onChange={(event) => field.handleChange(event.target.value)}
+                      />
+                    </Field>
+                  )}
+                </form.Field>
                 <Button
                   type="submit"
                   variant="default"
@@ -636,7 +700,10 @@ export default function AccountAccess({
                 size="lg"
                 className="w-full"
                 disabled={disabled}
-                onClick={() => void sendVerification()}
+                onClick={() => {
+                  if (!action.current)
+                    void form.handleSubmit({ sequence: sequence.current, resend: true });
+                }}
               >
                 {busy ? (
                   loadingLabel
@@ -676,21 +743,26 @@ export default function AccountAccess({
               Enter the email you used for Corner. If it needs verification, we’ll send a new code.
             </p>
             {policy?.emailVerificationRequired ? (
-              <form onSubmit={(event) => void sendVerification(event)} aria-busy={busy}>
-                <Field className="field">
-                  <FieldLabel htmlFor="account-resend-email">Email</FieldLabel>
-                  <Input
-                    id="account-resend-email"
-                    name="email"
-                    required
-                    type="email"
-                    autoComplete="email"
-                    maxLength={254}
-                    value={email}
-                    disabled={busy}
-                    onChange={(event) => setEmail(event.target.value)}
-                  />
-                </Field>
+              <form onSubmit={submit} aria-busy={pending}>
+                <form.Field name="email">
+                  {(field) => (
+                    <Field className="field">
+                      <FieldLabel htmlFor="account-resend-email">Email</FieldLabel>
+                      <Input
+                        id="account-resend-email"
+                        name="email"
+                        required
+                        type="email"
+                        autoComplete="email"
+                        maxLength={254}
+                        value={field.state.value}
+                        disabled={pending}
+                        onBlur={field.handleBlur}
+                        onChange={(event) => field.handleChange(event.target.value)}
+                      />
+                    </Field>
+                  )}
+                </form.Field>
                 {feedback}
                 <Button
                   variant="default"
@@ -729,21 +801,26 @@ export default function AccountAccess({
               link.
             </p>
             {resetAvailable ? (
-              <form onSubmit={requestReset} aria-busy={busy}>
-                <Field className="field">
-                  <FieldLabel htmlFor="account-forgot-email">Email</FieldLabel>
-                  <Input
-                    id="account-forgot-email"
-                    name="email"
-                    required
-                    type="email"
-                    autoComplete="email"
-                    maxLength={254}
-                    value={email}
-                    disabled={busy}
-                    onChange={(event) => setEmail(event.target.value)}
-                  />
-                </Field>
+              <form onSubmit={submit} aria-busy={pending}>
+                <form.Field name="email">
+                  {(field) => (
+                    <Field className="field">
+                      <FieldLabel htmlFor="account-forgot-email">Email</FieldLabel>
+                      <Input
+                        id="account-forgot-email"
+                        name="email"
+                        required
+                        type="email"
+                        autoComplete="email"
+                        maxLength={254}
+                        value={field.state.value}
+                        disabled={pending}
+                        onBlur={field.handleBlur}
+                        onChange={(event) => field.handleChange(event.target.value)}
+                      />
+                    </Field>
+                  )}
+                </form.Field>
                 {feedback}
                 <Button
                   variant="default"
@@ -798,42 +875,54 @@ export default function AccountAccess({
               password changes.
             </p>
             {resetAvailable ? (
-              <form onSubmit={resetPassword} aria-busy={busy}>
-                <Field className="field">
-                  <FieldLabel htmlFor="account-new-password">New password</FieldLabel>
-                  <Input
-                    id="account-new-password"
-                    name="newPassword"
-                    required
-                    type="password"
-                    autoComplete="new-password"
-                    minLength={12}
-                    maxLength={128}
-                    value={password}
-                    disabled={busy}
-                    aria-describedby="reset-password-hint"
-                    onChange={(event) => setPassword(event.target.value)}
-                  />
-                  <FieldDescription id="reset-password-hint">
-                    Use between 12 and 128 characters.
-                  </FieldDescription>
-                </Field>
-                <Field className="field">
-                  <FieldLabel htmlFor="account-confirm-password">Confirm new password</FieldLabel>
-                  <Input
-                    ref={confirmationInput}
-                    id="account-confirm-password"
-                    name="confirmPassword"
-                    required
-                    type="password"
-                    autoComplete="new-password"
-                    minLength={12}
-                    maxLength={128}
-                    value={confirmation}
-                    disabled={busy}
-                    onChange={(event) => setConfirmation(event.target.value)}
-                  />
-                </Field>
+              <form onSubmit={submit} aria-busy={pending}>
+                <form.Field name="password">
+                  {(field) => (
+                    <Field className="field">
+                      <FieldLabel htmlFor="account-new-password">New password</FieldLabel>
+                      <Input
+                        id="account-new-password"
+                        name="newPassword"
+                        required
+                        type="password"
+                        autoComplete="new-password"
+                        minLength={12}
+                        maxLength={128}
+                        value={field.state.value}
+                        disabled={pending}
+                        onBlur={field.handleBlur}
+                        aria-describedby="reset-password-hint"
+                        onChange={(event) => field.handleChange(event.target.value)}
+                      />
+                      <FieldDescription id="reset-password-hint">
+                        Use between 12 and 128 characters.
+                      </FieldDescription>
+                    </Field>
+                  )}
+                </form.Field>
+                <form.Field name="confirmation">
+                  {(field) => (
+                    <Field className="field">
+                      <FieldLabel htmlFor="account-confirm-password">
+                        Confirm new password
+                      </FieldLabel>
+                      <Input
+                        ref={confirmationInput}
+                        id="account-confirm-password"
+                        name="confirmPassword"
+                        required
+                        type="password"
+                        autoComplete="new-password"
+                        minLength={12}
+                        maxLength={128}
+                        value={field.state.value}
+                        disabled={pending}
+                        onBlur={field.handleBlur}
+                        onChange={(event) => field.handleChange(event.target.value)}
+                      />
+                    </Field>
+                  )}
+                </form.Field>
                 {feedback}
                 <Button
                   variant="default"

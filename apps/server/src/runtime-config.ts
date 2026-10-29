@@ -1,18 +1,8 @@
 import type { Config } from './config.js';
 
-function encryptionKey(value: string): Buffer {
-  if (!/^[A-Za-z0-9+/]{43}=$/.test(value))
-    throw new Error('CORNER_TOKEN_ENCRYPTION_KEY must be a base64-encoded 32-byte key.');
-  const decoded = Buffer.from(value, 'base64');
-  if (decoded.length !== 32 || decoded.toString('base64') !== value)
-    throw new Error('CORNER_TOKEN_ENCRYPTION_KEY must be a base64-encoded 32-byte key.');
-  return decoded;
-}
-
 type Options = {
   development?: boolean;
   dataDir: string;
-  localSecrets?: () => { authSecret: string; tokenEncryptionKey: string };
 };
 
 const developmentConfigurationError =
@@ -114,29 +104,12 @@ export function loadRuntimeConfig(environment: NodeJS.ProcessEnv, options: Optio
     throw new Error('CORNER_DEV_API_PORT must differ from the browser port in CORNER_ORIGIN.');
   const host = development ? '127.0.0.1' : (environment.CORNER_HOST ?? '127.0.0.1');
   if (!host || /[\s/\\]/.test(host)) throw new Error('CORNER_HOST must be a bind address.');
-  let authSecret = environment.BETTER_AUTH_SECRET;
-  let encodedKey = environment.CORNER_TOKEN_ENCRYPTION_KEY;
-  if (deployment === 'hosted' && (!authSecret || !encodedKey))
-    throw new Error(
-      'Hosted deployments require BETTER_AUTH_SECRET and CORNER_TOKEN_ENCRYPTION_KEY.',
-    );
-  // Validate supplied values before the Node adapter creates anything on disk.
-  if (authSecret !== undefined && authSecret.length < 32)
-    throw new Error('BETTER_AUTH_SECRET must contain at least 32 characters.');
-  if (encodedKey !== undefined) encryptionKey(encodedKey);
   const proxySecret = environment.CORNER_PROXY_SECRET;
   if (
     proxySecret !== undefined &&
     (proxySecret.trim().length < 32 || /[\r\n\u0000]/.test(proxySecret))
   )
     throw new Error('CORNER_PROXY_SECRET must contain at least 32 characters and no line breaks.');
-  if (!authSecret || !encodedKey) {
-    if (!options.localSecrets)
-      throw new Error('Local deployments require private configuration storage.');
-    const saved = options.localSecrets();
-    authSecret ??= saved.authSecret;
-    encodedKey ??= saved.tokenEncryptionKey;
-  }
   return {
     origin: url.origin,
     host,
@@ -146,8 +119,6 @@ export function loadRuntimeConfig(environment: NodeJS.ProcessEnv, options: Optio
     databaseUrl,
     neonAuthBaseUrl,
     neonAuthRequireEmailVerification,
-    authSecret,
-    tokenEncryptionKey: encryptionKey(encodedKey),
     ...(proxySecret ? { proxySecret } : {}),
   };
 }

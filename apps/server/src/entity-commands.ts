@@ -7,23 +7,14 @@ import { prepareTrainingCommand } from '@packages/training/workouts';
 import type { TrainingMutation } from '@packages/training/types';
 import type { Transaction } from './queries.js';
 import * as tables from './schema.js';
-import {
-  recipeRequestRecord,
-  savePlan,
-  saveRecipe,
-  saveRecipeRequest,
-} from './nutrition-records.js';
+import { savePlan, saveRecipe } from './nutrition-records.js';
 import { saveFoodRecord } from './food-records.js';
 import {
-  reviewRecord,
   saveCheckIn,
-  saveReview,
   saveSession,
   saveTemplate,
-  saveTrainingRequest,
   sessionRecords,
   templateRecord,
-  trainingRequestRecord,
 } from './training-records.js';
 
 type Command = z.infer<typeof MutationSchema>;
@@ -163,33 +154,6 @@ export async function executeEntityCommand(
             ),
           );
       break;
-    case 'request.save':
-      if (mutation.data.status !== 'pending') throw new Error('New recipe briefs must be pending.');
-      await saveRecipeRequest(connection, userId, mutation.data, allocatePosition());
-      break;
-    case 'request.fulfill': {
-      const row = (
-        await connection
-          .select()
-          .from(tables.recipeRequests)
-          .where(
-            and(
-              eq(tables.recipeRequests.user_id, userId),
-              eq(tables.recipeRequests.id, mutation.data.id),
-            ),
-          )
-          .limit(1)
-      )[0];
-      if (!row) throw new Error('That recipe brief no longer exists.');
-      await saveRecipe(connection, userId, mutation.data.recipe, allocatePosition());
-      await saveRecipeRequest(
-        connection,
-        userId,
-        { ...recipeRequestRecord(row), status: 'fulfilled', recipeId: mutation.data.recipe.id },
-        allocatePosition(),
-      );
-      break;
-    }
     default:
       await executeTrainingCommand(connection, userId, mutation, settings, allocatePosition);
   }
@@ -204,39 +168,11 @@ async function executeTrainingCommand(
   allocatePosition: () => number,
 ): Promise<void> {
   let sessionIds: string[] = [];
-  let requestIds: string[] = [];
-  let reviewIds: string[] = [];
   let templateIds: string[] = [];
   let dates: string[] = [];
   if (mutation.type === 'training.session.save') sessionIds = [mutation.data.session.id];
   if (mutation.type === 'training.session.delete') sessionIds = [mutation.data.id];
   if (mutation.type === 'training.template.save') templateIds = [mutation.data.id];
-  if (mutation.type === 'training.request.save') {
-    requestIds = [mutation.data.id];
-    sessionIds = mutation.data.sessionId ? [mutation.data.sessionId] : [];
-  }
-  if (mutation.type === 'training.review.save') {
-    reviewIds = [mutation.data.id];
-    requestIds = mutation.data.requestId ? [mutation.data.requestId] : [];
-    sessionIds = mutation.data.changes.map((change) => change.session.id);
-  }
-  if (mutation.type === 'training.review.apply' || mutation.type === 'training.review.dismiss')
-    reviewIds = [mutation.data.id];
-  const reviews = reviewIds.length
-    ? (
-        await connection
-          .select()
-          .from(tables.trainingReviews)
-          .where(
-            and(
-              eq(tables.trainingReviews.user_id, userId),
-              inArray(tables.trainingReviews.id, reviewIds),
-            ),
-          )
-      ).map(reviewRecord)
-    : [];
-  if (mutation.type === 'training.review.apply')
-    sessionIds = reviews.flatMap((review) => review.changes.map((change) => change.session.id));
   if (mutation.type === 'training.week') {
     dates = weekDates(mutation.data.weekStart);
     templateIds = Object.values(settings.schedule)
@@ -276,19 +212,6 @@ async function executeTrainingCommand(
           )
       ).map(templateRecord)
     : [];
-  const requests = requestIds.length
-    ? (
-        await connection
-          .select()
-          .from(tables.trainingRequests)
-          .where(
-            and(
-              eq(tables.trainingRequests.user_id, userId),
-              inArray(tables.trainingRequests.id, requestIds),
-            ),
-          )
-      ).map(trainingRequestRecord)
-    : [];
   const markedDates = dates.length
     ? (
         await connection
@@ -305,8 +228,6 @@ async function executeTrainingCommand(
   const changes = prepareTrainingCommand(mutation, {
     sessions,
     templates,
-    requests,
-    reviews,
     scheduledDates: markedDates,
     schedule: settings.schedule,
   });
@@ -320,10 +241,6 @@ async function executeTrainingCommand(
     await saveTemplate(connection, userId, template, allocatePosition());
   for (const checkIn of changes.checkIns)
     await saveCheckIn(connection, userId, checkIn, allocatePosition());
-  for (const request of changes.requests)
-    await saveTrainingRequest(connection, userId, request, allocatePosition());
-  for (const review of changes.reviews)
-    await saveReview(connection, userId, review, allocatePosition());
   for (const date of changes.scheduledDates)
     await connection
       .insert(tables.scheduledDates)

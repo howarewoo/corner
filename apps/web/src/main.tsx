@@ -1,4 +1,4 @@
-import { StrictMode, useCallback, useEffect, useRef, useState } from 'react';
+import { StrictMode, useCallback, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter, useLocation, useNavigate } from 'react-router';
 import { Loader2 } from 'lucide-react';
@@ -6,6 +6,7 @@ import CornerApp from '@/components/corner-app';
 import { Button, Alert, Toaster, createToastManager } from '@packages/ui';
 import AccountAccess, { readAccountRoute } from './account-access';
 import { authPost, errorMessage, RequestError } from './api';
+import DelegatedConsentScreen, { OAuthSignInReturn, safeAccountReturn } from './features/settings/delegated-consent';
 import { focusManager, QueryClientProvider, useQuery } from '@tanstack/react-query';
 import {
   clearPrivateState,
@@ -49,42 +50,11 @@ async function loadSession() {
   queryClient.setQueryData(privateKey('session'), session);
 }
 
-function ConnectionNotice() {
-  const location = useLocation();
-  const navigate = useNavigate();
-  const consumed = useRef<string | null>(null);
-  useEffect(() => {
-    if (consumed.current === location.key) return;
-    const params = new URLSearchParams(location.search);
-    const ai = params.get('ai');
-    if (ai === 'connected') {
-      accountToasts.add({
-        title: 'AI sign-in completed',
-        description: 'Review your connection and model in My agent.',
-        type: 'success',
-      });
-    } else if (ai === 'error') {
-      accountToasts.add({
-        title: 'AI sign-in could not be completed',
-        description: (params.get('message') || 'Please try again.').slice(0, 700),
-        type: 'error',
-        priority: 'high',
-      });
-    }
-    if (ai) {
-      consumed.current = location.key;
-      params.delete('ai');
-      params.delete('message');
-      void navigate(
-        { pathname: location.pathname, search: params.toString(), hash: location.hash },
-        { replace: true, state: location.state },
-      );
-    }
-  }, [location, navigate]);
-  return null;
-}
-
 function App() {
+  const location = useLocation();
+  const consentMatch = /^\/oauth\/consent\/([A-Za-z0-9_-]+)$/.exec(location.pathname);
+  const oauthSignIn = location.pathname === '/oauth/sign-in';
+  const oauthRoute = Boolean(consentMatch) || oauthSignIn;
   const lifetime = useSessionLifetime();
   useEffect(
     () =>
@@ -96,8 +66,7 @@ function App() {
             void queryClient.invalidateQueries(
               {
                 predicate: (query) =>
-                  query.queryKey[1] === sessionLifetime() &&
-                  !['session', 'connection'].includes(String(query.queryKey[0])),
+                  query.queryKey[1] === sessionLifetime() && query.queryKey[0] !== 'session',
               },
               { cancelRefetch: false },
             );
@@ -116,9 +85,9 @@ function App() {
     queryFn: ({ signal }) => scoped(() => rpc.account.session(undefined, { signal })),
   });
   const user = session.data?.user ?? null;
-  const workspaceQuery = useWorkspace(Boolean(user));
+  const workspaceQuery = useWorkspace(Boolean(user) && !oauthRoute);
   const workspace = workspaceQuery.data;
-  const loading = session.isPending || (Boolean(user) && workspaceQuery.isPending);
+  const loading = session.isPending || (Boolean(user) && !oauthRoute && workspaceQuery.isPending);
   const [actionError, setError] = useState('');
   const error = actionError || session.error?.message || workspaceQuery.error?.message || '';
   const [signingOut, setSigningOut] = useState(false);
@@ -183,7 +152,12 @@ function App() {
         </div>
       </main>
     );
-  if (!user) return <AccountAccess onSignedIn={loadSession} />;
+  if (!user) return <AccountAccess onSignedIn={loadSession} accountReturnTo={safeAccountReturn(location.pathname + location.search) ?? undefined} />;
+  if (consentMatch) return <DelegatedConsentScreen key={`${consentMatch[1]}:${lifetime}`} uid={consentMatch[1]} notify={(message) => accountToasts.add({ title: 'Connection failed', description: message, type: 'error' })} />;
+  if (oauthSignIn) {
+    const values = new URLSearchParams(location.search).getAll('returnTo');
+    return <OAuthSignInReturn returnTo={values.length === 1 ? values[0] : null} />;
+  }
   if (!workspace)
     return (
       <main className="standalone-loading corner-ui">
@@ -208,7 +182,6 @@ function App() {
     <CornerApp
       key={`${user.id}:${lifetime}`}
       initialSettings={workspace.settings}
-      initialRevision={workspace.revision}
       preview={false}
       displayName={user.name}
       accountEmail={user.email}
@@ -222,13 +195,16 @@ function AccountEntryPoint() {
   const location = useLocation();
   const navigate = useNavigate();
   const route = readAccountRoute(location);
+  const returnValues = new URLSearchParams(location.search).getAll('oauthReturn');
+  const accountReturnTo = returnValues.length === 1 ? safeAccountReturn(returnValues[0]) : null;
   if (route.kind !== 'default')
     return (
       <AccountAccess
         initialRoute={route}
+        accountReturnTo={accountReturnTo ?? undefined}
         onSignedIn={async () => {
           await loadSession();
-          await navigate('/', { replace: true });
+          await navigate(accountReturnTo ?? '/', { replace: true });
         }}
       />
     );
@@ -241,7 +217,6 @@ createRoot(document.getElementById('root')!).render(
       <QueryClientProvider client={queryClient}>
         <BrowserRouter>
           <Toaster toastManager={accountToasts} viewportProps={{ className: 'corner-ui' }} />
-          <ConnectionNotice />
           <AccountEntryPoint />
         </BrowserRouter>
       </QueryClientProvider>

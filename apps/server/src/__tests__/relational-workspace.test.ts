@@ -14,7 +14,6 @@ import {
   progress,
 } from '../training-queries.js';
 import { groceries } from '../grocery-queries.js';
-import { planningContext, planningHistory, proposalDependencies } from '../planning-context.js';
 import type { Recipe, FoodEntry } from '@packages/nutrition/types';
 import type { WorkoutSession } from '@packages/training/types';
 import { getWorkoutPrefill } from '@packages/training/prefill';
@@ -438,32 +437,6 @@ test('grocery aggregates span every meal and preserve sorted group continuation 
   );
   assert.deepEqual(otherWeek.checks, { '2026-10-26|rice|g': true });
   assert.deepEqual((await groceries(store.db, 'bob', { weekStart: '2026-10-19' })).items, []);
-});
-
-test('planning context and follow-up tools reject revision drift without rebasing or mixed totals', async () => {
-  await store.mutate('alice', 'context-food-first', { type: 'log.save', data: food() });
-  const context = await planningContext(store.db, 'alice', '2026-10-22');
-  assert.equal(context.context.recentHistory.nutrition[0].loggedTotals.calories, 320);
-  await store.mutate('alice', 'context-food-second', { type: 'log.save', data: food('second') });
-  await assert.rejects(
-    planningHistory(store.db, 'alice', '2026-10-22', 14, context.revision),
-    errorCode('STALE_PROPOSAL'),
-  );
-  await assert.rejects(
-    proposalDependencies(
-      store.db,
-      'alice',
-      {
-        status: 'answer',
-        title: 'Answer',
-        message: 'Keep recording.',
-        questions: [],
-        changes: [],
-      },
-      context.revision,
-    ),
-    errorCode('STALE_PROPOSAL'),
-  );
 });
 
 test('nested IDs keep session/exercise scope, optional values and ordering round-trip, and template history is independent', async () => {

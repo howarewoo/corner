@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useForm, useStore } from '@tanstack/react-form';
 import {
   Activity,
   ArrowDown,
@@ -29,18 +30,12 @@ import {
 import type { AppState, Settings } from '@packages/workspace/types';
 import type { ExerciseChoices, ExerciseHistoryPage } from '@packages/api/workspace-data';
 import { rpc, useResource, readResource, sessionLifetime } from '../rpc';
-import {
-  calendarPage,
-  requireRevision,
-  useRecordPage,
-  useCursorResource,
-} from '../features/workspace/resources';
+import { calendarPage, useRecordPage, useCursorResource } from '../features/workspace/resources';
 import { ResourceStatus, ResourcePaging } from '../features/workspace/workspace-ui';
 import type { WorkspaceMutationInput } from '@packages/api/schemas';
 import type {
   LoadType,
   TrainingCheckIn,
-  TrainingReview,
   WorkoutExercise,
   WorkoutKind,
   WorkoutSession,
@@ -110,8 +105,6 @@ type Props = {
   mutate: (mutation: WorkspaceMutationInput['mutation'], success?: string) => Promise<boolean>;
   busy: boolean;
   notify: (message: string, error?: boolean) => void;
-  onRefresh: () => void;
-  onOpenAgent: (prompt?: string) => void;
 };
 type EditorState = {
   session: WorkoutSession;
@@ -279,6 +272,70 @@ function TrainingDialog({
   );
 }
 
+type SessionFormValues = {
+  session: WorkoutSession;
+  templateDescription: string;
+  submitStatus: WorkoutStatus | null;
+  prefillEdits: Record<string, boolean>;
+};
+
+// Existing errors are form-level/native. The only per-input draft metadata is
+// explicit prefill intent, keyed by domain IDs below, never by array positions.
+const workoutRowValueOptions = { dontUpdateMeta: true, dontRunListeners: true };
+
+function sessionError(next: WorkoutSession, templateMode: boolean): string | undefined {
+  if (!next.name.trim() || !next.date) return 'Add a workout name and date.';
+  if (
+    next.exercises.some((exercise) => !exercise.name.trim() || exercise.repMax < exercise.repMin)
+  ) {
+    return 'Name each exercise and keep the top rep target at or above the bottom of the range.';
+  }
+  if (
+    !templateMode &&
+    next.exercises.some((exercise) =>
+      exercise.sets.some(
+        (set) =>
+          set.completed &&
+          (set.reps === null ||
+            set.reps <= 0 ||
+            (exercise.loadType !== 'bodyweight' && set.weight === null)),
+      ),
+    )
+  ) {
+    return 'For each checked set, enter the reps and load you actually performed. Bodyweight-only sets can leave added load blank.';
+  }
+  if (templateMode && next.kind === 'strength' && next.exercises.length === 0) {
+    return 'Add at least one exercise to a strength routine.';
+  }
+  if (
+    !templateMode &&
+    next.status === 'completed' &&
+    next.kind === 'strength' &&
+    doneSets(next) === 0 &&
+    !(next.durationMinutes && next.durationMinutes > 0)
+  ) {
+    return 'Log a completed working set or actual training minutes before completing this workout.';
+  }
+  if (
+    !templateMode &&
+    next.status === 'completed' &&
+    ['boxing', 'conditioning'].includes(next.kind) &&
+    !(next.durationMinutes && next.durationMinutes > 0)
+  ) {
+    return 'Enter the minutes you actually trained before completing this session.';
+  }
+  if (!templateMode && next.status === 'skipped' && next.changeReason.trim().length < 2) {
+    return 'Add a brief plan change or skip reason to keep your training history clear.';
+  }
+  if (
+    !templateMode &&
+    next.status === 'skipped' &&
+    next.exercises.some((exercise) => exercise.sets.some((set) => set.completed))
+  ) {
+    return 'This session has completed sets. Save it as a partial completed workout, or clear those checks before skipping.';
+  }
+}
+
 function SessionEditor({
   editor,
   history,
@@ -295,18 +352,58 @@ function SessionEditor({
   onSaveTemplate: (template: WorkoutTemplate) => Promise<boolean>;
 }) {
   const formRef = useRef<HTMLFormElement>(null);
-  const [draft, setDraft] = useState<WorkoutSession>(() => structuredClone(editor.session));
-  const [error, setError] = useState('');
-  const [templateDescription, setTemplateDescription] = useState(
-    editor.template?.description ?? '',
+  const templateMode = Boolean(editor.template);
+  const defaultValues = useMemo<SessionFormValues>(
+    () => ({
+      session: structuredClone(editor.session),
+      templateDescription: editor.template?.description ?? '',
+      submitStatus: null,
+      prefillEdits: {},
+    }),
+    [editor],
   );
+  const form = useForm({
+    defaultValues,
+    validators: {
+      onSubmit: ({ value }) =>
+        sessionError(
+          {
+            ...value.session,
+            status: value.submitStatus ?? value.session.status,
+          },
+          templateMode,
+        ),
+    },
+    onSubmit: async ({ value }) => {
+      if (busy) return;
+      const next = {
+        ...value.session,
+        status: value.submitStatus ?? value.session.status,
+        updatedAt: new Date().toISOString(),
+      };
+      if (templateMode) {
+        const template: WorkoutTemplate = {
+          ...editor.template!,
+          name: next.name,
+          kind: next.kind,
+          description: value.templateDescription,
+          durationMinutes: next.plannedMinutes,
+          exercises: next.exercises.map(({ sets: _sets, ...target }) => target),
+          updatedAt: new Date().toISOString(),
+        };
+        if (await onSaveTemplate(template)) onClose();
+      } else if (await onSave(next, editor.expectedUpdatedAt)) onClose();
+    },
+  });
+  const values = useStore(form.store, (state) => state.values);
+  const draft = values.session;
+  const error = useStore(form.store, (state) => state.errorMap.onSubmit);
+  const submitting = useStore(form.store, (state) => state.isSubmitting);
   const [restEnd, setRestEnd] = useState<number | null>(null);
   const [remaining, setRemaining] = useState(0);
   const [pickerTarget, setPickerTarget] = useState<string | null>(null);
   const [focusExerciseId, setFocusExerciseId] = useState<string | null>(null);
-  const [editedFields, setEditedFields] = useState<Record<string, boolean>>({});
   const [openTargets, setOpenTargets] = useState<Record<string, boolean>>({});
-  const templateMode = Boolean(editor.template);
   const prefillContext = {
     id: draft.id,
     date: draft.date,
@@ -335,47 +432,58 @@ function SessionEditor({
     () => (templateMode || !prefillHistory ? {} : getWorkoutPrefill(draft, prefillHistory)),
     [draft, prefillHistory, templateMode],
   );
-  const patch = (values: Partial<WorkoutSession>) =>
-    setDraft((current) => ({ ...current, ...values }));
-  const changeUnit = (unit: 'lb' | 'kg') =>
-    setDraft((current) => {
-      if (current.unit === unit) return current;
-      const factor = unit === 'kg' ? 0.45359237 : 1 / 0.45359237;
-      return {
-        ...current,
-        unit,
-        exercises: current.exercises.map((exercise) => ({
+  const patch = (updates: Partial<Omit<WorkoutSession, 'exercises'>>) => {
+    for (const key of Object.keys(updates) as (keyof typeof updates)[]) {
+      form.setFieldValue(`session.${key}`, updates[key]);
+    }
+  };
+  const changeUnit = (unit: 'lb' | 'kg') => {
+    if (draft.unit === unit) return;
+    const factor = unit === 'kg' ? 0.45359237 : 1 / 0.45359237;
+    form.setFieldValue('session.unit', unit);
+    form.setFieldValue(
+      'session.exercises',
+      (exercises) =>
+        exercises.map((exercise) => ({
           ...exercise,
           sets: exercise.sets.map((set) => ({
             ...set,
             weight: set.weight === null ? null : Number((set.weight * factor).toFixed(3)),
           })),
         })),
-      };
-    });
-  const changeExercise = (id: string, values: Partial<WorkoutExercise>) =>
-    setDraft((current) => ({
-      ...current,
-      exercises: current.exercises.map((exercise) =>
-        exercise.id === id ? { ...exercise, ...values } : exercise,
-      ),
-    }));
-  const changeSet = (exerciseId: string, setId: string, values: Partial<WorkoutSet>) =>
-    setDraft((current) => ({
-      ...current,
-      status: values.completed && current.status === 'planned' ? 'in_progress' : current.status,
-      exercises: current.exercises.map((exercise) =>
-        exercise.id === exerciseId
-          ? {
-              ...exercise,
-              sets: exercise.sets.map((set) => (set.id === setId ? { ...set, ...values } : set)),
-            }
-          : exercise,
-      ),
-    }));
+      workoutRowValueOptions,
+    );
+  };
+  const changeExercise = (id: string, updates: Partial<Omit<WorkoutExercise, 'sets'>>) => {
+    const index = form.state.values.session.exercises.findIndex((exercise) => exercise.id === id);
+    form.setFieldValue(
+      `session.exercises[${index}]`,
+      (exercise) => ({
+        ...exercise,
+        ...updates,
+      }),
+      workoutRowValueOptions,
+    );
+  };
+  const changeSet = (exerciseId: string, setId: string, updates: Partial<WorkoutSet>) => {
+    const current = form.state.values.session;
+    const exerciseIndex = current.exercises.findIndex((exercise) => exercise.id === exerciseId);
+    const setIndex = current.exercises[exerciseIndex].sets.findIndex((set) => set.id === setId);
+    if (updates.completed && current.status === 'planned') {
+      form.setFieldValue('session.status', 'in_progress');
+    }
+    form.setFieldValue(
+      `session.exercises[${exerciseIndex}].sets[${setIndex}]`,
+      (set) => ({
+        ...set,
+        ...updates,
+      }),
+      workoutRowValueOptions,
+    );
+  };
   const setValue = (exercise: WorkoutExercise, set: WorkoutSet, field: 'weight' | 'reps' | 'rir') =>
     set[field] ??
-    (editedFields[`${exercise.id}:${set.id}:${field}`]
+    (values.prefillEdits[JSON.stringify([exercise.id, set.id, field])]
       ? null
       : (prefills[exercise.id]?.[set.id]?.[field] ?? null));
   const editSetValue = (
@@ -384,7 +492,10 @@ function SessionEditor({
     field: 'weight' | 'reps' | 'rir',
     value: string,
   ) => {
-    setEditedFields((current) => ({ ...current, [`${exercise.id}:${set.id}:${field}`]: true }));
+    form.setFieldValue('prefillEdits', (edits) => ({
+      ...edits,
+      [JSON.stringify([exercise.id, set.id, field])]: true,
+    }));
     changeSet(exercise.id, set.id, { [field]: nullableNumber(value) });
   };
   const confirmSet = (exercise: WorkoutExercise, set: WorkoutSet, completed: boolean) =>
@@ -429,11 +540,13 @@ function SessionEditor({
       catalogId: entry?.id,
       loadType,
     };
-    patch({
-      exercises: previous
-        ? draft.exercises.map((item) => (item.id === previous.id ? exercise : item))
-        : [...draft.exercises, exercise],
-    });
+    if (previous) {
+      const index = draft.exercises.findIndex((item) => item.id === previous.id);
+      // Replacement receives fresh domain IDs and therefore fresh prefill intent.
+      form.setFieldValue(`session.exercises[${index}]`, exercise, workoutRowValueOptions);
+    } else {
+      form.pushFieldValue('session.exercises', exercise, workoutRowValueOptions);
+    }
     setPickerTarget(null);
     setFocusExerciseId(exercise.id);
   };
@@ -455,99 +568,12 @@ function SessionEditor({
     const timer = setInterval(update, 500);
     return () => clearInterval(timer);
   }, [restEnd]);
-  const moveExercise = (index: number, direction: number) =>
-    setDraft((current) => {
-      const exercises = [...current.exercises];
-      [exercises[index], exercises[index + direction]] = [
-        exercises[index + direction],
-        exercises[index],
-      ];
-      return { ...current, exercises };
-    });
-  const save = async (status?: WorkoutStatus) => {
-    setError('');
+  const save = async (status: WorkoutStatus | null = null) => {
+    if (busy || form.state.isSubmitting) return;
+    form.setFieldValue('submitStatus', status, { dontUpdateMeta: true });
+    form.setErrorMap({ onSubmit: undefined });
     if (!formRef.current?.reportValidity()) return;
-    const next = { ...draft, status: status ?? draft.status, updatedAt: new Date().toISOString() };
-    if (!next.name.trim() || !next.date) {
-      setError('Add a workout name and date.');
-      return;
-    }
-    if (
-      next.exercises.some((exercise) => !exercise.name.trim() || exercise.repMax < exercise.repMin)
-    ) {
-      setError(
-        'Name each exercise and keep the top rep target at or above the bottom of the range.',
-      );
-      return;
-    }
-    if (
-      !templateMode &&
-      next.exercises.some((exercise) =>
-        exercise.sets.some(
-          (set) =>
-            set.completed &&
-            (set.reps === null ||
-              set.reps <= 0 ||
-              (exercise.loadType !== 'bodyweight' && set.weight === null)),
-        ),
-      )
-    ) {
-      setError(
-        'For each checked set, enter the reps and load you actually performed. Bodyweight-only sets can leave added load blank.',
-      );
-      return;
-    }
-    if (templateMode && next.kind === 'strength' && next.exercises.length === 0) {
-      setError('Add at least one exercise to a strength routine.');
-      return;
-    }
-    if (
-      !templateMode &&
-      next.status === 'completed' &&
-      next.kind === 'strength' &&
-      doneSets(next) === 0 &&
-      !(next.durationMinutes && next.durationMinutes > 0)
-    ) {
-      setError(
-        'Log a completed working set or actual training minutes before completing this workout.',
-      );
-      return;
-    }
-    if (
-      !templateMode &&
-      next.status === 'completed' &&
-      ['boxing', 'conditioning'].includes(next.kind) &&
-      !(next.durationMinutes && next.durationMinutes > 0)
-    ) {
-      setError('Enter the minutes you actually trained before completing this session.');
-      return;
-    }
-    if (!templateMode && next.status === 'skipped' && next.changeReason.trim().length < 2) {
-      setError('Add a brief plan change or skip reason so the next review has context.');
-      return;
-    }
-    if (
-      !templateMode &&
-      next.status === 'skipped' &&
-      next.exercises.some((exercise) => exercise.sets.some((set) => set.completed))
-    ) {
-      setError(
-        'This session has completed sets. Save it as a partial completed workout, or clear those checks before skipping.',
-      );
-      return;
-    }
-    if (templateMode) {
-      const template: WorkoutTemplate = {
-        ...editor.template!,
-        name: next.name,
-        kind: next.kind,
-        description: templateDescription,
-        durationMinutes: next.plannedMinutes,
-        exercises: next.exercises.map(({ sets: _sets, ...target }) => target),
-        updatedAt: new Date().toISOString(),
-      };
-      if (await onSaveTemplate(template)) onClose();
-    } else if (await onSave(next, editor.expectedUpdatedAt)) onClose();
+    await form.handleSubmit();
   };
 
   return (
@@ -658,8 +684,8 @@ function SessionEditor({
             <Textarea
               rows={3}
               maxLength={2000}
-              value={templateDescription}
-              onChange={(event) => setTemplateDescription(event.target.value)}
+              value={values.templateDescription}
+              onChange={(event) => form.setFieldValue('templateDescription', event.target.value)}
             />
           </FormField>
         ) : (
@@ -690,23 +716,35 @@ function SessionEditor({
                   <IconAction
                     label={`Move ${exercise.name || 'exercise'} up`}
                     disabled={index === 0}
-                    onClick={() => moveExercise(index, -1)}
+                    onClick={() =>
+                      form.moveFieldValues(
+                        'session.exercises',
+                        index,
+                        index - 1,
+                        workoutRowValueOptions,
+                      )
+                    }
                   >
                     <ArrowUp size={16} />
                   </IconAction>
                   <IconAction
                     label={`Move ${exercise.name || 'exercise'} down`}
                     disabled={index === draft.exercises.length - 1}
-                    onClick={() => moveExercise(index, 1)}
+                    onClick={() =>
+                      form.moveFieldValues(
+                        'session.exercises',
+                        index,
+                        index + 1,
+                        workoutRowValueOptions,
+                      )
+                    }
                   >
                     <ArrowDown size={16} />
                   </IconAction>
                   <IconAction
                     label={`Remove ${exercise.name || 'exercise'}`}
                     onClick={() =>
-                      patch({
-                        exercises: draft.exercises.filter((item) => item.id !== exercise.id),
-                      })
+                      void form.removeFieldValue('session.exercises', index, workoutRowValueOptions)
                     }
                   >
                     <Trash2 size={17} />
@@ -1014,9 +1052,11 @@ function SessionEditor({
                               <IconAction
                                 label={`Remove ${exercise.name} set ${setIndex + 1}`}
                                 onClick={() =>
-                                  changeExercise(exercise.id, {
-                                    sets: exercise.sets.filter((item) => item.id !== set.id),
-                                  })
+                                  void form.removeFieldValue(
+                                    `session.exercises[${index}].sets`,
+                                    setIndex,
+                                    workoutRowValueOptions,
+                                  )
                                 }
                               >
                                 <X size={16} />
@@ -1034,7 +1074,11 @@ function SessionEditor({
                       size="sm"
                       disabled={exercise.sets.length >= 30}
                       onClick={() =>
-                        changeExercise(exercise.id, { sets: [...exercise.sets, blankSet()] })
+                        form.pushFieldValue(
+                          `session.exercises[${index}].sets`,
+                          blankSet(),
+                          workoutRowValueOptions,
+                        )
                       }
                     >
                       <Plus size={15} />
@@ -1150,7 +1194,7 @@ function SessionEditor({
               </FormField>
               <FormField
                 label="Plan change or skip reason"
-                hint="Useful context for your next review."
+                hint="Keep useful context with your training history."
               >
                 <Input
                   maxLength={1500}
@@ -1170,13 +1214,13 @@ function SessionEditor({
         <div className="workout-editor-footer">
           {!templateMode && <span>{doneSets(draft)} working sets checked</span>}
           <div className="button-row">
-            <Button type="button" variant="ghost" onClick={onClose} disabled={busy}>
+            <Button type="button" variant="ghost" onClick={onClose} disabled={busy || submitting}>
               Cancel
             </Button>
             <Button
               type="submit"
               variant={templateMode || draft.status === 'completed' ? 'default' : 'outline'}
-              disabled={busy}
+              disabled={busy || submitting}
             >
               {busy ? <Loader2 className="spin" size={16} /> : <Check size={16} />}
               {templateMode ? 'Save routine' : 'Save workout'}
@@ -1185,7 +1229,7 @@ function SessionEditor({
               <Button
                 type="button"
                 variant="default"
-                disabled={busy}
+                disabled={busy || submitting}
                 onClick={() => void save('completed')}
               >
                 <CheckCircle2 size={16} />
@@ -1211,6 +1255,98 @@ function SessionEditor({
   );
 }
 
+function SkipSessionEditor({
+  session,
+  busy,
+  onClose,
+  onSave,
+}: {
+  session: WorkoutSession;
+  busy: boolean;
+  onClose: () => void;
+  onSave: (session: WorkoutSession, expectedUpdatedAt: string | null) => Promise<boolean>;
+}) {
+  const formRef = useRef<HTMLFormElement>(null);
+  const form = useForm({
+    defaultValues: { reason: '' },
+    validators: {
+      onSubmit: ({ value }) => {
+        if (value.reason.trim().length < 2) {
+          return 'Add a brief plan change or skip reason to keep your training history clear.';
+        }
+        if (session.exercises.some((exercise) => exercise.sets.some((set) => set.completed))) {
+          return 'This session has completed sets. Save it as a partial completed workout, or clear those checks before skipping.';
+        }
+        return undefined;
+      },
+    },
+    onSubmit: async ({ value }) => {
+      if (busy) return;
+      if (
+        await onSave(
+          {
+            ...session,
+            status: 'skipped',
+            changeReason: value.reason,
+            updatedAt: new Date().toISOString(),
+          },
+          session.updatedAt,
+        )
+      )
+        onClose();
+    },
+  });
+  const error = useStore(form.store, (state) => state.errorMap.onSubmit);
+  const submitting = useStore(form.store, (state) => state.isSubmitting);
+  return (
+    <TrainingDialog title={`Skip ${session.name}`} onClose={onClose}>
+      <form
+        ref={formRef}
+        className="dialog-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (busy || form.state.isSubmitting || !formRef.current?.reportValidity()) return;
+          void form.handleSubmit();
+        }}
+      >
+        <p className="training-help">
+          A skipped session stays in your plan so your training history retains the full picture.
+        </p>
+        <form.Field name="reason">
+          {(field) => (
+            <FormField label="What changed?">
+              <Textarea
+                rows={3}
+                required
+                minLength={2}
+                maxLength={1500}
+                value={field.state.value}
+                onChange={(event) => field.handleChange(event.target.value)}
+                onBlur={field.handleBlur}
+                placeholder="Busy day, fatigue, travel…"
+              />
+            </FormField>
+          )}
+        </form.Field>
+        {error && (
+          <Alert variant="destructive">
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        )}
+        <div className="form-footer">
+          <Button type="button" variant="ghost" onClick={onClose}>
+            Keep workout
+          </Button>
+          <Button type="submit" variant="default" disabled={busy || submitting}>
+            <SkipForward size={16} />
+            Mark skipped
+          </Button>
+        </div>
+      </form>
+    </TrainingDialog>
+  );
+}
+
 function CheckInEditor({
   initial,
   selectedDate,
@@ -1224,42 +1360,60 @@ function CheckInEditor({
   onClose: () => void;
   onSave: (checkIn: TrainingCheckIn) => Promise<boolean>;
 }) {
-  const [draft, setDraft] = useState<TrainingCheckIn>(() =>
-    initial
-      ? structuredClone(initial)
-      : {
-          id: uid(),
-          date: selectedDate,
-          bodyWeight: null,
-          waist: null,
-          sleepHours: null,
-          energy: null,
-          soreness: null,
-          boxingQuality: null,
-          notes: '',
-        },
+  const formRef = useRef<HTMLFormElement>(null);
+  const defaultValues = useMemo<TrainingCheckIn>(
+    () =>
+      initial
+        ? structuredClone(initial)
+        : {
+            id: uid(),
+            date: selectedDate,
+            bodyWeight: null,
+            waist: null,
+            sleepHours: null,
+            energy: null,
+            soreness: null,
+            boxingQuality: null,
+            notes: '',
+          },
+    [initial, selectedDate],
   );
-  const [error, setError] = useState('');
-  const patch = (values: Partial<TrainingCheckIn>) =>
-    setDraft((current) => ({ ...current, ...values }));
-  const submit = async (event: FormEvent) => {
-    event.preventDefault();
-    if (
-      !draft.notes.trim() &&
-      ['bodyWeight', 'waist', 'sleepHours', 'energy', 'soreness', 'boxingQuality'].every(
-        (key) => draft[key as keyof TrainingCheckIn] === null,
-      )
-    ) {
-      setError('Add at least one measurement, rating, or note.');
-      return;
+  const form = useForm({
+    defaultValues,
+    validators: {
+      onSubmit: ({ value }) =>
+        !value.notes.trim() &&
+        ['bodyWeight', 'waist', 'sleepHours', 'energy', 'soreness', 'boxingQuality'].every(
+          (key) => value[key as keyof TrainingCheckIn] === null,
+        )
+          ? 'Add at least one measurement, rating, or note.'
+          : undefined,
+    },
+    onSubmit: async ({ value }) => {
+      if (!busy && (await onSave(value))) onClose();
+    },
+  });
+  const draft = useStore(form.store, (state) => state.values);
+  const error = useStore(form.store, (state) => state.errorMap.onSubmit);
+  const submitting = useStore(form.store, (state) => state.isSubmitting);
+  const patch = (updates: Partial<TrainingCheckIn>) => {
+    for (const key of Object.keys(updates) as (keyof typeof updates)[]) {
+      form.setFieldValue(key, updates[key] as TrainingCheckIn[typeof key]);
     }
-    if (await onSave(draft)) onClose();
   };
   return (
     <TrainingDialog title={initial ? 'Edit check-in' : 'Quick check-in'} onClose={onClose}>
-      <form className="dialog-form" onSubmit={submit}>
+      <form
+        ref={formRef}
+        className="dialog-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (busy || form.state.isSubmitting || !formRef.current?.reportValidity()) return;
+          void form.handleSubmit();
+        }}
+      >
         <p className="training-help">
-          A few consistent observations make reviews more useful. Every field is optional except the
+          A few consistent observations help you track progress. Every field is optional except the
           date.
         </p>
         <FormField label="Date">
@@ -1346,202 +1500,12 @@ function CheckInEditor({
           <Button type="button" variant="ghost" onClick={onClose}>
             Cancel
           </Button>
-          <Button type="submit" variant="default" disabled={busy}>
+          <Button type="submit" variant="default" disabled={busy || submitting}>
             {busy ? <Loader2 className="spin" size={16} /> : <Check size={16} />}Save check-in
           </Button>
         </div>
       </form>
     </TrainingDialog>
-  );
-}
-
-function ReviewCard({
-  review,
-  sessions,
-  busy,
-  mutate,
-}: {
-  review: TrainingReview;
-  sessions: WorkoutSession[];
-  busy: boolean;
-  mutate: Props['mutate'];
-}) {
-  const actionable = review.status === 'proposed' && review.changes.length > 0;
-  const stale =
-    actionable &&
-    review.changes.some((change) => {
-      const current = sessions.find((session) => session.id === change.session.id);
-      return (
-        (current?.updatedAt ?? null) !== change.expectedUpdatedAt ||
-        Boolean(current && !['planned', 'skipped'].includes(current.status))
-      );
-    });
-  const exercises = (session: WorkoutSession) =>
-    session.exercises.length ? (
-      <ul>
-        {session.exercises.map((exercise) => (
-          <li key={exercise.id}>
-            <b>{exercise.name}</b>
-            <span>
-              {exercise.targetSets} × {exercise.repMin}–{exercise.repMax} ·{' '}
-              {exercise.targetRir === null ? 'RIR not set' : `${exercise.targetRir} RIR`} ·{' '}
-              {exercise.restSeconds}s rest
-            </span>
-            <small>
-              {loadLabels[exercise.loadType]}
-              {exercise.notes ? ` · ${exercise.notes}` : ''}
-            </small>
-          </li>
-        ))}
-      </ul>
-    ) : (
-      <p>{session.notes || kindLabels[session.kind]}</p>
-    );
-
-  return (
-    <Card className="panel coach-review">
-      <div className="coach-review-heading">
-        <div>
-          <span className="training-eyebrow">
-            {new Date(review.createdAt).toLocaleDateString('en-US', {
-              month: 'short',
-              day: 'numeric',
-            })}{' '}
-            · Saved review
-          </span>
-          <h3>{review.title}</h3>
-        </div>
-        <Badge
-          variant={review.status === 'applied' ? 'default' : 'secondary'}
-          className={`training-status training-status-${review.status === 'applied' ? 'completed' : review.status === 'dismissed' ? 'skipped' : 'planned'}`}
-        >
-          {review.status === 'proposed' && !review.changes.length
-            ? 'Analysis'
-            : review.status === 'proposed'
-              ? 'For review'
-              : review.status === 'applied'
-                ? 'Applied'
-                : 'Dismissed'}
-        </Badge>
-      </div>
-      <div className="coach-review-summary">{review.summary}</div>
-      {review.changes.length > 0 && (
-        <div className="coach-changes">
-          <h4>{review.status === 'applied' ? 'Applied plan changes' : 'Proposed plan changes'}</h4>
-          {review.changes.map((change, index) => {
-            const previous = sessions.find((session) => session.id === change.session.id);
-            const next = change.session;
-            return (
-              <div className="coach-change" key={`${next.id}-${index}`}>
-                <h5>{next.name}</h5>
-                <div
-                  className={`coach-change-comparison ${review.status !== 'proposed' ? 'coach-change-saved' : ''}`}
-                >
-                  {review.status === 'proposed' && (
-                    <>
-                      <div>
-                        <span>Current</span>
-                        <p>
-                          {previous
-                            ? `${todayLabel(previous.date, { weekday: 'short', month: 'short', day: 'numeric' })} · ${previous.plannedMinutes} min`
-                            : 'New session'}
-                        </p>
-                        {previous && (
-                          <small>
-                            {previous.exercises.reduce(
-                              (sum, exercise) => sum + exercise.targetSets,
-                              0,
-                            )}{' '}
-                            planned sets · {statusLabels[previous.status]}
-                          </small>
-                        )}
-                      </div>
-                      <ArrowRight size={17} />
-                    </>
-                  )}
-                  <div>
-                    <span>{review.status === 'applied' ? 'Saved change' : 'Proposed'}</span>
-                    <p>
-                      {todayLabel(next.date, { weekday: 'short', month: 'short', day: 'numeric' })}{' '}
-                      · {next.plannedMinutes} min
-                    </p>
-                    <small>
-                      {next.exercises.reduce((sum, exercise) => sum + exercise.targetSets, 0)}{' '}
-                      planned sets · {statusLabels[next.status]}
-                    </small>
-                  </div>
-                </div>
-                <p className="coach-change-reason">{change.reason}</p>
-                <Collapsible className="coach-change-details">
-                  <CollapsibleTrigger className="coach-change-summary">
-                    <ChevronDown size={14} />
-                    {review.status === 'proposed' && previous
-                      ? 'Compare exercises and targets'
-                      : 'See exercises and targets'}
-                  </CollapsibleTrigger>
-                  <CollapsibleContent>
-                    {review.status === 'proposed' && previous && (
-                      <div className="coach-exercise-comparison">
-                        <h6>Current · {previous.name}</h6>
-                        {exercises(previous)}
-                      </div>
-                    )}
-                    <div className="coach-exercise-comparison">
-                      <h6>
-                        {review.status === 'applied' ? 'Saved change' : 'Proposed'} · {next.name}
-                      </h6>
-                      {exercises(next)}
-                    </div>
-                    {next.notes && next.exercises.length > 0 && <p>{next.notes}</p>}
-                  </CollapsibleContent>
-                </Collapsible>
-              </div>
-            );
-          })}
-        </div>
-      )}
-      {stale && (
-        <Alert variant="warning" className="coach-stale-note">
-          <AlertDescription>
-            Your plan changed after this review. Ask your agent for an updated proposal before
-            applying it.
-          </AlertDescription>
-        </Alert>
-      )}
-      {review.status === 'proposed' && (
-        <div className="coach-review-actions">
-          {actionable && (
-            <Button
-              type="button"
-              variant="default"
-              disabled={busy || stale}
-              onClick={() =>
-                void mutate(
-                  { type: 'training.review.apply', data: { id: review.id } },
-                  'Training plan updated',
-                )
-              }
-            >
-              <Check size={16} />
-              Apply {review.changes.length === 1 ? 'change' : `${review.changes.length} changes`}
-            </Button>
-          )}
-          <Button
-            type="button"
-            variant="ghost"
-            disabled={busy}
-            onClick={() =>
-              void mutate(
-                { type: 'training.review.dismiss', data: { id: review.id } },
-                'Review archived',
-              )
-            }
-          >
-            {actionable ? 'Dismiss' : 'Archive review'}
-          </Button>
-        </div>
-      )}
-    </Card>
   );
 }
 
@@ -1553,17 +1517,14 @@ export default function TrainingPanel({
   mutate,
   busy,
   notify,
-  onRefresh,
-  onOpenAgent,
 }: Props) {
   const generation = useRef(sessionLifetime()).current;
-  const [tab, setTab] = useState<'week' | 'progress' | 'coach'>('week');
+  const [tab, setTab] = useState<'week' | 'progress'>('week');
   const [editor, setEditor] = useState<EditorState | null>(null);
   const [showChooser, setShowChooser] = useState(false);
   const [manageTemplates, setManageTemplates] = useState(false);
   const [checkIn, setCheckIn] = useState<TrainingCheckIn | 'new' | null>(null);
   const [skipSession, setSkipSession] = useState<WorkoutSession | null>(null);
-  const [skipReason, setSkipReason] = useState('');
   const [exerciseName, setExerciseName] = useState('');
   const days = weekDates(selectedDate);
   const weekStart = days[0],
@@ -1589,14 +1550,6 @@ export default function TrainingPanel({
   const checkInPage = useRecordPage(
     { resource: 'checkIns', order: 'recent', limit: 3 },
     !state && tab === 'progress',
-  );
-  const reviewPage = useRecordPage(
-    { resource: 'reviews', order: 'recent', limit: 12 },
-    !state && tab === 'coach',
-  );
-  const requestPage = useRecordPage(
-    { resource: 'trainingRequests', order: 'recent', limit: 20 },
-    !state && tab === 'coach',
   );
   const [templateSearch, setTemplateSearch] = useState('');
   const templatePage = useRecordPage(
@@ -1662,43 +1615,7 @@ export default function TrainingPanel({
       })
     : (progress.data?.weekly ?? []).map((week) => ({ start: week.week, stats: week.stats }));
   const peakSessions = Math.max(1, ...fourWeeks.map((week) => week.stats.sessions));
-  const reviews = state
-    ? [...state.training.reviews].sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-    : (reviewPage.data?.items ?? []);
   const templates = state?.training.templates ?? templatePage.data?.items ?? [];
-  const requests = state
-    ? [...state.training.requests].reverse().slice(0, 20)
-    : (requestPage.data?.items ?? []);
-  const reviewIds = [
-    ...new Set(reviews.flatMap((review) => review.changes.map((change) => change.session.id))),
-  ];
-  const reviewContext = useResource(
-    'details',
-    { sessionIds: reviewIds, revision: reviewPage.data?.revision },
-    async (signal) => {
-      const sessions: WorkoutSession[] = [];
-      let revision = reviewPage.data!.revision;
-      for (let index = 0; index < reviewIds.length; index += 25) {
-        const details = await rpc.workspace.details(
-          { sessionIds: reviewIds.slice(index, index + 25) },
-          { signal },
-        );
-        requireRevision(revision, details.revision);
-        sessions.push(...details.sessions);
-      }
-      return { revision, sessions };
-    },
-    !state && tab === 'coach' && Boolean(reviewPage.data),
-  );
-  const reviewSessions = state?.training.sessions ?? reviewContext.data?.sessions ?? [];
-  const reviewReady = Boolean(
-    state ||
-    (reviewPage.data &&
-      reviewContext.data &&
-      reviewPage.data.revision === reviewContext.data.revision &&
-      !reviewPage.isError &&
-      !reviewContext.isError),
-  );
   const openSession = (session: WorkoutSession) =>
     setEditor({ session: structuredClone(session), expectedUpdatedAt: session.updatedAt });
   const openSessionId = async (id: string) => {
@@ -1792,19 +1709,9 @@ export default function TrainingPanel({
       { type: 'training.session.save', data: { session, expectedUpdatedAt } },
       session.status === 'completed' ? 'Workout logged' : 'Workout saved',
     );
-  const askAbout = (session: WorkoutSession) =>
-    onOpenAgent(`Help me adapt ${session.name} on ${session.date}. Workout ID: ${session.id}. `);
   const activeQueries =
-    tab === 'week'
-      ? [calendar]
-      : tab === 'progress'
-        ? [calendar, progress, completedPage, checkInPage]
-        : [calendar, reviewPage, requestPage, reviewContext];
-  const activeError =
-    activeQueries.find((query) => query.isError)?.error ??
-    (tab === 'coach' && reviewPage.data && reviewContext.data && !reviewReady
-      ? new Error('Your data changed while loading. Please retry.')
-      : null);
+    tab === 'week' ? [calendar] : [calendar, progress, completedPage, checkInPage];
+  const activeError = activeQueries.find((query) => query.isError)?.error;
   if (!state && (activeError || activeQueries.some((query) => !query.data)))
     return (
       <ResourceStatus
@@ -1816,9 +1723,6 @@ export default function TrainingPanel({
           completedPage.reload();
           checkInPage.reload();
           choices.reload();
-          reviewPage.reload();
-          requestPage.reload();
-          void reviewContext.refetch();
         }}
       />
     );
@@ -1865,7 +1769,7 @@ export default function TrainingPanel({
       <Tabs
         value={tab}
         onValueChange={(val) => {
-          if (val) setTab(val as 'week' | 'progress' | 'coach');
+          if (val) setTab(val as 'week' | 'progress');
         }}
       >
         <div className="training-toolbar">
@@ -1877,13 +1781,6 @@ export default function TrainingPanel({
             <TabsTrigger value="progress" id="training-tab-progress">
               <TrendingUp size={17} />
               Progress
-            </TabsTrigger>
-            <TabsTrigger value="coach" id="training-tab-coach">
-              <Sparkles size={17} />
-              Coach
-              {reviews.some((review) => review.status === 'proposed') && (
-                <span className="training-unread-dot" aria-label="New review" />
-              )}
             </TabsTrigger>
           </TabsList>
           <Button type="button" variant="ghost" size="sm" onClick={() => onDateChange(today)}>
@@ -2060,24 +1957,12 @@ export default function TrainingPanel({
                             Move / edit
                           </Button>
                         )}
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => askAbout(session)}
-                        >
-                          <Sparkles size={16} />
-                          Adapt
-                        </Button>
                         {session.status === 'planned' && (
                           <Button
                             type="button"
                             variant="ghost"
                             size="sm"
-                            onClick={() => {
-                              setSkipSession(session);
-                              setSkipReason('');
-                            }}
+                            onClick={() => setSkipSession(session)}
                           >
                             <SkipForward size={16} />
                             Skip
@@ -2134,23 +2019,6 @@ export default function TrainingPanel({
                   onClick={() => setManageTemplates(true)}
                 >
                   Manage routines <ArrowRight size={16} />
-                </Button>
-              </section>
-              <section className="training-coach-nudge">
-                <Sparkles size={20} />
-                <h3>Life changed the plan?</h3>
-                <p>
-                  Tell your agent what changed. Review a practical adjustment using your profile,
-                  saved workouts, and results.
-                </p>
-                <Button
-                  type="button"
-                  variant="link"
-                  size="sm"
-                  className="inline-link p-0 h-auto font-medium"
-                  onClick={() => onOpenAgent()}
-                >
-                  Open my agent <ArrowRight size={16} />
                 </Button>
               </section>
             </aside>
@@ -2376,73 +2244,6 @@ export default function TrainingPanel({
             {!state && <ResourcePaging {...completedPage.paging} />}
           </Card>
         </TabsContent>
-
-        <TabsContent value="coach" id="training-panel-coach">
-          <div className="onboarding-nudge">
-            <div>
-              <h2>A useful next step.</h2>
-              <p>
-                Ask your independent agent to build a routine, adapt a session, or review your
-                progress.
-              </p>
-            </div>
-            <Button
-              type="button"
-              variant="default"
-              onClick={() =>
-                onOpenAgent(
-                  'Review my saved training and suggest a practical next step based on my goals.',
-                )
-              }
-            >
-              <Sparkles size={16} />
-              Open my agent
-            </Button>
-          </div>
-          {reviewReady && reviews.length > 0 && (
-            <>
-              <div className="section-heading">
-                <h2>Saved training reviews</h2>
-                <span>{reviews.length}</span>
-              </div>
-              <div className="coach-reviews">
-                {reviews.slice(0, 12).map((review) => (
-                  <ReviewCard
-                    key={review.id}
-                    review={review}
-                    sessions={reviewSessions}
-                    busy={busy}
-                    mutate={mutate}
-                  />
-                ))}
-              </div>
-            </>
-          )}
-          {!state && <ResourcePaging {...reviewPage.paging} />}
-          {requests.length > 0 && (
-            <section className="profile-section">
-              <h2>Saved coaching notes</h2>
-              {requests.map((request) => (
-                <div key={request.id}>
-                  <small>
-                    {request.date} · {request.status}
-                  </small>
-                  <p>{request.prompt}</p>
-                  <Button
-                    type="button"
-                    variant="link"
-                    size="sm"
-                    className="inline-link p-0 h-auto font-medium"
-                    onClick={() => onOpenAgent(request.prompt)}
-                  >
-                    Use in a new request <ArrowRight size={15} />
-                  </Button>
-                </div>
-              ))}
-            </section>
-          )}
-          {!state && <ResourcePaging {...requestPage.paging} />}
-        </TabsContent>
       </Tabs>
 
       {showChooser && (
@@ -2586,50 +2387,13 @@ export default function TrainingPanel({
       )}
 
       {skipSession && (
-        <TrainingDialog title={`Skip ${skipSession.name}`} onClose={() => setSkipSession(null)}>
-          <form
-            className="dialog-form"
-            onSubmit={async (event) => {
-              event.preventDefault();
-              if (
-                await saveSession(
-                  {
-                    ...skipSession,
-                    status: 'skipped',
-                    changeReason: skipReason,
-                    updatedAt: new Date().toISOString(),
-                  },
-                  skipSession.updatedAt,
-                )
-              )
-                setSkipSession(null);
-            }}
-          >
-            <p className="training-help">
-              A skipped session stays in your plan so a future review has the full picture.
-            </p>
-            <FormField label="What changed?">
-              <Textarea
-                rows={3}
-                required
-                minLength={2}
-                maxLength={1500}
-                value={skipReason}
-                onChange={(event) => setSkipReason(event.target.value)}
-                placeholder="Busy day, fatigue, travel…"
-              />
-            </FormField>
-            <div className="form-footer">
-              <Button type="button" variant="ghost" onClick={() => setSkipSession(null)}>
-                Keep workout
-              </Button>
-              <Button type="submit" variant="default" disabled={busy}>
-                <SkipForward size={16} />
-                Mark skipped
-              </Button>
-            </div>
-          </form>
-        </TrainingDialog>
+        <SkipSessionEditor
+          key={skipSession.id}
+          session={skipSession}
+          busy={busy}
+          onClose={() => setSkipSession(null)}
+          onSave={saveSession}
+        />
       )}
     </div>
   );

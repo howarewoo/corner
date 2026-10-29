@@ -52,12 +52,32 @@ test('storage transition is artifact-derived, distinct from bootstrap, and canno
       document,
     ),
   );
-  assert.doesNotThrow(() => assertQualificationGeneration({
-    generation: 'relational-v1', previousGeneration: 'document-v1', recovery: 'preserving',
-  }, relational, document, true));
-  assert.throws(() => assertQualificationGeneration({
-    generation: 'relational-v1', previousGeneration: 'document-v1', recovery: 'forward-only',
-  }, relational, document, true), /generation mismatch/);
+  assert.doesNotThrow(() =>
+    assertQualificationGeneration(
+      {
+        generation: 'relational-v1',
+        previousGeneration: 'document-v1',
+        recovery: 'preserving',
+      },
+      relational,
+      document,
+      true,
+    ),
+  );
+  assert.throws(
+    () =>
+      assertQualificationGeneration(
+        {
+          generation: 'relational-v1',
+          previousGeneration: 'document-v1',
+          recovery: 'forward-only',
+        },
+        relational,
+        document,
+        true,
+      ),
+    /generation mismatch/,
+  );
 });
 async function fixture(t, migration = 'CREATE TABLE example (id int);') {
   const directory = await mkdtemp(join(tmpdir(), 'corner-artifact-test-'));
@@ -158,7 +178,7 @@ test('packaging canonicalizes JSONC comments and trailing commas but rejects mal
     'package.json': '{"type":"module"}',
     'pnpm-lock.yaml': 'lockfileVersion: "9.0"\n',
     ...Object.fromEntries(
-      ['nutrition', 'training', 'workspace', 'agent'].map((name) => [
+      ['nutrition', 'training', 'workspace'].map((name) => [
         `packages/${name}/dist/index.js`,
         'export {};',
       ]),

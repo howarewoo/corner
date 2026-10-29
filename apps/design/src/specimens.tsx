@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from 'react';
+import { useForm } from '@tanstack/react-form';
 import {
   AlertCircle,
   ArrowRight,
@@ -149,7 +150,14 @@ function CoreSpecimen({ id }: { id: string }) {
   const [progress, setProgress] = useState(3);
   const [open, setOpen] = useState(false);
   const [name, setName] = useState('Upper body');
-  const [draft, setDraft] = useState(name);
+  const sessionForm = useForm({
+    defaultValues: { name },
+    onSubmit: ({ value }) => {
+      setName(value.name.trim());
+      setOpen(false);
+      setStatus(`Preview updated: ${value.name.trim()}.`);
+    },
+  });
   const [tab, setTab] = useState('training');
   switch (id) {
     case 'colors':
@@ -860,7 +868,7 @@ function CoreSpecimen({ id }: { id: string }) {
               <Dialog
                 open={open}
                 onOpenChange={(next) => {
-                  if (next) setDraft(name);
+                  sessionForm.reset({ name });
                   setOpen(next);
                 }}
               >
@@ -875,24 +883,31 @@ function CoreSpecimen({ id }: { id: string }) {
                   <form
                     onSubmit={(event) => {
                       event.preventDefault();
-                      setName(draft.trim());
-                      setOpen(false);
-                      setStatus(`Preview updated: ${draft.trim()}.`);
+                      void sessionForm.handleSubmit();
                     }}
                   >
                     <Field label="Session name">
-                      <Input
-                        required
-                        maxLength={120}
-                        value={draft}
-                        onChange={(event) => setDraft(event.target.value)}
-                      />
+                      <sessionForm.Field name="name">
+                        {(field) => (
+                          <Input
+                            required
+                            maxLength={120}
+                            value={field.state.value}
+                            onChange={(event) => field.handleChange(event.target.value)}
+                            onBlur={field.handleBlur}
+                          />
+                        )}
+                      </sessionForm.Field>
                     </Field>
                     <DialogFooter>
                       <DialogClose render={<Button variant="outline" />}>Cancel</DialogClose>
-                      <Button type="submit" disabled={!draft.trim()}>
-                        Save preview
-                      </Button>
+                      <sessionForm.Subscribe selector={(state) => state.values.name}>
+                        {(draft) => (
+                          <Button type="submit" disabled={!draft.trim()}>
+                            Save preview
+                          </Button>
+                        )}
+                      </sessionForm.Subscribe>
                     </DialogFooter>
                   </form>
                 </DialogContent>

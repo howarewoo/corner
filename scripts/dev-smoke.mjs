@@ -19,7 +19,6 @@ const compilerTasks = [
   '@packages/nutrition',
   '@packages/training',
   '@packages/workspace',
-  '@packages/agent',
   '@packages/api',
 ];
 const tasks = [...compilerTasks, 'server', 'web'];
@@ -87,8 +86,6 @@ Object.assign(environment, {
   CORNER_ORIGIN: origin,
   CORNER_DEV_API_PORT: String(apiPort),
   CORNER_DATA_DIR: join(temporary, 'data'),
-  BETTER_AUTH_SECRET: 'synthetic-development-account-secret-with-more-than-32-characters',
-  CORNER_TOKEN_ENCRYPTION_KEY: Buffer.alloc(32, 47).toString('base64'),
   DATABASE_URL: backend.databaseUrl,
   NEON_AUTH_BASE_URL: backend.authUrl,
   NEON_AUTH_REQUIRE_EMAIL_VERIFICATION: 'false',
@@ -347,15 +344,8 @@ try {
     'Workspace data must require a session through the proxy.',
   );
   const callback = await call('/auth/callback');
-  assert.equal(
-    callback.status,
-    401,
-    'The callback must reach API authentication instead of the web HTML fallback.',
-  );
-  assert.ok(
-    json(callback, 'Unauthenticated callback').code === 'SIGN_IN_REQUIRED',
-    'A callback without a session must stop before provider work.',
-  );
+  assert.equal(callback.status, 404, 'The retired callback must not reach the web HTML fallback.');
+  assert.match(callback.headers.get('Cache-Control'), /no-store/);
 
   const signup = await post('/api/auth/sign-up/email', {
     name: 'Development test',
@@ -410,7 +400,7 @@ try {
   }
 }
 process.stdout.write(
-  `Passed all ${tasks.length} Turbo development tasks, web/exercise catalog serving, filesystem isolation, native RPC proxy, callback authentication, and account session checks.\n`,
+  `Passed all ${tasks.length} Turbo development tasks, web/exercise catalog serving, filesystem isolation, native RPC proxy, retired callback rejection, and account session checks.\n`,
 );
 process.stdout.write(
   'The owned development process group and temporary data were cleaned up. No account email or model requests were made.\n',
