@@ -769,9 +769,13 @@ test('owner-selected training permissions perform real HTTP writes and keep hist
     'create_routine',
     'edit_workout_plans',
     'get_workout_versions',
+    'get_workspace_revision',
     'update_routine',
   ]);
-  const revision = (await store.exportSnapshot(alice.id)).revision;
+  const metadata = await mcp(token.data.access_token, 'get_workspace_revision');
+  const { revision } = metadata.data.result.structuredContent;
+  assert.deepEqual(metadata.data.result.structuredContent, { revision });
+  assert.ok(revision > 0);
   const routine = {
     id: 'http-routine',
     name: 'HTTP walk',

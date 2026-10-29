@@ -81,6 +81,7 @@ export function registerNutritionWrites(
       'recipes:delete',
       'food-logs:write',
       'food-logs:delete',
+      'routines:write',
     ].some((scope) => access.scopes.includes(scope));
   if (canWrite())
     server.registerTool(
