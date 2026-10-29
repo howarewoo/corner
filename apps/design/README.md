@@ -70,7 +70,7 @@ The exact upstream IDs, source URLs, retrieved source-file SHA-256 digests, impl
 
 ## Navigation and interaction
 
-Storybook's native manager owns component search, grouped navigation, story selection, and browser history. Direct story links and reloads select the requested specimen. The custom React Router catalog shell is replaced; only the product retains React Router. Links between catalog stories use canonical manager URLs and navigate the top-level window rather than nesting the manager in the preview iframe.
+Storybook's native manager owns component search, grouped navigation, story selection, and browser history. Direct story links and reloads select the requested specimen. The custom React Router catalog shell is replaced; the product independently uses TanStack Router file routes. Shared UI and catalog specimens remain router-neutral. Links between catalog stories use canonical manager URLs and navigate the top-level window rather than nesting the manager in the preview iframe.
 
 On phones, selecting a navigation-tree link closes the native menu. Keyboard search selects a story with Enter but leaves that menu open; use **Close menu** to reveal the selected preview. Escape in the search field clears the query rather than dismissing the menu. This is retained Storybook manager behavior, not a custom catalog shortcut.
 

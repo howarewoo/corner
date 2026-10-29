@@ -8,6 +8,6 @@
       "note": "Follow DESIGN.md; reuse shared primitives in packages/ui and examples in apps/design."
     }
   },
-  "ignorePatterns": ["**/.generated/**"],
+  "ignorePatterns": ["**/.generated/**", "apps/web/src/routeTree.gen.ts"],
   "rules": {}
 }

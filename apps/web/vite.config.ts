@@ -1,6 +1,7 @@
 import { defineConfig, type ServerOptions } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
+import { tanstackRouter } from '@tanstack/router-plugin/vite';
 import { fileURLToPath } from 'node:url';
 import { readFileSync } from 'node:fs';
 
@@ -90,6 +91,12 @@ export default defineConfig(({ command }) => {
     root: webRoot,
     envDir: command === 'serve' ? false : repositoryRoot,
     plugins: [
+      tanstackRouter({
+        target: 'react',
+        autoCodeSplitting: false,
+        routesDirectory: fileURLToPath(new URL('./src/routes', import.meta.url)),
+        generatedRouteTree: fileURLToPath(new URL('./src/routeTree.gen.ts', import.meta.url)),
+      }),
       react(),
       tailwindcss(),
       {

@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { Link, Navigate, useLocation, useNavigate, useRoutes } from 'react-router';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useNavigate, useRouter } from '@tanstack/react-router';
 import { Dumbbell, Home, Settings2, UtensilsCrossed } from 'lucide-react';
 import type { Recipe } from '@packages/nutrition/types';
 import { dateKey } from '@packages/nutrition/dates';
@@ -33,17 +33,10 @@ import type { Confirmation, CornerAppProps, Overlay, View } from '../features/wo
 import { useTheme } from '../theme';
 import './training.css';
 
-export default function CornerApp(props: CornerAppProps) {
-  const routes = useRoutes([
-    ...Object.entries(viewPaths).map(([view, path]) => ({
-      path,
-      element: <CornerWorkspace {...props} view={view as View} />,
-    })),
-    { path: '*', element: <Navigate to="/" replace /> },
-  ]);
+export default function CornerApp(props: CornerAppProps & { view: View }) {
   return (
     <SidebarProvider open mobileLayout="fullscreen" className="corner-ui">
-      {routes}
+      <CornerWorkspace {...props} />
     </SidebarProvider>
   );
 }
@@ -64,7 +57,7 @@ function CornerWorkspace({
   );
   const workspaceContent = useRef<HTMLDivElement>(null);
   const routerNavigate = useNavigate();
-  const location = useLocation();
+  const router = useRouter();
   const [selectedDate, setSelectedDate] = useState(() =>
     dateKey(new Date(), (initialSettings ?? initialState!.settings).timezone),
   );
@@ -74,15 +67,20 @@ function CornerWorkspace({
     useWorkspaceState({ initialState, initialSettings, preview });
   // Collection filters stay mounted with the workspace across navigation.
   const recipeFilters = useRecipeFilters();
-  useEffect(() => {
-    if (isNutritionView(view)) setLastNutritionView(view);
+  const resetNavigation = useCallback(() => {
     setOverlay(null);
     setConfirmation(null);
     workspaceContent.current?.scrollTo({ top: 0 });
     workspaceContent.current?.querySelector<HTMLElement>('h1')?.focus();
-  }, [location.key, view]);
+  }, []);
+  useEffect(() => {
+    if (isNutritionView(view)) setLastNutritionView(view);
+    resetNavigation();
+  }, [view, resetNavigation]);
+  // A same-destination link resolves without changing TanStack's history key.
+  useEffect(() => router.subscribe('onResolved', resetNavigation), [router, resetNavigation]);
   const navigate = (next: View) => {
-    if (next !== view) void routerNavigate(viewPaths[next]);
+    if (next !== view) void routerNavigate({ to: viewPaths[next], resetScroll: false });
   };
   const firstName = (settings.name || displayName || 'you').split(' ')[0];
   const openRecipe = (recipe: Recipe) => setOverlay({ kind: 'recipe', recipe });
@@ -128,7 +126,7 @@ function CornerWorkspace({
           brand={{ id: 'today', label: 'Corner home', href: viewPaths.today }}
           selectedId={view}
           onSelect={navigate}
-          renderLink={({ href, ...props }) => <Link {...props} to={href!} />}
+          renderLink={({ href, ...props }) => <Link {...props} to={href} resetScroll={false} />}
           groups={sidebarGroups}
           theme={theme}
           profile={{
