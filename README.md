@@ -71,7 +71,7 @@ The browser signs in through the existing managed account flow and shows the req
 | `food-logs:delete`      | `delete_food_log`, `get_workspace_revision`                    |
 | `recipes:write`         | `create_recipe`, `update_recipe`, `get_workspace_revision`     |
 | `recipes:delete`        | `delete_recipe`, `get_workspace_revision`                      |
-| `routines:write`        | `create_routine`, `update_routine`                             |
+| `routines:write`        | `create_routine`, `update_routine`, `get_workspace_revision`   |
 | `workout-plans:write`   | `edit_workout_plans`, `get_workout_versions`                   |
 | `workout-history:write` | `update_workout_history`, `get_workout_versions`               |
 
@@ -91,7 +91,7 @@ Either training session write permission also grants `get_workout_versions`, wit
 
 `update_workout_history` is a separate permission, not implied by planning. It takes `id`, the actual `expectedUpdatedAt` returned by workout reads, and a nonempty `patch`. It only updates existing started/completed/skipped or recorded workouts, never creates history, and retains the exact lifecycle status (including completed, skipped, in-progress and imported planned-with-actuals). Status, ID, template association and creation/update timestamps are not patch fields. Both planning updates and history corrections require the current workspace revision **and** actual record-version string; neither silently rebases. Patches preserve omitted fields; supplied exercise/set arrays replace their complete addressed collection, so retain any entries you want to keep. History exercise entries use the native exercise-target fields plus `sets`; each set supplies `id`, nullable `weight`/`reps`/`rir`, `completed` and `kind`.
 
-Any nutrition edit or delete permission also exposes `get_workspace_revision`, with no arguments, returning only `{ revision }` and no records or settings. Call it before a new write or after `REVISION_CONFLICT`, review the intended change, then explicitly submit with that `expectedRevision` and a new `operationId`. It does not reserve the revision; an intervening change still causes a conflict. No record-read permission is needed.
+Any nutrition edit or delete permission, or `routines:write`, also exposes `get_workspace_revision`, with no arguments, returning only `{ revision }` and no records or settings. Call it before a new write or after `REVISION_CONFLICT`, review the intended change, then explicitly submit with that `expectedRevision` and a new `operationId`. It does not reserve the revision; an intervening change still causes a conflict. No record-read permission is needed.
 
 Use a stable operation ID for retries. IDs are namespaced to the authenticated client/grant, and fingerprints cover original JSON arguments before SDK trimming/defaults. An exact retained retry returns its original committed revision before checking staleness; changing the original payload with that ID conflicts. A new stale operation fails without silent rebase or retry. Receipts share the existing 1,000-per-owner retention limit; do not assume indefinite replay. Refreshing a token does not broaden previously selected permissions. Revocation stops subsequent requests; an already authenticated request may finish.
 
