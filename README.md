@@ -72,8 +72,8 @@ The browser signs in through the existing managed account flow and shows the req
 | `recipes:write` | `create_recipe`, `update_recipe` |
 | `recipes:delete` | `delete_recipe` |
 | `routines:write` | `create_routine`, `update_routine` |
-| `workout-plans:write` | `edit_workout_plans` |
-| `workout-history:write` | `update_workout_history` |
+| `workout-plans:write` | `edit_workout_plans`, `get_workout_versions` |
+| `workout-history:write` | `update_workout_history`, `get_workout_versions` |
 
 Clients see only their granted tools. Tools capture the grant's owner server-side; arguments cannot select a different owner/resource. Meal-plan and food-log lists require explicit date windows of at most 93 calendar days. Reads reuse existing bounded domain queries and return actual revisions, record versions where supplied, and continuation cursors. Generic lists return `items`; details return domain keys (`get_recipes.recipes`, `get_meal_plans.plan`, `get_workouts.sessions`, `get_routines.templates`); `list_food_logs` returns `entries` and `totals`. Clients must explicitly follow cursors; no tool silently reads lifetime state. Read permissions grant no edits; edit permissions do not imply read or delete access. No delegated plan/history deletion, workout start/completion, proposals, progress/check-in/settings export, provider archives, or inference are implemented.
 
@@ -85,6 +85,7 @@ Food logs retain historical name/nutrition snapshots when their source recipe ch
 
 Training writes require `operationId` and `expectedRevision` and return only `{ revision }`. `create_routine` takes an explicitly supplied `routine` (`id`, `name`, `kind`, `description`, `durationMinutes`, `exercises`); `update_routine` takes `id` and a nonempty `patch`. Creates reject existing IDs; updates reject missing IDs. Server-generated creation/update timestamps are not writable. Routine edits never rewrite scheduled or recorded workout snapshots.
 
+Either training session write permission also grants `get_workout_versions`, without requiring `workouts:read`. Supply `ids` (at most 25 known workout IDs); it returns `{ revision, sessions: [{ id, updatedAt }] }` from one consistent snapshot, omitting missing or foreign-owner IDs. It exposes no workout contents or ID listing. An empty array returns the current workspace revision with an empty `sessions` array. Use it after creating a plan, before updating a known workout, or after a concurrency conflict or manual owner edit. Metadata discovery does not reserve a version; subsequent changes still cause conflicts. Below, workout reads include this metadata-only tool when obtaining `expectedUpdatedAt`.
 `edit_workout_plans` atomically applies 1–100 explicit create/update members, with no implicit routine-content copying. Create takes `action: "create", entry` with `id`, `date`, `name`, `kind`, `unit`, planned exercise targets, `plannedMinutes`, `notes` and `changeReason`. Update takes `action: "update", id, expectedUpdatedAt, patch`. Planned exercises have no actual sets; the server creates empty set collections. Under the owner transaction, planning refuses every non-planned lifecycle and any recorded set/load/reps/RIR, actual duration/rounds/RPE or readiness. Failed members roll back every member, revision and receipt. No plan delete, start or completion tool exists.
 
 `update_workout_history` is a separate permission, not implied by planning. It takes `id`, the actual `expectedUpdatedAt` returned by workout reads, and a nonempty `patch`. It only updates existing started/completed/skipped or recorded workouts, never creates history, and retains the exact lifecycle status (including completed, skipped, in-progress and imported planned-with-actuals). Status, ID, template association and creation/update timestamps are not patch fields. Both planning updates and history corrections require the current workspace revision **and** actual record-version string; neither silently rebases. Patches preserve omitted fields; supplied exercise/set arrays replace their complete addressed collection, so retain any entries you want to keep. History exercise entries use the native exercise-target fields plus `sets`; each set supplies `id`, nullable `weight`/`reps`/`rir`, `completed` and `kind`.
@@ -342,14 +343,14 @@ Old feature-preview provisioning workflows are removed. Never recreate removed l
 | Folder                       | Responsibility                                                                                               |
 | ---------------------------- | ------------------------------------------------------------------------------------------------------------ |
 | `apps/web/src/`              | React account UI, profile/import settings, meal planner, recipes, workouts, and progress                     |
-| `apps/server/src/`           | Managed Auth boundary, PostgreSQL persistence, and oRPC procedures                                          |
+| `apps/server/src/`           | Managed Auth boundary, PostgreSQL persistence, and oRPC procedures                                           |
 | `packages/nutrition/src/`    | Food and recipe types/schemas, meal calendar, and macro/grocery calculations                                 |
 | `packages/training/src/`     | Workout types/rules, result prefill, exercise catalog, and provenance data                                   |
 | `packages/workspace/src/`    | Combined state/settings, validated mutation composition, training-aware nutrition targets, and initial state |
 | `packages/api/src/`          | Browser-safe oRPC contract, transport schemas, and inferred client types                                     |
 | `apps/web/src/**/__tests__/` | Vitest component/logic tests and Playwright browser journeys colocated with their owners                     |
 | `apps/web/__tests__/`        | Node-environment Vitest checks for web configuration                                                         |
-| `apps/server/tests/`         | Accounts, data isolation, migration, recovery, and proxy regression checks                                  |
+| `apps/server/tests/`         | Accounts, data isolation, migration, recovery, and proxy regression checks                                   |
 | `scripts/`                   | Workspace test runner, production/development smoke checks, configuration, and packaging                     |
 | `deployment/`                | HTTPS edge configuration for the optional hosted Compose deployment                                          |
 

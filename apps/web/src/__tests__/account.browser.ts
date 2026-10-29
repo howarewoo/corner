@@ -127,7 +127,9 @@ test.describe('account session handoff', () => {
       retrying = true;
       await page.getByRole('button', { name: 'Retry', exact: true }).click();
       await expect(page.getByLabel('Email', { exact: true })).toBeVisible();
-      await expect(page.getByText(`Signed in as ${account.email}`, { exact: true })).not.toBeVisible();
+      await expect(
+        page.getByText(`Signed in as ${account.email}`, { exact: true }),
+      ).not.toBeVisible();
       await expect(page.getByRole('button', { name: 'Retry', exact: true })).not.toBeVisible();
       await expect(page).toHaveURL(/\/settings$/);
     });

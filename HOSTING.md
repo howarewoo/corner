@@ -213,13 +213,13 @@ The helper writes `.env.hosted` owner-only with one independent random proxy pro
 
 Edit `.env.hosted` on the server and supply the pooled `DATABASE_URL`, direct `DATABASE_URL_UNPOOLED`, and `NEON_AUTH_BASE_URL` pulled by Neon. Keep URLs and private keys server-only.
 
-| Setting                       | Purpose                                                                                   |
-| ----------------------------- | ----------------------------------------------------------------------------------------- |
-| `CORNER_DOMAIN`               | Public hostname without a protocol, port, or path                                         |
-| `CORNER_PROXY_SECRET`         | Allows the HTTPS edge to attest client identity; never trust arbitrary forwarding headers |
-| `DATABASE_URL`                | Pooled Neon PostgreSQL application connection                                             |
-| `DATABASE_URL_UNPOOLED`       | Direct connection for explicit versioned migrations                                       |
-| `NEON_AUTH_BASE_URL`          | Full managed Auth URL, including its database/auth path                                   |
+| Setting                 | Purpose                                                                                   |
+| ----------------------- | ----------------------------------------------------------------------------------------- |
+| `CORNER_DOMAIN`         | Public hostname without a protocol, port, or path                                         |
+| `CORNER_PROXY_SECRET`   | Allows the HTTPS edge to attest client identity; never trust arbitrary forwarding headers |
+| `DATABASE_URL`          | Pooled Neon PostgreSQL application connection                                             |
+| `DATABASE_URL_UNPOOLED` | Direct connection for explicit versioned migrations                                       |
+| `NEON_AUTH_BASE_URL`    | Full managed Auth URL, including its database/auth path                                   |
 
 Compose derives `CORNER_ORIGIN` from the hostname and sets `NEON_AUTH_REQUIRE_EMAIL_VERIFICATION=true`. The Neon branch policy must agree. Cookies, redirects, and unsafe browser requests remain restricted to the exact canonical origin.
 

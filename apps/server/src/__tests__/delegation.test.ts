@@ -394,7 +394,7 @@ test('owner-selected training permissions perform real HTTP writes and keep hist
   const token = await exchange(client, await authorize(client, alice, 'routines:write workout-plans:write workout-history:write', ['routines:write', 'workout-plans:write']));
   assert.equal(token.status, 200);
   const visible = await call('/mcp', { jsonrpc: '2.0', id: 1, method: 'tools/list' }, { bearer: token.data.access_token, origin: null });
-  assert.deepEqual(visible.data.result.tools.map((tool: { name: string }) => tool.name).sort(), ['create_routine', 'edit_workout_plans', 'update_routine']);
+  assert.deepEqual(visible.data.result.tools.map((tool: { name: string }) => tool.name).sort(), ['create_routine', 'edit_workout_plans', 'get_workout_versions', 'update_routine']);
   const revision = (await store.exportSnapshot(alice.id)).revision;
   const routine = { id: 'http-routine', name: 'HTTP walk', kind: 'conditioning', description: '', durationMinutes: 30, exercises: [] };
   const created = await mcp(token.data.access_token, 'create_routine', { operationId: 'http-routine-create', expectedRevision: revision, routine });

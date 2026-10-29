@@ -402,7 +402,10 @@ export async function plan({
   );
   need(
     preservingCutover
-      ? !bootstrap && !rollbackId && provisionedVersionId === null && cutoverId.test(operationId ?? '')
+      ? !bootstrap &&
+          !rollbackId &&
+          provisionedVersionId === null &&
+          cutoverId.test(operationId ?? '')
       : !operationId,
     'Preserving cutover requires an explicit operator release and valid operation ID without bootstrap or rollback',
   );
@@ -901,7 +904,11 @@ async function executePreservingCutover({
     need(version && expectedVersionIds.includes(version), message);
     return version;
   };
-  const deployExactVersion = async (versionId, cfgArgs = common, expected = [maintenanceVersionId]) => {
+  const deployExactVersion = async (
+    versionId,
+    cfgArgs = common,
+    expected = [maintenanceVersionId],
+  ) => {
     await assertSingleLiveVersion(expected, 'Live Worker drifted before pinned traffic transition');
     wrangler(['versions', 'deploy', `${versionId}@100%`, ...cfgArgs, '--yes']);
     await assertSingleLiveVersion(
@@ -938,13 +945,7 @@ async function executePreservingCutover({
       initialDb.phase === 'untouched',
       'Database already has an active or completed cutover state; inspect before starting cutover',
     );
-    const maintOut = wrangler([
-      'versions',
-      'upload',
-      ...maintenanceCommon,
-      '--no-bundle',
-      ...vars,
-    ]);
+    const maintOut = wrangler(['versions', 'upload', ...maintenanceCommon, '--no-bundle', ...vars]);
     maintenanceVersionId = maintOut.match(/Worker Version ID:\s*([a-f0-9-]{36})/)?.[1];
     need(
       uuid.test(maintenanceVersionId ?? ''),
@@ -957,10 +958,7 @@ async function executePreservingCutover({
       'Candidate upload did not return an exact Worker version ID',
     );
     await reverify();
-    await github.record(
-      { ...baseMaintenancePayload(), phase: 'maintenance-uploaded' },
-      'success',
-    );
+    await github.record({ ...baseMaintenancePayload(), phase: 'maintenance-uploaded' }, 'success');
     currentPhase = 'maintenance-uploaded';
   } else {
     need(
@@ -988,10 +986,7 @@ async function executePreservingCutover({
     }
     await checkMaintenance(p.origin, maintenanceVersionId);
     if (currentPhase === 'maintenance-uploaded') {
-      await github.record(
-        { ...baseMaintenancePayload(), phase: 'maintenance-active' },
-        'success',
-      );
+      await github.record({ ...baseMaintenancePayload(), phase: 'maintenance-active' }, 'success');
       currentPhase = 'maintenance-active';
     }
     dbState = inspectDbPhase();
@@ -1052,10 +1047,7 @@ async function executePreservingCutover({
     await reverify();
     await validateCutover(candidate, p.operationId);
     if (currentPhase !== 'cutover-validated') {
-      await github.record(
-        { ...baseMaintenancePayload(), phase: 'cutover-validated' },
-        'success',
-      );
+      await github.record({ ...baseMaintenancePayload(), phase: 'cutover-validated' }, 'success');
       currentPhase = 'cutover-validated';
     }
     assertBaseline(currentBaselineId, (await github.baseline())?.id);
@@ -1151,12 +1143,12 @@ async function executePreservingCutover({
   } catch (error) {
     if (!publicVerified) {
       try {
-        await deployExactVersion(maintenanceVersionId, maintenanceCommon, [candidateVersionId, maintenanceVersionId]);
+        await deployExactVersion(maintenanceVersionId, maintenanceCommon, [
+          candidateVersionId,
+          maintenanceVersionId,
+        ]);
         await checkMaintenance(p.origin, maintenanceVersionId);
-        await github.record(
-          { ...baseMaintenancePayload(), phase: 'cutover-validated' },
-          'success',
-        );
+        await github.record({ ...baseMaintenancePayload(), phase: 'cutover-validated' }, 'success');
       } catch (restoreError) {
         throw new AggregateError(
           [error, restoreError],
@@ -1350,7 +1342,12 @@ export async function promote({
     const serving = baseline
       ? await github.artifact(baseline.payload, join(work, 'serving-generation'))
       : undefined;
-    assertQualificationGeneration(p.qualification, candidate, serving, Boolean(p.preservingCutover));
+    assertQualificationGeneration(
+      p.qualification,
+      candidate,
+      serving,
+      Boolean(p.preservingCutover),
+    );
   }
   const toolVersion = createRequire(new URL('../apps/server/package.json', import.meta.url))(
     'wrangler/package.json',

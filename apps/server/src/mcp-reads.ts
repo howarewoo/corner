@@ -1,10 +1,12 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
+import { and, eq, inArray } from 'drizzle-orm';
 import { foodWindowSchema } from '@packages/api/schemas';
 import { detailsSchema, exerciseHistorySchema, recordPageSchema } from '@packages/api/workspace-data';
 import type { DelegatedAccess } from './delegation.js';
 import type { WorkspaceStore } from './store.js';
-import { recordDetails, recordPage } from './workspace-queries.js';
+import { consistentRead, recordDetails, recordPage } from './workspace-queries.js';
+import { workoutSessions } from './schema.js';
 import { exerciseHistoryPage } from './training-queries.js';
 import { ApiError } from './http.js';
 
@@ -21,14 +23,15 @@ export function createReadMcpServer(store: WorkspaceStore, access: DelegatedAcce
   const ownerId = access.ownerId;
   function register<S extends z.ZodRawShape>(
     name: string,
-    scope: string,
+    scope: string | string[],
     description: string,
     inputSchema: z.ZodObject<S, z.core.$strict>,
     read: (input: z.output<z.ZodObject<S, z.core.$strict>>) => Promise<Record<string, unknown>>,
   ): void {
-    if (!access.scopes.includes(scope)) return;
+    const permitted = () => (Array.isArray(scope) ? scope : [scope]).some((value) => access.scopes.includes(value));
+    if (!permitted()) return;
     server.registerTool<z.ZodRawShape, z.ZodObject<S, z.core.$strict>>(name, { description, inputSchema, annotations }, async (input) => {
-      if (!access.scopes.includes(scope))
+      if (!permitted())
         return failure('INSUFFICIENT_SCOPE', 'This connection does not permit this read.');
       try {
         const result = await read(input);
@@ -84,6 +87,13 @@ export function createReadMcpServer(store: WorkspaceStore, access: DelegatedAcce
     { ...common, ...calendar, status: page.status, order: page.order },
     'Read one bounded workout page. Includes planned and recorded sessions; status optionally filters them. Recent order provides workout history. Follow nextCursor explicitly; workspace changes invalidate cursors.');
   details('get_workouts', 'workouts:read', 'sessionIds', 'sessions');
+  register('get_workout_versions', ['workout-plans:write', 'workout-history:write'],
+    'Read concurrency metadata only for addressed workout IDs: workspace revision and stored updatedAt tokens. Missing IDs are omitted. No workout contents are returned; use before updates or after conflicts. An empty ID list returns the current revision.',
+    z.object({ ids: detailsSchema.shape.sessionIds }).strict(), ({ ids }) =>
+      consistentRead(store.db, ownerId, async (connection, revision) => ({ revision, sessions: ids.length
+        ? await connection.select({ id: workoutSessions.id, updatedAt: workoutSessions.updated_at }).from(workoutSessions)
+          .where(and(eq(workoutSessions.user_id, ownerId), inArray(workoutSessions.id, ids)))
+        : [] })));
   register('exercise_history', 'workouts:read',
     'Read one bounded page of completed sessions with recorded working sets for an exercise name. Returns stored workout versions and a continuation cursor.',
     exerciseHistorySchema, (input) => exerciseHistoryPage(store.db, ownerId, input));

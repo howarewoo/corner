@@ -60,7 +60,9 @@ const recoveryMode = previousArtifact
 const forwardOnly = recoveryMode === 'forward-only';
 const preserving = recoveryMode === 'preserving';
 if (options['--preserving'] && !preserving)
-  throw new Error('--preserving requires a document-v1 previous artifact and relational-v1 candidate.');
+  throw new Error(
+    '--preserving requires a document-v1 previous artifact and relational-v1 candidate.',
+  );
 const directory = await mkdtemp(join(tmpdir(), 'corner-workers-smoke-'));
 const origin = 'https://corner.example.test';
 const cleanup = new AsyncDisposableStack();
@@ -112,7 +114,11 @@ try {
     NEON_AUTH_REQUIRE_EMAIL_VERIFICATION: 'false',
   };
   let workerNumber = 0;
-  const startWorker = async (config, candidate = true, { mainOverride, forbidOutbound = false } = {}) => {
+  const startWorker = async (
+    config,
+    candidate = true,
+    { mainOverride, forbidOutbound = false } = {},
+  ) => {
     const miniflareRequire = createRequire(require.resolve('wrangler'));
     const { Miniflare, convertV4MiniflareOptions, WebSocketPair, Response, Log } = await import(
       miniflareRequire.resolve('miniflare')
@@ -218,7 +224,9 @@ try {
         },
         outboundService: async (request) => {
           if (forbidOutbound)
-            assert.fail(`Maintenance Worker must not make outbound DB/Auth requests (${request.url}).`);
+            assert.fail(
+              `Maintenance Worker must not make outbound DB/Auth requests (${request.url}).`,
+            );
           if (
             request.headers.get('Upgrade')?.toLowerCase() === 'websocket' ||
             new URL(request.url).origin === proxyUrl.origin
@@ -322,12 +330,15 @@ try {
       assert.equal(previousWrite.status, 200, await previousWrite.clone().text());
       // Document-generation get includes state; relational get is bootstrap-only.
       const snapshotProcedure = previousArtifact.generation === 'document-v1' ? 'get' : 'export';
-      const response = await worker.fetch(new URL(`/api/rpc/workspace/${snapshotProcedure}`, origin), {
-        method: 'POST',
-        headers: { Origin: origin, 'Content-Type': 'application/json', Cookie: priorCookie },
-        body: '{}',
-        signal: AbortSignal.timeout(20_000),
-      });
+      const response = await worker.fetch(
+        new URL(`/api/rpc/workspace/${snapshotProcedure}`, origin),
+        {
+          method: 'POST',
+          headers: { Origin: origin, 'Content-Type': 'application/json', Cookie: priorCookie },
+          body: '{}',
+          signal: AbortSignal.timeout(20_000),
+        },
+      );
       assert.equal(response.status, 200, await response.clone().text());
       const previousSnapshot = (await response.json()).json;
       priorState = { state: previousSnapshot.state, revision: previousSnapshot.revision };
@@ -379,15 +390,19 @@ try {
       validationUrl.searchParams.delete('options');
       process.env.DATABASE_URL_UNPOOLED = validationUrl.href;
       try {
-        await validateCutoverCandidate({
-          ...candidateArtifact,
-          directory: dirname(options['--config']),
-        }, operationId, async () => ({
-          ...candidateMigrator,
-          // The existing disposable fixture isolates schemas through libpq options,
-          // forbidden on production unpooled URLs. Keep its real pool factory here.
-          createDatabase: () => candidateMigrator.createDatabase(backend.databaseUrl),
-        }));
+        await validateCutoverCandidate(
+          {
+            ...candidateArtifact,
+            directory: dirname(options['--config']),
+          },
+          operationId,
+          async () => ({
+            ...candidateMigrator,
+            // The existing disposable fixture isolates schemas through libpq options,
+            // forbidden on production unpooled URLs. Keep its real pool factory here.
+            createDatabase: () => candidateMigrator.createDatabase(backend.databaseUrl),
+          }),
+        );
       } finally {
         if (previousUnpooled === undefined) delete process.env.DATABASE_URL_UNPOOLED;
         else process.env.DATABASE_URL_UNPOOLED = previousUnpooled;
@@ -767,7 +782,7 @@ try {
   const trainingPlanner = await nutritionToken(['routines:write', 'workout-plans:write']);
   const trainingHistorian = await nutritionToken(['workout-history:write']);
   const historyCatalog = await delegatedCall('/mcp', { jsonrpc: '2.0', id: 6, method: 'tools/list' }, { bearer: trainingHistorian, browser: false });
-  assert.deepEqual(historyCatalog.data.result.tools.map((tool) => tool.name), ['update_workout_history']);
+  assert.deepEqual(historyCatalog.data.result.tools.map((tool) => tool.name).sort(), ['get_workout_versions', 'update_workout_history']);
   const trainingTimestamp = '2026-10-28T12:00:00.000Z';
   const workerTarget = { id: 'worker-squat', name: 'Squat', loadType: 'total', targetSets: 2,
     repMin: 6, repMax: 8, targetRir: 2, restSeconds: 120, notes: 'Keep target' };
@@ -794,6 +809,10 @@ try {
   const workoutBatch = { operationId: 'worker-create-workout-batch', expectedRevision: trainingRevision,
     changes: [{ action: 'create', entry: workerPlan }, { action: 'create', entry: { ...workerPlan, id: 'worker-workout-plan-two', date: '2026-10-30' } }] };
   assert.deepEqual((await nutritionCall(trainingPlanner, 'edit_workout_plans', workoutBatch)).structuredContent, { revision: ++trainingRevision });
+  const planVersions = (await nutritionCall(trainingPlanner, 'get_workout_versions', { ids: [workerPlan.id] })).structuredContent;
+  assert.equal(planVersions.revision, trainingRevision);
+  assert.deepEqual(planVersions.sessions.map((entry) => Object.keys(entry).sort()), [['id', 'updatedAt']]);
+  assert.equal(planVersions.sessions[0].id, workerPlan.id);
   const beforeRoutineEdit = await snapshot(alice);
   assert.deepEqual((await nutritionCall(trainingPlanner, 'update_routine', {
     operationId: 'worker-edit-routine', expectedRevision: trainingRevision, id: workerRoutine.id, patch: { durationMinutes: 40 },
@@ -815,6 +834,9 @@ try {
     sets: exercise.sets.map((set) => ({ ...set, reps: 8 })) }));
   const strengthCorrection = { operationId: 'worker-correct-strength', expectedRevision: trainingRevision,
     id: actualStrength.id, expectedUpdatedAt: actualStrength.updatedAt, patch: { exercises: correctedExercises } };
+  const historyVersions = (await nutritionCall(trainingHistorian, 'get_workout_versions', { ids: [actualStrength.id] })).structuredContent;
+  assert.deepEqual(historyVersions, { revision: trainingRevision, sessions: [{ id: actualStrength.id, updatedAt: actualStrength.updatedAt }] });
+  strengthCorrection.expectedUpdatedAt = historyVersions.sessions[0].updatedAt;
   assert.equal((await nutritionCall(trainingPlanner, 'update_workout_history', strengthCorrection)).isError, true);
   assert.deepEqual((await nutritionCall(trainingHistorian, 'update_workout_history', strengthCorrection)).structuredContent, { revision: ++trainingRevision });
   const afterStrength = await snapshot(alice);
@@ -1006,9 +1028,12 @@ try {
     assert.equal(retired.status, 404);
     assert.match(retired.headers.get('Cache-Control'), /no-store/);
   }
-  const callback = await worker.fetch(new URL('/auth/callback?code=synthetic&state=synthetic', origin), {
-    headers: { Cookie: alice },
-  });
+  const callback = await worker.fetch(
+    new URL('/auth/callback?code=synthetic&state=synthetic', origin),
+    {
+      headers: { Cookie: alice },
+    },
+  );
   assert.equal(callback.status, 404);
   assert.match(callback.headers.get('Cache-Control'), /no-store/);
   assert.equal((await post('/api/auth/sign-out', {}, { Cookie: alice })).status, 200);

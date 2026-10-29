@@ -1503,9 +1503,7 @@ function cutoverFixture({
     return { id: 10, payload: documentBaseline };
   };
   f.github.schema = async () => {
-    const latestSchema = [...f.records]
-      .reverse()
-      .find((row) => row.phase === 'schema-attempted');
+    const latestSchema = [...f.records].reverse().find((row) => row.phase === 'schema-attempted');
     return latestSchema
       ? { id: 21 + f.records.lastIndexOf(latestSchema), payload: latestSchema }
       : null;
@@ -1528,7 +1526,8 @@ function cutoverFixture({
   };
   const origApi = f.github.api;
   f.github.api = async (path) => {
-    if (path === 'deployments/10') return { id: 10, environment: 'production', payload: documentBaseline };
+    if (path === 'deployments/10')
+      return { id: 10, environment: 'production', payload: documentBaseline };
     return origApi(path);
   };
   f.github.artifact = async (reference) => ({
@@ -1717,9 +1716,7 @@ test('first preserving cutover run succeeds and pre-cutover abort remains allowe
   };
   let currentSchemaRecord = { id: 15, payload: priorFailedSchema };
   f.github.schema = async () => {
-    const latestSchema = [...f.records]
-      .reverse()
-      .find((row) => row.phase === 'schema-attempted');
+    const latestSchema = [...f.records].reverse().find((row) => row.phase === 'schema-attempted');
     return latestSchema
       ? { id: 21 + f.records.lastIndexOf(latestSchema), payload: latestSchema }
       : currentSchemaRecord;
@@ -1772,9 +1769,7 @@ test('first preserving cutover run succeeds and pre-cutover abort remains allowe
   const f2 = cutoverFixture();
   await f2.setupMigratorFile();
   f2.github.schema = async () => {
-    const latestSchema = [...f2.records]
-      .reverse()
-      .find((row) => row.phase === 'schema-attempted');
+    const latestSchema = [...f2.records].reverse().find((row) => row.phase === 'schema-attempted');
     return latestSchema
       ? { id: 21 + f2.records.lastIndexOf(latestSchema), payload: latestSchema }
       : currentSchemaRecord;
