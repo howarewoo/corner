@@ -246,7 +246,8 @@ export default function AccountAccess({
     setPasswordVisible(false);
     setMode(next);
     if (next !== 'reset') resetToken.current = null;
-    if (next === 'signin' && initialRoute.kind === 'reset') void navigate(accountReturnTo ?? '/', { replace: true });
+    if (next === 'signin' && initialRoute.kind === 'reset')
+      void navigate(accountReturnTo ?? '/', { replace: true });
   }
   function begin() {
     if (action.current || !active.current) return null;

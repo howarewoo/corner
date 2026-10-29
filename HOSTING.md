@@ -27,7 +27,6 @@ Apply additive migration `0002_delegated_access.sql` through the existing migrat
 
 Nutrition and training writes reuse existing workspace transactions and mutation receipts; no additional migration, binding, secret or storage is required. Preserve receipts in installation backups. Retention remains 1,000 operations per owner, shared with manual writes. Review every selected permission and revoke unwanted connections in Settings; refreshing an existing read grant does not add write/delete access. Recipe deletion is blocked while a meal plan uses it and never cascades to historical food logs. Workout planning cannot modify started/recorded activity, and separately granted history corrections retain lifecycle status and record-version checks; no delegated history deletion or workout start/completion exists.
 
-
 Prerequisites: a Cloudflare account (a domain only for optional custom-domain hosting), the existing Neon project with production and schema-only staging branches, independent staging Auth/configuration, Node 24, and pinned pnpm dependencies. No new paid binding or Neon upgrade is assumed. Confirm schema-only branch quota before provisioning.
 
 ### Cloudflare dashboard setup
