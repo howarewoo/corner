@@ -1008,6 +1008,60 @@ try {
     false,
   );
 
+  // Import-only grants add actual history without read/update authority.
+  const workoutImporter = await nutritionToken(['workouts:import']);
+  const importCatalog = await delegatedCall('/mcp',
+    { jsonrpc: '2.0', id: 7, method: 'tools/list' },
+    { bearer: workoutImporter, browser: false });
+  assert.deepEqual(importCatalog.data.result.tools.map((tool) => tool.name).sort(),
+    ['get_workspace_revision', 'import_workouts']);
+  const importRevision = (await nutritionCall(workoutImporter, 'get_workspace_revision', {}))
+    .structuredContent.revision;
+  const importInput = {
+    operationId: 'worker-import-history', expectedRevision: importRevision,
+    sourceNamespace: 'worker-history-archive',
+    records: [{ sourceRecordId: 'walk-source', workout: {
+      id: 'worker-imported-walk', date: '2026-10-28', name: 'Imported actual walk',
+      kind: 'conditioning', status: 'completed', unit: 'kg', exercises: [],
+      plannedMinutes: null, durationMinutes: 28, rounds: null, sessionRpe: null,
+      readiness: null, notes: '', changeReason: '',
+    } }],
+  };
+  const importCreated = await nutritionCall(workoutImporter, 'import_workouts', importInput);
+  assert.deepEqual(importCreated.structuredContent, {
+    revision: importRevision + 1,
+    outcomes: [{ sourceRecordId: 'walk-source', destinationId: 'worker-imported-walk', outcome: 'created' }],
+  });
+  const importedHistory = (await snapshot(alice)).state.training.sessions.find(
+    (session) => session.id === 'worker-imported-walk');
+  assert.equal(importedHistory.plannedMinutes, null);
+  assert.equal(importedHistory.durationMinutes, 28);
+  await client(alice).workspace.mutate({
+    requestId: 'worker-correct-import',
+    mutation: { type: 'training.session.save', data: {
+      session: { ...importedHistory, notes: 'Owner correction retained' },
+      expectedUpdatedAt: importedHistory.updatedAt,
+    } },
+  });
+  assert.deepEqual((await nutritionCall(workoutImporter, 'import_workouts', importInput)).structuredContent,
+    importCreated.structuredContent);
+  const reconnectedImporter = await nutritionToken(['workouts:import']);
+  const importSkipped = await nutritionCall(reconnectedImporter, 'import_workouts', {
+    ...importInput, operationId: 'worker-reconnect-import', expectedRevision: importRevision + 2,
+  });
+  assert.equal(importSkipped.structuredContent.outcomes[0].outcome, 'skipped');
+  const afterImport = await snapshot(alice);
+  assert.equal(afterImport.state.training.sessions.find(
+    (session) => session.id === 'worker-imported-walk').notes, 'Owner correction retained');
+  assert.equal(afterImport.state.importSources.find(
+    (source) => source.sourceNamespace === importInput.sourceNamespace).sourceRecordId, 'walk-source');
+  assert.equal((await nutritionCall(workoutImporter, 'get_workouts', { ids: ['worker-imported-walk'] })).isError, true);
+  const importConflict = await nutritionCall(workoutImporter, 'import_workouts', {
+    ...importInput, operationId: 'worker-source-conflict', expectedRevision: afterImport.revision,
+    records: [{ ...importInput.records[0], workout: { ...importInput.records[0].workout, durationMinutes: 29 } }],
+  });
+  assert.equal(importConflict.structuredContent.code, 'SOURCE_CONFLICT');
+  assert.deepEqual(await snapshot(alice), afterImport);
   // Training grants use the same actual Worker/OAuth path, separately from planning and nutrition.
   const trainingPlanner = await nutritionToken(['routines:write', 'workout-plans:write']);
   const trainingHistorian = await nutritionToken(['workout-history:write']);

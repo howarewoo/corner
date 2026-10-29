@@ -350,6 +350,24 @@ export const scheduledDates = pgTable(
   (t) => [primaryKey({ columns: [t.user_id, t.date] })],
 );
 
+export const importSources = pgTable(
+  'workspace_import_sources',
+  {
+    user_id: text().notNull().references(() => workspaceMetadata.user_id, { onDelete: 'cascade' }),
+    source_namespace: text().notNull(),
+    record_type: text().notNull(),
+    source_record_id: text().notNull(),
+    source_fingerprint: text().notNull(),
+    destination_id: text().notNull(),
+    position: position(),
+  },
+  (t) => [
+    primaryKey({ name: 'workspace_import_sources_identity', columns: [t.user_id, t.source_namespace, t.record_type, t.source_record_id] }),
+    unique('workspace_import_sources_destination').on(t.user_id, t.record_type, t.destination_id),
+    index('workspace_import_sources_export').on(t.user_id, t.position),
+  ],
+);
+
 export const mutationReceipts = pgTable(
   'mutation_receipts',
   {
@@ -358,6 +376,7 @@ export const mutationReceipts = pgTable(
     payload_hash: text().notNull(),
     revision: bigint({ mode: 'number' }).notNull(),
     created_at: text().notNull(),
+    import_outcomes: jsonb().$type<Array<{ sourceRecordId: string; destinationId: string; outcome: 'created' | 'skipped' }>>(),
   },
   (table) => [
     primaryKey({ name: 'mutation_receipts_pkey', columns: [table.user_id, table.request_id] }),
