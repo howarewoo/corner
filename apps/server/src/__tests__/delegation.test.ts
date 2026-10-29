@@ -473,3 +473,48 @@ test('owner-selected meal writes cross real OAuth and HTTP, retain raw retries a
   assert.equal((await call('/api/delegation/revoke', { id: grant.id }, { jar: alice.jar })).status, 200);
   assert.equal((await mcp(renewed.data.access_token, 'edit_meal_plans', input)).status, 401);
 });
+
+test('nutrition OAuth grants keep edit/delete independent and HTTP CRUD returns no ungranted domain data', async () => {
+  const client = await register();
+  const requested = 'recipes:write recipes:delete food-logs:write food-logs:delete';
+  const token = await exchange(client, await authorize(client, bob, requested, ['recipes:write', 'food-logs:write']));
+  assert.equal(token.status, 200);
+  const tools = await call('/mcp', { jsonrpc: '2.0', id: 3, method: 'tools/list' }, { bearer: token.data.access_token, origin: null });
+  assert.deepEqual(tools.data.result.tools.map((tool: { name: string }) => tool.name).sort(), ['create_food_log', 'create_recipe', 'update_food_log', 'update_recipe']);
+  assert.equal((await mcp(token.data.access_token, 'delete_recipe', { operationId: 'denied-delete', expectedRevision: 0, id: 'anything' })).data.result.isError, true);
+  const renewed = await refresh(client, token.data.refresh_token);
+  assert.equal(renewed.status, 200);
+  assert.deepEqual((await connection(client, bob)).scopes.slice().sort(), ['food-logs:write', 'recipes:write']);
+  const deletionClient = await register();
+  const deletion = await exchange(deletionClient, await authorize(deletionClient, bob, 'recipes:delete food-logs:delete'));
+  assert.equal(deletion.status, 200);
+  const nutrition = { calories: 111, protein: 7, carbs: 13, fat: 3 };
+  const recipe = {
+    id: 'http-crud-recipe', name: 'Explicit recipe', description: '', category: 'breakfast',
+    prepMinutes: 1, cookMinutes: 0, nutrition, ingredients: [{ name: 'Oats', quantity: 100, unit: 'g', aisle: 'Grains' }],
+    steps: ['Mix'], storage: '', variation: '', tags: [], color: '#234b35', source: 'manual',
+    favorite: false, createdAt: '2026-10-28T12:00:00.000Z',
+  };
+  const entry = { id: 'http-crud-food', name: 'Explicit snapshot', date: '2026-10-28', slot: 'breakfast', nutrition, servings: 1, recipeId: recipe.id, createdAt: recipe.createdAt };
+  let revision = (await store.bootstrap(bob.id)).revision;
+  const changes: Array<[string, Record<string, unknown>, string]> = [
+    ['create_recipe', { recipe }, renewed.data.access_token],
+    ['create_food_log', { entry }, renewed.data.access_token],
+    ['update_recipe', { id: recipe.id, patch: { name: 'Changed recipe' } }, renewed.data.access_token],
+    ['update_food_log', { id: entry.id, patch: { servings: 2 } }, renewed.data.access_token],
+    ['delete_recipe', { id: recipe.id }, deletion.data.access_token],
+    ['delete_food_log', { id: entry.id }, deletion.data.access_token],
+  ];
+  for (const [name, fields, bearer] of changes) {
+    const response = await mcp(bearer, name, { operationId: `http-crud-${name}`, expectedRevision: revision, ...fields });
+    assert.equal(response.status, 200);
+    assert.deepEqual(response.data.result.structuredContent, { revision: ++revision });
+    if (name === 'delete_recipe') {
+      const snapshot = await store.exportSnapshot(bob.id);
+      assert.deepEqual(snapshot.state.logs.find(({ id }) => id === entry.id), { ...entry, servings: 2 });
+    }
+  }
+  const snapshot = await store.exportSnapshot(bob.id);
+  assert.equal(snapshot.state.recipes.some(({ id }) => id === recipe.id), false);
+  assert.equal(snapshot.state.logs.some(({ id }) => id === entry.id), false);
+});
