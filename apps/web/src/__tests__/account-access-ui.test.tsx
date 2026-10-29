@@ -2,7 +2,12 @@
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent, { type UserEvent } from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { BrowserRouter } from 'react-router';
+import {
+  createBrowserHistory,
+  createRootRoute,
+  createRouter,
+  RouterProvider,
+} from '@tanstack/react-router';
 import { expect, test, vi } from 'vitest';
 import AccountAccess, {
   readAccountRoute,
@@ -10,6 +15,7 @@ import AccountAccess, {
   type AccountRoute,
 } from '../account-access';
 import { json, mockHttp, type Handler } from './http';
+import { router as applicationRouter } from '../router';
 
 const hosted: AccountPolicy = { emailVerificationRequired: true, passwordResetAvailable: true };
 const local: AccountPolicy = { emailVerificationRequired: false, passwordResetAvailable: false };
@@ -32,15 +38,24 @@ async function account(
   );
   const signedIn = vi.fn(options.onSignedIn ?? (async () => {}));
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
-  const view = render(
-    <QueryClientProvider client={client}>
-      <BrowserRouter>
+  const router = createRouter({
+    routeTree: createRootRoute({
+      component: () => (
         <AccountAccess
           initialRoute={options.route}
           onSignedIn={signedIn}
           accountReturnTo={options.accountReturnTo}
         />
-      </BrowserRouter>
+      ),
+    }),
+    history: createBrowserHistory(),
+    parseSearch: applicationRouter.options.parseSearch,
+    stringifySearch: applicationRouter.options.stringifySearch,
+  });
+  await router.load();
+  const view = render(
+    <QueryClientProvider client={client}>
+      <RouterProvider router={router} />
     </QueryClientProvider>,
   );
   await waitFor(() =>

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type FormEvent } from 'react';
 import { useForm, useStore } from '@tanstack/react-form';
-import { useLocation, useNavigate } from 'react-router';
+import { useLocation, useNavigate } from '@tanstack/react-router';
 import { ArrowRight, Check, ChevronLeft, Eye, EyeOff, Loader2, Mail } from 'lucide-react';
 import { createAuthClient, isAuthError } from '@neondatabase/auth';
 import { BetterAuthVanillaAdapter } from '@neondatabase/auth/vanilla/adapters';
@@ -190,12 +190,17 @@ export default function AccountAccess({
   useEffect(() => {
     active.current = true;
     if (initialRoute.kind !== 'default') {
-      const params = new URLSearchParams(location.search);
+      const params = new URLSearchParams(location.searchStr);
       for (const key of ['account', 'token', 'error']) params.delete(key);
-      void navigate(
-        { pathname: location.pathname, search: params.toString(), hash: location.hash },
-        { replace: true, state: location.state },
-      );
+      const url = new URL(location.publicHref, window.location.origin);
+      url.search = params.toString();
+      void navigate({
+        href: url.pathname + url.search + url.hash,
+        replace: true,
+        state: location.state,
+        resetScroll: false,
+        hashScrollIntoView: false,
+      });
     }
     return () => {
       active.current = false;
@@ -247,7 +252,7 @@ export default function AccountAccess({
     setMode(next);
     if (next !== 'reset') resetToken.current = null;
     if (next === 'signin' && initialRoute.kind === 'reset')
-      void navigate(accountReturnTo ?? '/', { replace: true });
+      void navigate({ href: accountReturnTo ?? '/', replace: true });
   }
   function begin() {
     if (action.current || !active.current) return null;
