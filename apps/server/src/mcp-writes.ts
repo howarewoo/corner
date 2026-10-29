@@ -42,6 +42,23 @@ const deleteSchema = z.object({ ...guard, id: PlanEntrySchema.shape.id }).strict
 export type OriginalToolArguments = (tool: string) => unknown;
 
 export function registerNutritionWrites(server: McpServer, store: WorkspaceStore, access: DelegatedAccess, original: OriginalToolArguments): void {
+  const canWrite = () => ['meal-plans:write', 'recipes:write', 'recipes:delete', 'food-logs:write', 'food-logs:delete'].some((scope) => access.scopes.includes(scope));
+  if (canWrite()) server.registerTool('get_workspace_revision', {
+    description: 'Read only the current workspace revision, without records or settings. Call before a new write or after REVISION_CONFLICT, review the intended change, then explicitly submit with expectedRevision and a new operationId. Does not reserve a revision or rebase a write.',
+    inputSchema: z.object({}).strict(),
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  }, async () => {
+    try {
+      if (!canWrite()) throw new ApiError(403, 'INSUFFICIENT_SCOPE', 'This connection does not permit revision discovery.');
+      const { revision } = await store.bootstrap(access.ownerId);
+      const result = { revision };
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result) }], structuredContent: result };
+    } catch (error) {
+      const result = error instanceof ApiError ? { code: error.code, error: error.message }
+        : { code: 'READ_FAILED', error: 'This read could not be completed. Please try again.' };
+      return { isError: true, content: [{ type: 'text' as const, text: JSON.stringify(result) }], structuredContent: result };
+    }
+  });
   function register<S extends z.ZodRawShape>(
     name: string,
     scope: string,
@@ -52,7 +69,7 @@ export function registerNutritionWrites(server: McpServer, store: WorkspaceStore
   ): void {
     if (!access.scopes.includes(scope)) return;
     server.registerTool<z.ZodRawShape, z.ZodObject<S, z.core.$strict>>(name, {
-      description: `${description} Requires expectedRevision and stable operationId. Exact retained retries replay the committed revision; stale new writes fail without rebasing. Returns only { revision }.`,
+      description: `${description} Requires expectedRevision (discover with get_workspace_revision) and stable operationId. Exact retained retries replay the committed revision; stale new writes fail without rebasing. Returns only { revision }.`,
       inputSchema,
       annotations: { readOnlyHint: false, destructiveHint: destructive, idempotentHint: true, openWorldHint: false },
     }, async (input) => {

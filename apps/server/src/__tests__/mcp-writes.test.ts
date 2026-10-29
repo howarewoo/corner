@@ -87,9 +87,11 @@ test('guard namespaces operation IDs by grant, isolates owners, and checks scope
   assert.deepEqual((await write(request)).structuredContent, { revision: 2 });
   granted.splice(0);
   assert.equal(code(await write(request)), 'INSUFFICIENT_SCOPE');
+  assert.equal(code(await write({}, 'get_workspace_revision')), 'INSUFFICIENT_SCOPE');
   const otherGrant = await connect({ ...access, grantId: 'another' });
   assert.equal(code(await otherGrant(request)), 'REVISION_CONFLICT');
   const outsider = await connect({ ...access, ownerId: 'bob' });
+  assert.deepEqual((await outsider({}, 'get_workspace_revision')).structuredContent, { revision: 0 });
   assert.equal(code(await outsider(args('namespace-one', 0, [{ action: 'update', id: 'meal', patch: { servings: 2 } }]))), 'NOT_FOUND');
   assert.deepEqual((await store.exportSnapshot('bob')).state.plan, []);
 });
@@ -115,7 +117,7 @@ const food = {
   createdAt: '2026-10-28T12:00:00.000Z',
 };
 
-test('each nutrition write/delete scope exposes only its exact implemented operations, without reads', async () => {
+test('each nutrition write/delete scope exposes only its operations and revision metadata, without record reads', async () => {
   const expected = {
     'meal-plans:write': ['edit_meal_plans'],
     'recipes:write': ['create_recipe', 'update_recipe'],
@@ -126,7 +128,8 @@ test('each nutrition write/delete scope exposes only its exact implemented opera
   for (const [scope, names] of Object.entries(expected)) {
     await connect({ ...access, scopes: [scope] });
     const client = resources.at(-1)!.client;
-    assert.deepEqual((await client.listTools()).tools.map(({ name }) => name).sort(), names);
+    assert.deepEqual((await client.listTools()).tools.map(({ name }) => name).sort(), [...names, 'get_workspace_revision'].sort());
+    assert.deepEqual((await client.callTool({ name: 'get_workspace_revision', arguments: {} })).structuredContent, { revision: 1 });
     const denied = await client.callTool({ name: scope === 'recipes:delete' ? 'create_recipe' : 'delete_recipe', arguments: {} });
     assert.equal(denied.isError, true);
     assert.equal(denied.structuredContent, undefined);
