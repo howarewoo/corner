@@ -23,7 +23,6 @@ const config: Config = {
   port: 3000,
   dataDir: '/tmp',
   deployment: 'local',
-
 };
 const signupName = 'Fresh trainee Ω';
 const food = {
