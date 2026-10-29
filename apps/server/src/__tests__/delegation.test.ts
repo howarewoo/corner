@@ -432,3 +432,44 @@ test('another actual managed session for the same owner cannot take over pending
   assert.equal(approved.status, 200);
   assert.equal((await call(`/api/delegation/consent/${pending.uid}`, { accepted: true, scopes: ['workouts:read'] }, { jar: pending.jar })).status, 409);
 });
+
+test('owner-selected meal writes cross real OAuth and HTTP, retain raw retries and stop after revocation', async () => {
+  const recipe = {
+    id: 'http-meal-recipe', name: 'Oats', description: '', category: 'breakfast', prepMinutes: 1,
+    cookMinutes: 0, nutrition: { calories: 100, protein: 10, carbs: 10, fat: 2 },
+    ingredients: [{ name: 'Oats', quantity: 100, unit: 'g', aisle: 'Grains' }], steps: ['Mix'],
+    storage: '', variation: '', tags: [], color: '#234b35', source: 'manual', favorite: false,
+    createdAt: '2026-10-28T12:00:00.000Z',
+  };
+  await store.mutate(alice.id, 'http-recipe-seed', { type: 'recipe.save', data: recipe });
+  const revision = (await store.bootstrap(alice.id)).revision;
+  const client = await register();
+  const token = await exchange(client, await authorize(client, alice, 'meal-plans:write recipes:read', ['meal-plans:write']));
+  assert.equal(token.status, 200);
+  const visible = await call('/mcp', { jsonrpc: '2.0', id: 2, method: 'tools/list' }, { bearer: token.data.access_token, origin: null });
+  assert.deepEqual(visible.data.result.tools.map((tool: { name: string }) => tool.name), ['edit_meal_plans']);
+  const entry = { id: 'http-meal', date: '2026-10-28', slot: 'breakfast', recipeId: ' http-meal-recipe ', servings: 1 };
+  const input = { operationId: 'http-meal-create', expectedRevision: revision, changes: [{ action: 'create', entry }] };
+  const created = await mcp(token.data.access_token, 'edit_meal_plans', input);
+  assert.deepEqual(created.data.result.structuredContent, { revision: revision + 1 });
+  const patched = await mcp(token.data.access_token, 'edit_meal_plans', {
+    operationId: 'http-meal-update', expectedRevision: revision + 1,
+    changes: [{ action: 'update', id: entry.id, patch: { servings: 2 } }],
+  });
+  assert.deepEqual(patched.data.result.structuredContent, { revision: revision + 2 });
+  assert.deepEqual((await mcp(token.data.access_token, 'edit_meal_plans', input)).data.result.structuredContent, { revision: revision + 1 });
+  const changed = await mcp(token.data.access_token, 'edit_meal_plans', {
+    ...input, changes: [{ action: 'create', entry: { ...entry, recipeId: entry.recipeId.trim() } }],
+  });
+  assert.equal(changed.data.result.structuredContent.code, 'REQUEST_ID_REUSED');
+  const snapshot = await store.exportSnapshot(alice.id);
+  assert.deepEqual(snapshot.state.plan.find((meal) => meal.id === entry.id), { ...entry, recipeId: entry.recipeId.trim(), servings: 2 });
+  assert.equal(snapshot.revision, revision + 2);
+  const renewed = await refresh(client, token.data.refresh_token);
+  assert.equal(renewed.status, 200);
+  assert.deepEqual((await connection(client)).scopes, ['meal-plans:write']);
+  assert.equal((await mcp(renewed.data.access_token, 'list_recipes')).data.result.isError, true);
+  const grant = await connection(client);
+  assert.equal((await call('/api/delegation/revoke', { id: grant.id }, { jar: alice.jar })).status, 200);
+  assert.equal((await mcp(renewed.data.access_token, 'edit_meal_plans', input)).status, 401);
+});

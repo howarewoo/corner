@@ -3,14 +3,14 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { expect, test, vi } from 'vitest';
-import { DELEGATED_READ_PERMISSIONS } from '@packages/api/delegation';
+import { DELEGATED_PERMISSIONS } from '@packages/api/delegation';
 import { queryClient } from '../../../rpc';
 import { json, mockHttp } from '../../../__tests__/http';
 import DelegatedConsentScreen, { safeAuthorizeReturn, safeAccountReturn } from '../delegated-consent';
 import DelegatedConnections from '../delegated-connections';
 
 const clientName = '<img src="https://untrusted.invalid/icon" onerror="alert(1)">';
-const permissions = DELEGATED_READ_PERMISSIONS.slice(0, 2);
+const permissions = DELEGATED_PERMISSIONS.slice(0, 2);
 const consent = {
   id: 'request-a', clientName, accountName: 'Alex', accountEmail: 'alex@example.test',
   requestedScopes: [...permissions.map(({ scope }) => scope), 'offline_access', 'settings:write'],
@@ -46,6 +46,21 @@ test('denial never sends selected permissions', async () => {
   await userEvent.click(screen.getByRole('button', { name: 'Deny' }));
   await screen.findByText('Request expired');
   expect(calls.find((call) => call.init.method === 'POST')?.body).toEqual({ accepted: false, scopes: [] });
+});
+
+test('meal write permission is independently selectable and discloses autonomous changes', async () => {
+  const mealWrite = DELEGATED_PERMISSIONS.find(({ scope }) => scope === 'meal-plans:write')!;
+  const requested = [permissions[0], mealWrite];
+  const calls = mockHttp((call) => call.init.method === 'POST'
+    ? json({ error: 'Request expired' }, 400)
+    : json({ ...consent, requestedScopes: requested.map(({ scope }) => scope), permissions: requested }));
+  mountConsent();
+  await screen.findByText(clientName);
+  expect(screen.getByText(/Corner will not ask you to approve each change/)).toBeVisible();
+  await userEvent.click(screen.getByRole('checkbox', { name: permissions[0].label }));
+  await userEvent.click(screen.getByRole('button', { name: 'Approve access' }));
+  await screen.findByText('Request expired');
+  expect(calls.find((call) => call.init.method === 'POST')?.body).toEqual({ accepted: true, scopes: ['meal-plans:write'] });
 });
 
 test('only the exact local authorize endpoint can resume authorization', () => {
