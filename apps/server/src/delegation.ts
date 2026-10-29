@@ -198,6 +198,11 @@ export function createDelegationService(config: Pick<Config, 'origin'>): Delegat
         if (browser && (!principal?.managedSession || Date.parse(principal.managedSession.expiresAt) <= Date.now())) throw new ApiError(401, 'SESSION_REQUIRED', 'Start this connection again with a current account session.');
         if (!browser) delete ctx.req.headers.cookie;
         await transaction(current.db, principal, async () => {
+          if (path === '/oauth/authorize') {
+            const session = await issuer.Session.get(ctx);
+            // Reset browser identity only; independent grants survive account switches.
+            if (session.accountId && session.accountId !== principal!.userId) await session.destroy();
+          }
           if (resumePath.test(path)) await boundInteraction(issuer, ctx.req, ctx.res, path.slice(path.lastIndexOf('/') + 1), principal!);
           if (consentMatch) {
             if (request.method !== 'GET' && request.method !== 'POST') throw new ApiError(405, 'METHOD_NOT_ALLOWED', 'Use GET or POST.');
@@ -347,4 +352,3 @@ export function createDelegationService(config: Pick<Config, 'origin'>): Delegat
     },
   };
 }
-

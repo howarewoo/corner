@@ -229,6 +229,38 @@ test('authorization, real owner-scoped MCP read, refresh and owner revocation co
   assert.equal((await mcp(rotated.data.access_token)).status, 401);
 });
 
+test('switching managed accounts in one browser resets issuer identity without revoking existing grants', async () => {
+  const client = await register();
+  const jar: Jar = new Map();
+  const tokens: Tokens[] = [];
+  for (const owner of [alice, bob]) {
+    assert.equal((await call('/api/auth/sign-in/email', { email: owner.email, password }, { jar })).status, 200);
+    const pending = await start(client, { ...owner, jar });
+    for (const [name, value] of pending.jar) jar.set(name, value);
+    const path = `/api/delegation/consent/${pending.uid}`;
+    const details = await call(path, undefined, { jar });
+    assert.equal(details.status, 200);
+    assert.equal(details.data.accountEmail, owner.email);
+    const approved = await call(path, { accepted: true, scopes: ['workouts:read'] }, { jar });
+    assert.equal(approved.status, 200);
+    const resumed = await call(approved.data.redirectTo, undefined, { jar });
+    assert.equal(resumed.status, 303);
+    const code = new URL(resumed.location!).searchParams.get('code');
+    assert(code);
+    const token = await exchange(client, code);
+    assert.equal(token.status, 200);
+    tokens.push(token.data);
+    assert.equal((await call('/api/auth/sign-out', {}, { jar })).status, 200);
+  }
+  for (const [index, name] of ['alice workout', 'bob workout'].entries()) {
+    const rotated = await refresh(client, tokens[index]!.refresh_token);
+    assert.equal(rotated.status, 200);
+    const read = await mcp(rotated.data.access_token);
+    assert.equal(read.status, 200);
+    assert.deepEqual(read.data.result.structuredContent.items.map((item: { name: string }) => item.name), [name]);
+  }
+});
+
 test('consent requires matching fresh managed session, exact UID and same-origin writes, including resume', async () => {
   const client = await register();
   const pending = await start(client);
