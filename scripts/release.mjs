@@ -6,6 +6,7 @@ import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
 import { createRequire } from 'node:module';
+import { setTimeout as delay } from 'node:timers/promises';
 import {
   verifyArtifact,
   qualifyArtifact,
@@ -582,6 +583,23 @@ async function cloudflare(path, { missing = false } = {}) {
   need(body.success, 'Cloudflare read failed');
   return body.result;
 }
+export async function verifyPublic(
+  origin,
+  versionId,
+  access = {},
+  checkPublic = publicChecks,
+  wait = delay,
+) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await checkPublic(origin, versionId, undefined, access);
+      return;
+    } catch (error) {
+      if (!(error instanceof PublicCheckError) || !error.retryable || attempt === 11) throw error;
+      await wait(5000);
+    }
+  }
+}
 export async function publicChecks(origin, versionId, fetcher = fetch, access = {}) {
   const accessHeaders = {};
   const clientId = access['CF-Access-Client-Id'];
@@ -609,8 +627,16 @@ export async function publicChecks(origin, versionId, fetcher = fetch, access = 
     )
       throw new Error('Health not ready');
   } catch {
+    const observed = health?.headers.get('X-Corner-Version');
+    const boundary = !health
+      ? 'request'
+      : health.status !== 200
+        ? 'status'
+        : observed !== versionId
+          ? 'version'
+          : 'payload';
     throw new PublicCheckError(
-      `Public health or deployed version identity mismatch (HTTP ${health?.status ?? 'unavailable'})`,
+      `Public health or deployed version identity mismatch (HTTP ${health?.status ?? 'unavailable'}; boundary ${boundary}; expected ${uuid.test(versionId) ? versionId : 'invalid'}; observed ${uuid.test(observed ?? '') ? observed : 'missing/invalid'})`,
       true,
     );
   }
@@ -1228,7 +1254,7 @@ export async function promote({
   automatic = false,
   work,
   execute = command,
-  checkPublic = publicChecks,
+  checkPublic = verifyPublic,
   checkMaintenance = maintenanceChecks,
   cf = cloudflare,
   qualify = qualifyArtifact,
@@ -1564,7 +1590,7 @@ export async function complete({
   configuration,
   work,
   cf = cloudflare,
-  checkPublic = publicChecks,
+  checkPublic = verifyPublic,
 }) {
   const current = await github.baseline();
   need(
@@ -1631,7 +1657,7 @@ export async function resume({
   configuration,
   work,
   execute = command,
-  checkPublic = publicChecks,
+  checkPublic = verifyPublic,
   checkMaintenance = maintenanceChecks,
   cf = cloudflare,
   verify = verifyArtifact,
@@ -1835,7 +1861,7 @@ export async function deploy(options) {
     automatic: true,
   });
   if (prepared.payload.phase !== 'planned') {
-    await (options.checkPublic ?? publicChecks)(
+    await (options.checkPublic ?? verifyPublic)(
       prepared.payload.origin,
       prepared.payload.versionId,
     );

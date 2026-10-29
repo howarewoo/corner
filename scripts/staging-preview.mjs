@@ -7,7 +7,7 @@ import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
 import { setTimeout as delay } from 'node:timers/promises';
-import { GitHub, publicChecks, PublicCheckError } from './release.mjs';
+import { GitHub, publicChecks, verifyPublic, PublicCheckError } from './release.mjs';
 import { loadCiArtifact } from './ci-artifact.mjs';
 import {
   qualifyArtifact,
@@ -154,24 +154,6 @@ async function record(github, payload, state = 'in_progress') {
   return deployment;
 }
 
-export async function verifyPreviewPublic(
-  origin,
-  versionId,
-  access,
-  checkPublic = publicChecks,
-  wait = delay,
-) {
-  for (let attempt = 0; ; attempt++) {
-    try {
-      await checkPublic(origin, versionId, undefined, access);
-      return;
-    } catch (error) {
-      if (!(error instanceof PublicCheckError) || !error.retryable || attempt === 11) throw error;
-      await wait(5000);
-    }
-  }
-}
-
 export async function completePreview({
   github,
   deploymentId,
@@ -254,7 +236,7 @@ export async function completePreview({
   await assertCurrent();
   const production = JSON.stringify(await cf(`workers/scripts/${workerName}/deployments`));
   try {
-    await verifyPreviewPublic(
+    await verifyPublic(
       p.origin,
       p.deploymentId,
       {
@@ -528,7 +510,7 @@ export async function deployPreview({
       'CF-Access-Client-Id': environment.CORNER_STAGING_ACCESS_CLIENT_ID,
       'CF-Access-Client-Secret': environment.CORNER_STAGING_ACCESS_CLIENT_SECRET,
     };
-    await verifyPreviewPublic(config.origin, output.deployment_id, access, checkPublic, wait);
+    await verifyPublic(config.origin, output.deployment_id, access, checkPublic, wait);
     await current();
     await reverify();
     need(
