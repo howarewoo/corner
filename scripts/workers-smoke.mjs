@@ -721,9 +721,12 @@ try {
     return response.data.result;
   };
   const deleteCatalog = await delegatedCall('/mcp', { jsonrpc: '2.0', id: 5, method: 'tools/list' }, { bearer: nutritionDelete, browser: false });
-  assert.deepEqual(deleteCatalog.data.result.tools.map((tool) => tool.name), ['delete_recipe']);
+  assert.deepEqual(deleteCatalog.data.result.tools.map((tool) => tool.name).sort(), ['delete_recipe', 'get_workspace_revision']);
   const nutritionBefore = await snapshot(alice);
-  let nutritionRevision = nutritionBefore.revision;
+  const nutritionMetadata = (await nutritionCall(nutritionWriter, 'get_workspace_revision', {})).structuredContent;
+  assert.deepEqual(nutritionMetadata, { revision: nutritionBefore.revision });
+  assert.deepEqual((await nutritionCall(nutritionDelete, 'get_workspace_revision', {})).structuredContent, nutritionMetadata);
+  let nutritionRevision = nutritionMetadata.revision;
   const workerRecipe = {
     id: 'worker-mcp-recipe', name: 'Explicit Worker oats', description: '', category: 'breakfast',
     prepMinutes: 1, cookMinutes: 0, nutrition: { calories: 100, protein: 10, carbs: 10, fat: 2 },
@@ -857,7 +860,6 @@ try {
   assert.notEqual(savedSkipped.updatedAt, actualSkipped.updatedAt);
   assert.equal(trainingAfter.revision, trainingRevision);
   assert.equal((await snapshot(bob)).state.training.sessions.some((entry) => entry.id === workerStrength.id), false);
-
   const validateRecords = async (migrator) => {
     const connection = await backend.database.connect();
     try {

@@ -229,6 +229,38 @@ test('authorization, real owner-scoped MCP read, refresh and owner revocation co
   assert.equal((await mcp(rotated.data.access_token)).status, 401);
 });
 
+test('switching managed accounts in one browser resets issuer identity without revoking existing grants', async () => {
+  const client = await register();
+  const jar: Jar = new Map();
+  const tokens: Tokens[] = [];
+  for (const owner of [alice, bob]) {
+    assert.equal((await call('/api/auth/sign-in/email', { email: owner.email, password }, { jar })).status, 200);
+    const pending = await start(client, { ...owner, jar });
+    for (const [name, value] of pending.jar) jar.set(name, value);
+    const path = `/api/delegation/consent/${pending.uid}`;
+    const details = await call(path, undefined, { jar });
+    assert.equal(details.status, 200);
+    assert.equal(details.data.accountEmail, owner.email);
+    const approved = await call(path, { accepted: true, scopes: ['workouts:read'] }, { jar });
+    assert.equal(approved.status, 200);
+    const resumed = await call(approved.data.redirectTo, undefined, { jar });
+    assert.equal(resumed.status, 303);
+    const code = new URL(resumed.location!).searchParams.get('code');
+    assert(code);
+    const token = await exchange(client, code);
+    assert.equal(token.status, 200);
+    tokens.push(token.data);
+    assert.equal((await call('/api/auth/sign-out', {}, { jar })).status, 200);
+  }
+  for (const [index, name] of ['alice workout', 'bob workout'].entries()) {
+    const rotated = await refresh(client, tokens[index]!.refresh_token);
+    assert.equal(rotated.status, 200);
+    const read = await mcp(rotated.data.access_token);
+    assert.equal(read.status, 200);
+    assert.deepEqual(read.data.result.structuredContent.items.map((item: { name: string }) => item.name), [name]);
+  }
+});
+
 test('consent requires matching fresh managed session, exact UID and same-origin writes, including resume', async () => {
   const client = await register();
   const pending = await start(client);
@@ -442,12 +474,16 @@ test('owner-selected meal writes cross real OAuth and HTTP, retain raw retries a
     createdAt: '2026-10-28T12:00:00.000Z',
   };
   await store.mutate(alice.id, 'http-recipe-seed', { type: 'recipe.save', data: recipe });
-  const revision = (await store.bootstrap(alice.id)).revision;
+
   const client = await register();
   const token = await exchange(client, await authorize(client, alice, 'meal-plans:write recipes:read', ['meal-plans:write']));
   assert.equal(token.status, 200);
   const visible = await call('/mcp', { jsonrpc: '2.0', id: 2, method: 'tools/list' }, { bearer: token.data.access_token, origin: null });
-  assert.deepEqual(visible.data.result.tools.map((tool: { name: string }) => tool.name), ['edit_meal_plans']);
+  assert.deepEqual(visible.data.result.tools.map((tool: { name: string }) => tool.name).sort(), ['edit_meal_plans', 'get_workspace_revision']);
+  const metadata = await mcp(token.data.access_token, 'get_workspace_revision');
+  const { revision } = metadata.data.result.structuredContent;
+  assert.ok(revision > 0);
+  assert.deepEqual(metadata.data.result.structuredContent, { revision });
   const entry = { id: 'http-meal', date: '2026-10-28', slot: 'breakfast', recipeId: ' http-meal-recipe ', servings: 1 };
   const input = { operationId: 'http-meal-create', expectedRevision: revision, changes: [{ action: 'create', entry }] };
   const created = await mcp(token.data.access_token, 'edit_meal_plans', input);
@@ -480,7 +516,7 @@ test('nutrition OAuth grants keep edit/delete independent and HTTP CRUD returns 
   const token = await exchange(client, await authorize(client, bob, requested, ['recipes:write', 'food-logs:write']));
   assert.equal(token.status, 200);
   const tools = await call('/mcp', { jsonrpc: '2.0', id: 3, method: 'tools/list' }, { bearer: token.data.access_token, origin: null });
-  assert.deepEqual(tools.data.result.tools.map((tool: { name: string }) => tool.name).sort(), ['create_food_log', 'create_recipe', 'update_food_log', 'update_recipe']);
+  assert.deepEqual(tools.data.result.tools.map((tool: { name: string }) => tool.name).sort(), ['create_food_log', 'create_recipe', 'get_workspace_revision', 'update_food_log', 'update_recipe']);
   assert.equal((await mcp(token.data.access_token, 'delete_recipe', { operationId: 'denied-delete', expectedRevision: 0, id: 'anything' })).data.result.isError, true);
   const renewed = await refresh(client, token.data.refresh_token);
   assert.equal(renewed.status, 200);
@@ -496,7 +532,11 @@ test('nutrition OAuth grants keep edit/delete independent and HTTP CRUD returns 
     favorite: false, createdAt: '2026-10-28T12:00:00.000Z',
   };
   const entry = { id: 'http-crud-food', name: 'Explicit snapshot', date: '2026-10-28', slot: 'breakfast', nutrition, servings: 1, recipeId: recipe.id, createdAt: recipe.createdAt };
-  let revision = (await store.bootstrap(bob.id)).revision;
+  await store.mutate(bob.id, 'http-manual-recipe', { type: 'recipe.save', data: { ...recipe, id: 'manual-recipe' } });
+  const metadata = (await mcp(renewed.data.access_token, 'get_workspace_revision')).data.result.structuredContent;
+  let revision = metadata.revision;
+  assert.ok(revision > 0);
+  assert.deepEqual(metadata, { revision });
   const changes: Array<[string, Record<string, unknown>, string]> = [
     ['create_recipe', { recipe }, renewed.data.access_token],
     ['create_food_log', { entry }, renewed.data.access_token],
@@ -506,6 +546,17 @@ test('nutrition OAuth grants keep edit/delete independent and HTTP CRUD returns 
     ['delete_food_log', { id: entry.id }, deletion.data.access_token],
   ];
   for (const [name, fields, bearer] of changes) {
+    // Both edit-only and delete-only clients must recover after a manual change.
+    if (name === 'create_recipe' || name === 'delete_recipe') {
+      await store.mutate(bob.id, `http-manual-${name}`, { type: 'recipe.save', data: { ...recipe, id: 'manual-recipe', name } });
+      const stale = await mcp(bearer, name, { operationId: `http-stale-${name}`, expectedRevision: revision, ...fields });
+      assert.equal(stale.data.result.isError, true);
+      assert.equal(stale.data.result.structuredContent.code, 'REVISION_CONFLICT');
+      const current = (await mcp(bearer, 'get_workspace_revision')).data.result.structuredContent;
+      assert.deepEqual(current, { revision: revision + 1 });
+      revision = current.revision;
+      assert.equal((await mcp(bearer, 'list_recipes')).data.result.isError, true);
+    }
     const response = await mcp(bearer, name, { operationId: `http-crud-${name}`, expectedRevision: revision, ...fields });
     assert.equal(response.status, 200);
     assert.deepEqual(response.data.result.structuredContent, { revision: ++revision });
