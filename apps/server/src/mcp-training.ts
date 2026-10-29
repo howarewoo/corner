@@ -13,6 +13,7 @@ import { sessionRecords, templateRecord } from './training-records.js';
 import { executeEntityCommand } from './entity-commands.js';
 
 const guard = { operationId: requestIdSchema, expectedRevision: revisionSchema };
+const guardSchema = z.object(guard);
 const sessionFields = WorkoutSessionSchema.shape;
 const routineFields = WorkoutTemplateSchema.shape;
 const routine = z.object({ name: routineFields.name, kind: routineFields.kind, description: routineFields.description,
@@ -41,7 +42,7 @@ export function registerTrainingWrites(server: McpServer, store: WorkspaceStore,
     server.registerTool<z.ZodRawShape, z.ZodObject<S, z.core.$strict>>(name, { description: description + ' Requires operationId and expectedRevision; exact retries return the committed revision only. Collections replace wholesale; omitted patch fields remain unchanged.', inputSchema,
       annotations: { readOnlyHint: false, destructiveHint: name !== 'create_routine', idempotentHint: true, openWorldHint: false } }, async (input) => {
       try {
-        const guarded = z.object(guard).parse(input);
+        const guarded = guardSchema.parse(input);
         const result = await store.delegatedWrite(access, scope, name, original(name), guarded.operationId, guarded.expectedRevision,
           (connection, current, position) => update(input, connection, current, position));
         return { content: [{ type: 'text' as const, text: JSON.stringify(result) }], structuredContent: result };
@@ -90,11 +91,11 @@ export function registerTrainingWrites(server: McpServer, store: WorkspaceStore,
       await executeEntityCommand(connection, access.ownerId, { type: 'training.session.save', data: { session, expectedUpdatedAt: existing?.updatedAt ?? null } }, current.settings, position);
     }
   });
-  register('update_workout_history', 'workout-history:write', historyUpdate, 'Correct an existing started or recorded workout only; never creates, starts, completes or resets lifecycle status. Requires the actual expectedUpdatedAt token. No deletion.', async (input, connection, current, position) => {
+  register('update_workout_history', 'workout-history:write', historyUpdate, 'Correct an existing started, completed, skipped or recorded workout only; never creates, starts, completes or resets lifecycle status. Requires the actual expectedUpdatedAt token. No deletion.', async (input, connection, current, position) => {
     const rows = await connection.select().from(workoutSessions).where(and(eq(workoutSessions.user_id, access.ownerId), eq(workoutSessions.id, input.id))).limit(1);
     const existing = (await sessionRecords(connection, access.ownerId, rows))[0];
     if (!existing) throw new ApiError(404, 'NOT_FOUND', 'That workout no longer exists.');
-    if (!['in_progress', 'completed'].includes(existing.status) && !hasRecordedData(existing) && existing.readiness === null)
+    if (existing.status === 'planned' && !hasRecordedData(existing) && existing.readiness === null)
       throw new ApiError(409, 'NOT_RECORDED', 'Use the separately granted workout planning tool for an unstarted plan.');
     if (existing.updatedAt !== input.expectedUpdatedAt) throw new ApiError(409, 'RECORD_CONFLICT', 'This workout changed. Read its latest version before saving.');
     const session = WorkoutSessionSchema.parse({ ...existing, ...input.patch });

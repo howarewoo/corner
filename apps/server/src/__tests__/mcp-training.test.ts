@@ -114,6 +114,24 @@ test('history correction preserves completed lifecycle, creation timestamps, omi
   assert.equal((await store.exportSnapshot('alice')).revision, 2);
 });
 
+test('history-only permission corrects an existing skipped outcome without changing lifecycle or omitted actuals', async () => {
+  await store.mutate('alice', 'seed-skipped', { type: 'training.session.save', data: {
+    session: { ...recorded, id: 'skipped', status: 'skipped', durationMinutes: null, rounds: null, sessionRpe: null, readiness: null, notes: 'Skipped due to travel' },
+    expectedUpdatedAt: null,
+  } });
+  const before = await store.exportSnapshot('alice');
+  const skipped = before.state.training.sessions.find((session) => session.id === 'skipped')!;
+  const write = await connect({ ...access, scopes: ['workout-history:write'] });
+  const result = await write('update_workout_history', { operationId: 'correct-skipped', expectedRevision: before.revision,
+    id: skipped.id, expectedUpdatedAt: skipped.updatedAt, patch: { notes: 'Skipped due to delayed flight' } });
+  assert.deepEqual(result.structuredContent, { revision: before.revision + 1 });
+  const after = await store.exportSnapshot('alice');
+  const saved = after.state.training.sessions.find((session) => session.id === 'skipped')!;
+  assert.deepEqual(saved, { ...skipped, notes: 'Skipped due to delayed flight', updatedAt: saved.updatedAt });
+  assert.notEqual(saved.updatedAt, skipped.updatedAt);
+  assert.equal(after.state.training.sessions.length, before.state.training.sessions.length);
+});
+
 test('permissions remain independent, owner scoped, and revoked scope is checked before replay', async () => {
   const granted = ['workout-history:write'];
   const write = await connect({ ...access, scopes: granted });

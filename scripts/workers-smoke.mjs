@@ -678,7 +678,7 @@ try {
   // Worker/Neon transactions must preserve the same guarded nutrition effects as Node.
   const nutritionToken = async (scopes) => {
     const registration = await delegatedCall('/oauth/register', {
-      client_name: `Canonical Worker nutrition ${scopes.join(' ')}`,
+      client_name: `Canonical Worker writes ${scopes.join(' ')}`,
       redirect_uris: ['http://127.0.0.1/callback'], grant_types: ['authorization_code', 'refresh_token'],
       response_types: ['code'], token_endpoint_auth_method: 'none',
     }, { browser: false });
@@ -777,6 +777,79 @@ try {
   assert.equal(nutritionAfter.state.recipes.some((entry) => entry.id === workerRecipe.id), false);
   assert.deepEqual(nutritionAfter.state.logs, [...nutritionBefore.state.logs, workerFood]);
   assert.equal((await snapshot(bob)).state.logs.some((entry) => entry.id === workerFood.id), false);
+
+  // Training grants use the same actual Worker/OAuth path, separately from planning and nutrition.
+  const trainingPlanner = await nutritionToken(['routines:write', 'workout-plans:write']);
+  const trainingHistorian = await nutritionToken(['workout-history:write']);
+  const historyCatalog = await delegatedCall('/mcp', { jsonrpc: '2.0', id: 6, method: 'tools/list' }, { bearer: trainingHistorian, browser: false });
+  assert.deepEqual(historyCatalog.data.result.tools.map((tool) => tool.name), ['update_workout_history']);
+  const trainingTimestamp = '2026-10-28T12:00:00.000Z';
+  const workerTarget = { id: 'worker-squat', name: 'Squat', loadType: 'total', targetSets: 2,
+    repMin: 6, repMax: 8, targetRir: 2, restSeconds: 120, notes: 'Keep target' };
+  const workerStrength = { id: 'worker-strength-history', date: '2026-10-28', name: 'Recorded strength',
+    kind: 'strength', status: 'completed', unit: 'kg', exercises: [{ ...workerTarget,
+      sets: [{ id: 'worker-set', weight: 60, reps: 6, rir: 2, completed: true, kind: 'working' }] }],
+    plannedMinutes: 35, durationMinutes: 32, rounds: null, sessionRpe: 7, readiness: 4,
+    notes: 'Keep history notes', changeReason: '', createdAt: trainingTimestamp, updatedAt: trainingTimestamp };
+  const workerSkipped = { ...workerStrength, id: 'worker-skipped-history', status: 'skipped',
+    exercises: [], durationMinutes: null, sessionRpe: null, readiness: null, notes: 'Skipped due to travel' };
+  for (const session of [workerStrength, workerSkipped]) {
+    await client(alice).workspace.mutate({ requestId: `worker-owner-seed-${session.id}`,
+      mutation: { type: 'training.session.save', data: { session, expectedUpdatedAt: null } } });
+  }
+  const trainingBefore = await snapshot(alice);
+  let trainingRevision = trainingBefore.revision;
+  const workerRoutine = { id: 'worker-routine', name: 'Worker strength routine', kind: 'strength',
+    description: 'Keep description', durationMinutes: 35, exercises: [workerTarget] };
+  assert.deepEqual((await nutritionCall(trainingPlanner, 'create_routine', {
+    operationId: 'worker-create-routine', expectedRevision: trainingRevision, routine: workerRoutine,
+  })).structuredContent, { revision: ++trainingRevision });
+  const workerPlan = { id: 'worker-workout-plan', date: '2026-10-29', name: 'Worker planned strength',
+    kind: 'strength', unit: 'kg', exercises: [workerTarget], plannedMinutes: 35, notes: 'Keep plan notes', changeReason: '' };
+  const workoutBatch = { operationId: 'worker-create-workout-batch', expectedRevision: trainingRevision,
+    changes: [{ action: 'create', entry: workerPlan }, { action: 'create', entry: { ...workerPlan, id: 'worker-workout-plan-two', date: '2026-10-30' } }] };
+  assert.deepEqual((await nutritionCall(trainingPlanner, 'edit_workout_plans', workoutBatch)).structuredContent, { revision: ++trainingRevision });
+  const beforeRoutineEdit = await snapshot(alice);
+  assert.deepEqual((await nutritionCall(trainingPlanner, 'update_routine', {
+    operationId: 'worker-edit-routine', expectedRevision: trainingRevision, id: workerRoutine.id, patch: { durationMinutes: 40 },
+  })).structuredContent, { revision: ++trainingRevision });
+  const afterRoutineEdit = await snapshot(alice);
+  assert.deepEqual(afterRoutineEdit.state.training.sessions, beforeRoutineEdit.state.training.sessions);
+  assert.equal(afterRoutineEdit.state.training.templates.find((entry) => entry.id === workerRoutine.id).description, workerRoutine.description);
+  const actualStrength = afterRoutineEdit.state.training.sessions.find((entry) => entry.id === workerStrength.id);
+  const protectedBatch = await nutritionCall(trainingPlanner, 'edit_workout_plans', {
+    operationId: 'worker-protected-workout-batch', expectedRevision: trainingRevision,
+    changes: [{ action: 'create', entry: { ...workerPlan, id: 'worker-must-rollback' } },
+      { action: 'update', id: actualStrength.id, expectedUpdatedAt: actualStrength.updatedAt, patch: { notes: 'Must not replace actuals' } }],
+  });
+  assert.equal(protectedBatch.structuredContent.code, 'HISTORY_PROTECTED');
+  assert.deepEqual(await snapshot(alice), afterRoutineEdit);
+  assert.deepEqual((await nutritionCall(trainingPlanner, 'edit_workout_plans', workoutBatch)).structuredContent, { revision: trainingRevision - 1 });
+  assert.deepEqual(await snapshot(alice), afterRoutineEdit);
+  const correctedExercises = actualStrength.exercises.map((exercise) => ({ ...exercise,
+    sets: exercise.sets.map((set) => ({ ...set, reps: 8 })) }));
+  const strengthCorrection = { operationId: 'worker-correct-strength', expectedRevision: trainingRevision,
+    id: actualStrength.id, expectedUpdatedAt: actualStrength.updatedAt, patch: { exercises: correctedExercises } };
+  assert.equal((await nutritionCall(trainingPlanner, 'update_workout_history', strengthCorrection)).isError, true);
+  assert.deepEqual((await nutritionCall(trainingHistorian, 'update_workout_history', strengthCorrection)).structuredContent, { revision: ++trainingRevision });
+  const afterStrength = await snapshot(alice);
+  const savedStrength = afterStrength.state.training.sessions.find((entry) => entry.id === actualStrength.id);
+  assert.deepEqual(savedStrength, { ...actualStrength, exercises: correctedExercises, updatedAt: savedStrength.updatedAt });
+  assert.notEqual(savedStrength.updatedAt, actualStrength.updatedAt);
+  assert.equal((await nutritionCall(trainingHistorian, 'update_workout_history', {
+    ...strengthCorrection, operationId: 'worker-stale-strength', expectedRevision: trainingRevision,
+  })).structuredContent.code, 'RECORD_CONFLICT');
+  const actualSkipped = afterStrength.state.training.sessions.find((entry) => entry.id === workerSkipped.id);
+  assert.deepEqual((await nutritionCall(trainingHistorian, 'update_workout_history', {
+    operationId: 'worker-correct-skipped', expectedRevision: trainingRevision, id: actualSkipped.id,
+    expectedUpdatedAt: actualSkipped.updatedAt, patch: { notes: 'Skipped due to delayed flight' },
+  })).structuredContent, { revision: ++trainingRevision });
+  const trainingAfter = await snapshot(alice);
+  const savedSkipped = trainingAfter.state.training.sessions.find((entry) => entry.id === actualSkipped.id);
+  assert.deepEqual(savedSkipped, { ...actualSkipped, notes: 'Skipped due to delayed flight', updatedAt: savedSkipped.updatedAt });
+  assert.notEqual(savedSkipped.updatedAt, actualSkipped.updatedAt);
+  assert.equal(trainingAfter.revision, trainingRevision);
+  assert.equal((await snapshot(bob)).state.training.sessions.some((entry) => entry.id === workerStrength.id), false);
 
   const validateRecords = async (migrator) => {
     const connection = await backend.database.connect();
