@@ -8,6 +8,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
 import { createInitialState } from '@packages/workspace/initial-state';
 import type { WorkoutSession } from '@packages/training/types';
+import { ExerciseTargetSchema } from '@packages/training/workouts';
 import type { DelegatedAccess } from '../delegation.js';
 import { createReadMcpServer } from '../mcp-reads.js';
 import { WorkspaceStore } from '../store.js';
@@ -131,6 +132,7 @@ async function seed(ownerId: string) {
     name: `${ownerId} strength`,
   }));
   const { sets: _sets, ...exercise } = workout('routine').exercises[0];
+  const target = ExerciseTargetSchema.parse(exercise);
   state.training.templates = [
     {
       id: 'routine',
@@ -138,7 +140,7 @@ async function seed(ownerId: string) {
       kind: 'strength',
       description: '',
       durationMinutes: 40,
-      exercises: [exercise],
+      exercises: [target],
       createdAt: stamp,
       updatedAt: stamp,
     },
