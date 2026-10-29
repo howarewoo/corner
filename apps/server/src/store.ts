@@ -3,7 +3,7 @@ import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import type { Database, Transaction } from './queries.js';
 import { mutationReceipts, workspaceMetadata } from './schema.js';
 import { z } from 'zod';
-import { MutationSchema, SettingsSchema, ImportSourceSchema } from '@packages/workspace/mutations';
+import { MutationSchema, SettingsSchema, ImportSourceSchema, GroceryKeySchema } from '@packages/workspace/mutations';
 import {
   FoodEntrySchema,
   PlanEntrySchema,
@@ -50,11 +50,7 @@ const StateSchema = z
     settings: SettingsSchema,
     groceryChecks: z
       .record(
-        z
-          .string()
-          .min(1)
-          .max(500)
-          .refine((key) => !['__proto__', 'prototype', 'constructor'].includes(key)),
+        GroceryKeySchema,
         z.boolean(),
       )
       .refine((value) => Object.keys(value).length <= 100000, 'Too many grocery checkboxes.'),

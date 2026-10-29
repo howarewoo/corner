@@ -1062,6 +1062,68 @@ try {
   });
   assert.equal(importConflict.structuredContent.code, 'SOURCE_CONFLICT');
   assert.deepEqual(await snapshot(alice), afterImport);
+  const nativeDomains = ['workouts', 'routines', 'recipes', 'meal-plans', 'food-logs', 'check-ins', 'scheduled-dates', 'grocery-checks'];
+  const nativeImporter = await nutritionToken(nativeDomains.map((domain) => `${domain}:import`));
+  const nativeBefore = await snapshot(alice);
+  let nativeRevision = nativeBefore.revision;
+  const importNative = async (tool, key, record) => {
+    const result = await nutritionCall(nativeImporter, tool, {
+      operationId: `worker-${tool}`, expectedRevision: nativeRevision, sourceNamespace: 'worker-native-archive',
+      records: [{ sourceRecordId: tool, [key]: record }],
+    });
+    assert.equal(result.isError, undefined, JSON.stringify(result));
+    assert.equal(result.structuredContent.outcomes[0].outcome, 'created');
+    nativeRevision = result.structuredContent.revision;
+  };
+  await importNative('import_routines', 'routine', {
+    id: 'worker-native-routine', name: 'Native recovery', kind: 'recovery', description: '',
+    durationMinutes: 0, exercises: [],
+  });
+  await importNative('import_recipes', 'recipe', {
+    id: 'worker-native-recipe', name: 'Native soup', description: '', category: 'main',
+    prepMinutes: 0, cookMinutes: 0, nutrition: { calories: 0, protein: 0, carbs: 0, fat: 0 },
+    ingredients: [{ name: 'Water', quantity: 0, unit: 'ml', aisle: 'Other', optional: false }],
+    steps: ['Serve'], storage: '', variation: '', tags: [], color: '#112233',
+    source: 'manual', favorite: false, pdf: '/recipes/worker-soup.pdf',
+  });
+  await importNative('import_meal_plans', 'mealPlan', {
+    id: 'worker-native-plan', date: '2010-01-01', slot: 'lunch', recipeId: 'worker-native-recipe', servings: 2,
+  });
+  await importNative('import_food_logs', 'foodLog', {
+    id: 'worker-native-food', date: '2001-01-01', slot: 'dinner', name: 'Historical snapshot',
+    recipeId: 'deleted-recipe', planEntryId: 'deleted-plan', servings: 3,
+    nutrition: { calories: 100, protein: 0, carbs: 20, fat: 0 },
+  });
+  await importNative('import_check_ins', 'checkIn', {
+    id: 'worker-native-check-in', date: '2000-01-01', bodyWeight: null, waist: null,
+    sleepHours: 0, energy: null, soreness: null, boxingQuality: null, notes: '',
+  });
+  await importNative('import_scheduled_dates', 'scheduledDate', { date: '1999-12-31' });
+  const nativeGroceryKey = ' Épicerie | 豆腐 '.padEnd(500, ' ');
+  await importNative('import_grocery_checks', 'groceryCheck', { key: nativeGroceryKey, checked: false });
+  await importNative('import_workouts', 'workout', {
+    id: 'worker-native-workout-plan', date: '1998-01-01', name: 'Explicit native plan', kind: 'recovery',
+    status: 'planned', unit: 'lb', exercises: [], plannedMinutes: 0, durationMinutes: null,
+    rounds: null, sessionRpe: null, readiness: null, notes: '', changeReason: '',
+  });
+  const nativeAfter = await snapshot(alice);
+  assert.equal(nativeAfter.revision, nativeRevision);
+  assert.deepEqual(nativeAfter.state.settings, nativeBefore.state.settings);
+  assert.deepEqual(nativeAfter.state.training.scheduledDates, [...nativeBefore.state.training.scheduledDates, '1999-12-31']);
+  assert.equal(nativeAfter.state.training.templates.find((row) => row.id === 'worker-native-routine').durationMinutes, 0);
+  assert.equal(nativeAfter.state.recipes.find((row) => row.id === 'worker-native-recipe').favorite, false);
+  assert.equal(nativeAfter.state.plan.find((row) => row.id === 'worker-native-plan').recipeId, 'worker-native-recipe');
+  const nativeFood = nativeAfter.state.logs.find((row) => row.id === 'worker-native-food');
+  assert.equal(nativeFood.nutrition.calories * nativeFood.servings, 300);
+  assert.equal(nativeFood.recipeId, 'deleted-recipe');
+  assert.equal(nativeFood.planEntryId, 'deleted-plan');
+  assert.equal(nativeAfter.state.training.checkIns.find((row) => row.id === 'worker-native-check-in').sleepHours, 0);
+  assert.equal(nativeAfter.state.groceryChecks[nativeGroceryKey], false);
+  assert.equal(nativeAfter.state.training.sessions.find((row) => row.id === 'worker-native-workout-plan').status, 'planned');
+  const importedFoodWindow = await client(alice).workspace.foodWindow({ from: '2001-01-01', through: '2001-01-01', limit: 50 });
+  assert.equal(importedFoodWindow.totals.calories, 300);
+  assert.equal(importedFoodWindow.totals.protein, 0);
+  assert.equal(importedFoodWindow.entries[0].name, 'Historical snapshot');
   // Training grants use the same actual Worker/OAuth path, separately from planning and nutrition.
   const trainingPlanner = await nutritionToken(['routines:write', 'workout-plans:write']);
   const trainingHistorian = await nutritionToken(['workout-history:write']);
