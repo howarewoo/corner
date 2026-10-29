@@ -6,7 +6,7 @@ import { and, desc, eq, isNull, or, sql, TransactionRollbackError } from 'drizzl
 import Provider, { errors, type Configuration, type Interaction } from 'oidc-provider';
 import { exportJWK, generateKeyPair } from 'jose';
 import { z } from 'zod';
-import { DELEGATED_READ_PERMISSIONS, type DelegatedReadScope, type DelegatedConsent, type DelegatedConnection } from '@packages/api/delegation';
+import { DELEGATED_PERMISSIONS, type DelegatedScope, type DelegatedConsent, type DelegatedConnection } from '@packages/api/delegation';
 import type { CornerAuth, Principal } from './auth.js';
 import type { Config } from './config.js';
 import type { Database } from './queries.js';
@@ -23,8 +23,8 @@ export interface DelegationService {
   authenticate(request: Request, db: Database): Promise<DelegatedAccess | null>;
 }
 
-const readScopes = DELEGATED_READ_PERMISSIONS.map(({ scope }) => scope);
-const readScopeSet = new Set<string>(readScopes);
+const domainScopes = DELEGATED_PERMISSIONS.map(({ scope }) => scope);
+const domainScopeSet = new Set<string>(domainScopes);
 const consentPath = /^\/api\/delegation\/consent\/([A-Za-z0-9_-]+)$/;
 const resumePath = /^\/oauth\/authorize\/[A-Za-z0-9_-]+$/;
 const browserAppPath = /^\/oauth\/(?:sign-in|consent\/[A-Za-z0-9_-]+)$/;
@@ -32,7 +32,7 @@ const oauthPaths: Record<string, true> = {
   '/oauth/authorize': true, '/oauth/token': true, '/oauth/register': true,
   '/oauth/revoke': true, '/oauth/jwks': true, '/.well-known/oauth-authorization-server': true,
 };
-const consentInput = z.object({ accepted: z.boolean(), scopes: z.array(z.enum(readScopes)).max(readScopes.length) }).strict();
+const consentInput = z.object({ accepted: z.boolean(), scopes: z.array(z.enum(domainScopes)).max(domainScopes.length) }).strict();
 const revokeInput = z.object({ id: z.string().min(1).max(200) }).strict();
 const lifetime = 30 * 24 * 60 * 60;
 
@@ -133,7 +133,7 @@ export function createDelegationService(config: Pick<Config, 'origin'>): Delegat
         long: { path: '/', httpOnly: true, sameSite: 'lax', secure: origin.protocol === 'https:' },
       },
       responseTypes: ['code'],
-      scopes: [...readScopes, 'offline_access'],
+      scopes: [...domainScopes, 'offline_access'],
       clientDefaults: { grant_types: ['authorization_code', 'refresh_token'], response_types: ['code'], token_endpoint_auth_method: 'none' },
       clientAuthMethods: ['none', 'client_secret_basic', 'client_secret_post'],
       pkce: { required: () => true },
@@ -153,7 +153,7 @@ export function createDelegationService(config: Pick<Config, 'origin'>): Delegat
           defaultResource: async () => resource,
           getResourceServerInfo: async (_ctx, requested) => {
             if (requested !== resource) throw new errors.InvalidTarget();
-            return { scope: readScopes.join(' '), audience: resource, accessTokenFormat: 'opaque', accessTokenTTL: 300 };
+            return { scope: domainScopes.join(' '), audience: resource, accessTokenFormat: 'opaque', accessTokenTTL: 300 };
           },
         },
       },
@@ -212,7 +212,7 @@ export function createDelegationService(config: Pick<Config, 'origin'>): Delegat
               ctx.body = await consentDetails(issuer, details, principal!);
             } else {
               const input = consentInput.parse(await readJson(nativeRequest(ctx.req, config.origin, true), 16 * 1024));
-              const requested = requestedReadScopes(details);
+              const requested = requestedDomainScopes(details);
               if (new Set(input.scopes).size !== input.scopes.length || input.scopes.some((scope) => !requested.includes(scope)) || (input.accepted ? input.scopes.length === 0 : input.scopes.length !== 0)) throw new ApiError(400, 'INVALID_CONSENT', 'Choose at least one requested permission, or deny this connection.');
               if (!input.accepted) {
                 ctx.body = { redirectTo: await issuer.interactionResult(ctx.req, ctx.res, { error: 'access_denied', error_description: 'The account owner declined this connection.' }, { mergeWithLastSubmission: false }) };
@@ -289,18 +289,18 @@ export function createDelegationService(config: Pick<Config, 'origin'>): Delegat
     return details;
   }
 
-  function requestedReadScopes(details: Interaction) {
+  function requestedDomainScopes(details: Interaction) {
     const scope = typeof details.params.scope === 'string' ? details.params.scope : '';
-    return [...new Set(scope.split(' ').filter((value): value is DelegatedReadScope => readScopeSet.has(value)))];
+    return [...new Set(scope.split(' ').filter((value): value is DelegatedScope => domainScopeSet.has(value)))];
   }
 
   async function consentDetails(issuer: Provider, details: Interaction, principal: Principal): Promise<DelegatedConsent> {
     const clientId = details.params.client_id;
     const client = typeof clientId === 'string' ? await issuer.Client.find(clientId) : undefined;
     if (!client) throw new ApiError(400, 'INVALID_CONSENT', 'This client is no longer available.');
-    const requestedScopes = requestedReadScopes(details);
-    if (!requestedScopes.length) throw new ApiError(400, 'INVALID_CONSENT', 'This client requested no implemented read permissions.');
-    return { id: details.uid, clientName: client.clientName || 'Unnamed MCP client', requestedScopes, permissions: DELEGATED_READ_PERMISSIONS.filter(({ scope }) => requestedScopes.includes(scope)), accountName: principal.name, accountEmail: principal.email };
+    const requestedScopes = requestedDomainScopes(details);
+    if (!requestedScopes.length) throw new ApiError(400, 'INVALID_CONSENT', 'This client requested no implemented permissions.');
+    return { id: details.uid, clientName: client.clientName || 'Unnamed MCP client', requestedScopes, permissions: DELEGATED_PERMISSIONS.filter(({ scope }) => requestedScopes.includes(scope)), accountName: principal.name, accountEmail: principal.email };
   }
 
   async function connections(issuer: Provider, ownerId: string): Promise<DelegatedConnection[]> {
@@ -310,7 +310,7 @@ export function createDelegationService(config: Pick<Config, 'origin'>): Delegat
     for (const row of rows) {
       const grant = await issuer.Grant.find(row.id);
       if (!grant || grant.accountId !== ownerId) continue;
-      const scopes = grant.getResourceScope(resource).split(' ').filter((scope) => readScopeSet.has(scope));
+      const scopes = grant.getResourceScope(resource).split(' ').filter((scope) => domainScopeSet.has(scope));
       if (!scopes.length) continue;
       const client = row.clientId ? await issuer.Client.find(row.clientId) : undefined;
       result.push({ id: row.id, clientName: client?.clientName || 'Unnamed MCP client', scopes, createdAt: row.createdAt.toISOString() });
@@ -345,7 +345,7 @@ export function createDelegationService(config: Pick<Config, 'origin'>): Delegat
         const grant = token?.grantId ? await issuer.Grant.find(token.grantId) : undefined;
         if (!token || !grant || token.aud !== resource || !token.accountId || !token.clientId || grant.accountId !== token.accountId || grant.clientId !== token.clientId) return null;
         const granted = new Set(grant.getResourceScope(resource).split(' '));
-        const scopes = [...token.scopes].filter((scope) => readScopeSet.has(scope) && granted.has(scope));
+        const scopes = [...token.scopes].filter((scope) => domainScopeSet.has(scope) && granted.has(scope));
         if (!scopes.length) return null;
         return { ownerId: token.accountId, clientId: token.clientId, grantId: token.grantId!, scopes };
       });

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Alert, Button, Checkbox } from '@packages/ui';
-import { DELEGATED_READ_PERMISSIONS, delegatedAuthorizationReturn, delegatedAccountReturn, type DelegatedConsent } from '@packages/api/delegation';
+import { DELEGATED_PERMISSIONS, delegatedAuthorizationReturn, delegatedAccountReturn, type DelegatedConsent } from '@packages/api/delegation';
 import { errorMessage } from '../../api';
 import { privateKey, sessionLifetime } from '../../rpc';
 import { delegationRequest } from './delegated-connections';
@@ -41,7 +41,7 @@ export default function DelegatedConsentScreen({ uid, notify }: { uid: string; n
 }
 
 function ConsentForm({ consent, uid, notify }: { consent: DelegatedConsent; uid: string; notify: (message: string) => void }) {
-  const permissions = DELEGATED_READ_PERMISSIONS.filter((permission) => consent.requestedScopes.includes(permission.scope) && consent.permissions.some((requested) => requested.scope === permission.scope));
+  const permissions = DELEGATED_PERMISSIONS.filter((permission) => consent.requestedScopes.includes(permission.scope) && consent.permissions.some((requested) => requested.scope === permission.scope));
   const [selected, setSelected] = useState<string[]>(() => permissions.map((permission) => permission.scope));
   const [pending, setPending] = useState<'approve' | 'deny' | null>(null);
   const [failure, setFailure] = useState('');
@@ -69,14 +69,15 @@ function ConsentForm({ consent, uid, notify }: { consent: DelegatedConsent; uid:
     <p><strong>{consent.clientName}</strong> wants access to your Corner account.</p>
     <p>Signed in as {consent.accountName} ({consent.accountEmail})</p>
     <fieldset disabled={pending !== null} className="space-y-3">
-      <legend>Choose read permissions</legend>
+      <legend>Choose permissions</legend>
       {permissions.map((permission) => <label key={permission.scope} className="flex min-h-11 items-center gap-3">
         <Checkbox checked={selected.includes(permission.scope)} onCheckedChange={(checked) => setSelected((current) => checked ? [...current, permission.scope] : current.filter((scope) => scope !== permission.scope))} />
         <span>{permission.label}</span>
       </label>)}
     </fieldset>
-    <p>This connection is read-only. It cannot change your nutrition or training records. Your client can keep accessing the selected information without asking each time, even after you sign out of Corner, until the connection expires or you revoke access in Settings.</p>
-    <p>Only approve a client you trust with this information. Revoking stops subsequent requests; a request already in progress may finish.</p>
+    <p>Your client can use the selected permissions without asking each time, even after you sign out of Corner, until the connection expires or you revoke access in Settings.</p>
+    <p>If you grant create, edit or delete permissions, the client applies those changes directly. Corner will not ask you to approve each change. Read permissions alone cannot change records.</p>
+    <p>Only approve a client you trust with this access. Revoking stops subsequent requests; a request already in progress may finish.</p>
     {failure && <Alert variant="destructive">{failure}</Alert>}
     <div className="button-row">
       <Button disabled={pending !== null || selected.length === 0} onClick={() => void decide(true)}>{pending === 'approve' ? 'Approving…' : 'Approve access'}</Button>
