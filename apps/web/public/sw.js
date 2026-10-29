@@ -35,7 +35,7 @@ self.addEventListener('fetch', (event) => {
     request.method !== 'GET' ||
     request.mode !== 'navigate' ||
     url.origin !== self.location.origin ||
-    /^\/(api|auth|account)(\/|$)/.test(url.pathname)
+    /^\/(api|auth|account|oauth|mcp|\.well-known)(\/|$)/.test(url.pathname)
   )
     return;
 

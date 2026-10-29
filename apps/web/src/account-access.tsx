@@ -80,9 +80,11 @@ function readableError(failure: unknown): string {
 export default function AccountAccess({
   onSignedIn,
   initialRoute = emptyRoute,
+  accountReturnTo,
 }: {
   onSignedIn: () => Promise<void>;
   initialRoute?: AccountRoute;
+  accountReturnTo?: string;
 }) {
   const location = useLocation();
   const navigate = useNavigate();
@@ -244,7 +246,7 @@ export default function AccountAccess({
     setPasswordVisible(false);
     setMode(next);
     if (next !== 'reset') resetToken.current = null;
-    if (next === 'signin' && initialRoute.kind === 'reset') void navigate('/', { replace: true });
+    if (next === 'signin' && initialRoute.kind === 'reset') void navigate(accountReturnTo ?? '/', { replace: true });
   }
   function begin() {
     if (action.current || !active.current) return null;
@@ -380,7 +382,11 @@ export default function AccountAccess({
         '/api/auth/request-password-reset',
         {
           email: submittedEmail,
-          redirectTo: new URL('/account/reset-password', window.location.origin).href,
+          redirectTo: (() => {
+            const destination = new URL('/account/reset-password', window.location.origin);
+            if (accountReturnTo) destination.searchParams.set('oauthReturn', accountReturnTo);
+            return destination.href;
+          })(),
         },
         pending.controller.signal,
       );

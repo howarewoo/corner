@@ -6,6 +6,7 @@ import CornerApp from '@/components/corner-app';
 import { Button, Alert, Toaster, createToastManager } from '@packages/ui';
 import AccountAccess, { readAccountRoute } from './account-access';
 import { authPost, errorMessage, RequestError } from './api';
+import DelegatedConsentScreen, { OAuthSignInReturn, safeAccountReturn } from './features/settings/delegated-consent';
 import { focusManager, QueryClientProvider, useQuery } from '@tanstack/react-query';
 import {
   clearPrivateState,
@@ -50,6 +51,10 @@ async function loadSession() {
 }
 
 function App() {
+  const location = useLocation();
+  const consentMatch = /^\/oauth\/consent\/([A-Za-z0-9_-]+)$/.exec(location.pathname);
+  const oauthSignIn = location.pathname === '/oauth/sign-in';
+  const oauthRoute = Boolean(consentMatch) || oauthSignIn;
   const lifetime = useSessionLifetime();
   useEffect(
     () =>
@@ -80,9 +85,9 @@ function App() {
     queryFn: ({ signal }) => scoped(() => rpc.account.session(undefined, { signal })),
   });
   const user = session.data?.user ?? null;
-  const workspaceQuery = useWorkspace(Boolean(user));
+  const workspaceQuery = useWorkspace(Boolean(user) && !oauthRoute);
   const workspace = workspaceQuery.data;
-  const loading = session.isPending || (Boolean(user) && workspaceQuery.isPending);
+  const loading = session.isPending || (Boolean(user) && !oauthRoute && workspaceQuery.isPending);
   const [actionError, setError] = useState('');
   const error = actionError || session.error?.message || workspaceQuery.error?.message || '';
   const [signingOut, setSigningOut] = useState(false);
@@ -147,7 +152,12 @@ function App() {
         </div>
       </main>
     );
-  if (!user) return <AccountAccess onSignedIn={loadSession} />;
+  if (!user) return <AccountAccess onSignedIn={loadSession} accountReturnTo={safeAccountReturn(location.pathname + location.search) ?? undefined} />;
+  if (consentMatch) return <DelegatedConsentScreen key={`${consentMatch[1]}:${lifetime}`} uid={consentMatch[1]} notify={(message) => accountToasts.add({ title: 'Connection failed', description: message, type: 'error' })} />;
+  if (oauthSignIn) {
+    const values = new URLSearchParams(location.search).getAll('returnTo');
+    return <OAuthSignInReturn returnTo={values.length === 1 ? values[0] : null} />;
+  }
   if (!workspace)
     return (
       <main className="standalone-loading corner-ui">
@@ -185,13 +195,16 @@ function AccountEntryPoint() {
   const location = useLocation();
   const navigate = useNavigate();
   const route = readAccountRoute(location);
+  const returnValues = new URLSearchParams(location.search).getAll('oauthReturn');
+  const accountReturnTo = returnValues.length === 1 ? safeAccountReturn(returnValues[0]) : null;
   if (route.kind !== 'default')
     return (
       <AccountAccess
         initialRoute={route}
+        accountReturnTo={accountReturnTo ?? undefined}
         onSignedIn={async () => {
           await loadSession();
-          await navigate('/', { replace: true });
+          await navigate(accountReturnTo ?? '/', { replace: true });
         }}
       />
     );
