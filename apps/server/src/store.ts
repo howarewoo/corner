@@ -25,6 +25,7 @@ import {
   type FoodWindow,
 } from '@packages/api/workspace-data';
 import { exportRelational, importRelational } from './workspace-portability.js';
+import type { DelegatedAccess } from './delegation.js';
 
 export type WorkspaceSnapshot = { state: AppState; revision: number };
 export type ImportCounts = {
@@ -233,6 +234,38 @@ export class WorkspaceStore {
     );
   }
 
+  /** The caller supplies original JSON, not SDK-normalized arguments. */
+  async delegatedWrite(
+    access: DelegatedAccess,
+    scope: string,
+    tool: string,
+    originalArguments: unknown,
+    operationId: string,
+    expectedRevision: number,
+    update: (
+      connection: Transaction,
+      current: WorkspaceBootstrap,
+      position: () => number,
+    ) => Promise<void>,
+  ): Promise<CommandResult> {
+    if (!access.scopes.includes(scope))
+      throw new ApiError(403, 'INSUFFICIENT_SCOPE', 'This connection does not permit this change.');
+    requestIdSchema.parse(operationId);
+    revisionSchema.parse(expectedRevision);
+    const requestId = `mcp:${fingerprint([access.clientId, access.grantId, operationId])}`;
+    return this.commit(
+      access.ownerId,
+      requestId,
+      { kind: 'delegated', tool, arguments: originalArguments },
+      expectedRevision,
+      async (connection, current, position) => {
+        await update(connection, current, position);
+        return current.settings;
+      },
+      true,
+    );
+  }
+
   async isEmpty(userId: string, connection: Database = this.db): Promise<boolean> {
     userSchema.parse(userId);
     const result = await connection.execute(sql`SELECT NOT (
@@ -312,6 +345,7 @@ export class WorkspaceStore {
       current: WorkspaceBootstrap,
       position: () => number,
     ) => Promise<Settings>,
+    replayCommittedRevision = false,
   ): Promise<CommandResult> {
     userSchema.parse(userId);
     requestIdSchema.parse(requestId);
@@ -321,7 +355,7 @@ export class WorkspaceStore {
       await connection.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${userId}, 0))`);
       const receipt = (
         await connection
-          .select({ payload_hash: mutationReceipts.payload_hash })
+          .select({ payload_hash: mutationReceipts.payload_hash, revision: mutationReceipts.revision })
           .from(mutationReceipts)
           .where(
             and(eq(mutationReceipts.user_id, userId), eq(mutationReceipts.request_id, requestId)),
@@ -336,7 +370,7 @@ export class WorkspaceStore {
             'REQUEST_ID_REUSED',
             'This request identifier was already used for a different change.',
           );
-        return { revision: current.revision };
+        return { revision: replayCommittedRevision ? receipt.revision : current.revision };
       }
       if (expectedRevision !== undefined && current.revision !== expectedRevision)
         throw new ApiError(
