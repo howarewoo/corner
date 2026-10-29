@@ -63,7 +63,11 @@ function accountBody(path: string, raw: unknown, config: Config): unknown {
       (returnValues.length === 1 &&
         delegatedAccountReturn(returnValues[0], config.origin) !== returnValues[0])
     ) {
-      throw new ApiError(400, 'INVALID_ACCOUNT_REDIRECT', 'Use a valid Corner recovery return link.');
+      throw new ApiError(
+        400,
+        'INVALID_ACCOUNT_REDIRECT',
+        'Use a valid Corner recovery return link.',
+      );
     }
   }
   return body;
@@ -92,7 +96,8 @@ export function createApp(options: RPCServices & { delegation?: DelegationServic
   app.get('/api/health', (c, next) => (c.req.method === 'GET' ? json({ ok: true }) : next()));
   app.on('ALL', '/mcp', (c) => handleMcp(c.req.raw, options.store, delegation, config.origin));
   app.get('/.well-known/oauth-protected-resource/mcp', (c, next) =>
-    c.req.method === 'GET' ? protectedResourceMetadata(config.origin) : next());
+    c.req.method === 'GET' ? protectedResourceMetadata(config.origin) : next(),
+  );
   app.on('ALL', ['/api/auth', '/api/auth/*'], async (c) => {
     const request = c.req.raw;
     const path = c.req.path;

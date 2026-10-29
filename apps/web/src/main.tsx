@@ -6,7 +6,10 @@ import CornerApp from '@/components/corner-app';
 import { Button, Alert, Toaster, createToastManager } from '@packages/ui';
 import AccountAccess, { readAccountRoute } from './account-access';
 import { authPost, errorMessage, RequestError } from './api';
-import DelegatedConsentScreen, { OAuthSignInReturn, safeAccountReturn } from './features/settings/delegated-consent';
+import DelegatedConsentScreen, {
+  OAuthSignInReturn,
+  safeAccountReturn,
+} from './features/settings/delegated-consent';
 import { focusManager, QueryClientProvider, useQuery } from '@tanstack/react-query';
 import {
   clearPrivateState,
@@ -152,8 +155,23 @@ function App() {
         </div>
       </main>
     );
-  if (!user) return <AccountAccess onSignedIn={loadSession} accountReturnTo={safeAccountReturn(location.pathname + location.search) ?? undefined} />;
-  if (consentMatch) return <DelegatedConsentScreen key={`${consentMatch[1]}:${lifetime}`} uid={consentMatch[1]} notify={(message) => accountToasts.add({ title: 'Connection failed', description: message, type: 'error' })} />;
+  if (!user)
+    return (
+      <AccountAccess
+        onSignedIn={loadSession}
+        accountReturnTo={safeAccountReturn(location.pathname + location.search) ?? undefined}
+      />
+    );
+  if (consentMatch)
+    return (
+      <DelegatedConsentScreen
+        key={`${consentMatch[1]}:${lifetime}`}
+        uid={consentMatch[1]}
+        notify={(message) =>
+          accountToasts.add({ title: 'Connection failed', description: message, type: 'error' })
+        }
+      />
+    );
   if (oauthSignIn) {
     const values = new URLSearchParams(location.search).getAll('returnTo');
     return <OAuthSignInReturn returnTo={values.length === 1 ? values[0] : null} />;

@@ -87,7 +87,12 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse) {
       await delegation.handleNative(req, res, { db: queries, auth });
       return;
     }
-    if (path.startsWith('/api/') || path === '/auth/callback' || path === '/mcp' || path === '/.well-known/oauth-protected-resource/mcp') {
+    if (
+      path.startsWith('/api/') ||
+      path === '/auth/callback' ||
+      path === '/mcp' ||
+      path === '/.well-known/oauth-protected-resource/mcp'
+    ) {
       const request = toWebRequest(req);
       const response = await app.fetch(request);
       // Rejected bodies must not leave an unread stream on a reusable HTTP connection.
