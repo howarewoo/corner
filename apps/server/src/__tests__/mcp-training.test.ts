@@ -9,6 +9,7 @@ import { createInitialState } from '@packages/workspace/initial-state';
 import type { WorkoutSession } from '@packages/training/types';
 import type { DelegatedAccess } from '../delegation.js';
 import { registerTrainingWrites } from '../mcp-training.js';
+import { createReadMcpServer } from '../mcp-reads.js';
 import { WorkspaceStore } from '../store.js';
 import type { Database } from '../queries.js';
 import * as schema from '../schema.js';
@@ -35,7 +36,7 @@ afterEach(async () => {
 });
 async function connect(identity = access) {
   let original: unknown;
-  const server = new McpServer({ name: 'training-test', version: '1.0.0' });
+  const server = createReadMcpServer(store, identity);
   registerTrainingWrites(server, store, identity, () => original);
   const client = new Client({ name: 'writer', version: '1.0.0' });
   resources.push({ client, server });
@@ -67,9 +68,15 @@ test('routine creation and partial edits never rewrite workout snapshots, and ra
 });
 
 test('plans distinguish create and missing updates, retain omitted fields and enforce both revision tokens', async () => {
-  const write = await connect();
+  const write = await connect({ ...access, scopes: ['workout-plans:write'] });
+  assert.deepEqual((await write('get_workout_versions', { ids: [] })).structuredContent, { revision: 1, sessions: [] });
   assert.deepEqual((await write('edit_workout_plans', { operationId: 'plan-create', expectedRevision: 1, changes: [{ action: 'create', entry: plan }] })).structuredContent, { revision: 2 });
-  const saved = (await store.exportSnapshot('alice')).state.training.sessions.find((item) => item.id === 'plan')!;
+  const metadata = (await write('get_workout_versions', { ids: ['plan', 'missing'] })).structuredContent as { revision: number; sessions: { id: string; updatedAt: string }[] };
+  assert.equal(metadata.revision, 2);
+  assert.equal(metadata.sessions.length, 1);
+  const saved = metadata.sessions[0]!;
+  assert.deepEqual(Object.keys(saved).sort(), ['id', 'updatedAt']);
+  assert.equal((await write('get_workouts', { ids: ['plan'] })).isError, true);
   const edit = { operationId: 'plan-edit', expectedRevision: 2, changes: [{ action: 'update', id: 'plan', expectedUpdatedAt: saved.updatedAt, patch: { plannedMinutes: 45 } }] };
   assert.deepEqual((await write('edit_workout_plans', edit)).structuredContent, { revision: 3 });
   assert.equal(code(await write('edit_workout_plans', { ...edit, operationId: 'stale-workspace' })), 'REVISION_CONFLICT');
@@ -79,6 +86,15 @@ test('plans distinguish create and missing updates, retain omitted fields and en
   assert.equal(updated.status, 'planned'); assert.equal(updated.durationMinutes, null);
   assert.equal(code(await write('edit_workout_plans', { operationId: 'duplicate-plan', expectedRevision: 3, changes: [{ action: 'create', entry: plan }] })), 'ALREADY_EXISTS');
   assert.equal(code(await write('edit_workout_plans', { operationId: 'missing-plan', expectedRevision: 3, changes: [{ action: 'update', id: 'missing', expectedUpdatedAt: timestamp, patch: { notes: 'x' } }] })), 'NOT_FOUND');
+  await store.mutate('alice', 'manual-plan-edit', { type: 'training.session.save', data: {
+    session: { ...updated, notes: 'Owner edit' }, expectedUpdatedAt: updated.updatedAt,
+  } });
+  const current = (await write('get_workout_versions', { ids: ['plan'] })).structuredContent as typeof metadata;
+  assert.equal(current.revision, 4);
+  assert.notEqual(current.sessions[0]!.updatedAt, updated.updatedAt);
+  assert.deepEqual((await write('edit_workout_plans', { operationId: 'after-manual-plan', expectedRevision: current.revision,
+    changes: [{ action: 'update', id: 'plan', expectedUpdatedAt: current.sessions[0]!.updatedAt, patch: { plannedMinutes: 50 } }] })).structuredContent, { revision: 5 });
+  assert.equal((await store.exportSnapshot('alice')).state.training.sessions.find((item) => item.id === 'plan')!.notes, 'Owner edit');
 });
 
 test('atomic planning rejects authoritative started and recorded actuals and rolls back earlier members and receipts', async () => {
@@ -122,8 +138,10 @@ test('history-only permission corrects an existing skipped outcome without chang
   const before = await store.exportSnapshot('alice');
   const skipped = before.state.training.sessions.find((session) => session.id === 'skipped')!;
   const write = await connect({ ...access, scopes: ['workout-history:write'] });
-  const result = await write('update_workout_history', { operationId: 'correct-skipped', expectedRevision: before.revision,
-    id: skipped.id, expectedUpdatedAt: skipped.updatedAt, patch: { notes: 'Skipped due to delayed flight' } });
+  const metadata = (await write('get_workout_versions', { ids: ['skipped'] })).structuredContent as { revision: number; sessions: { id: string; updatedAt: string }[] };
+  assert.deepEqual(metadata, { revision: before.revision, sessions: [{ id: skipped.id, updatedAt: skipped.updatedAt }] });
+  const result = await write('update_workout_history', { operationId: 'correct-skipped', expectedRevision: metadata.revision,
+    id: skipped.id, expectedUpdatedAt: metadata.sessions[0]!.updatedAt, patch: { notes: 'Skipped due to delayed flight' } });
   assert.deepEqual(result.structuredContent, { revision: before.revision + 1 });
   const after = await store.exportSnapshot('alice');
   const saved = after.state.training.sessions.find((session) => session.id === 'skipped')!;
@@ -140,7 +158,9 @@ test('permissions remain independent, owner scoped, and revoked scope is checked
   assert.deepEqual((await write('update_workout_history', args)).structuredContent, { revision: 2 });
   granted.splice(0);
   assert.equal(code(await write('update_workout_history', args)), 'INSUFFICIENT_SCOPE');
+  assert.equal(code(await write('get_workout_versions', { ids: ['history'] })), 'INSUFFICIENT_SCOPE');
   const outsider = await connect({ ...access, ownerId: 'bob' });
+  assert.deepEqual((await outsider('get_workout_versions', { ids: ['history'] })).structuredContent, { revision: 0, sessions: [] });
   assert.equal(code(await outsider('update_workout_history', { ...args, expectedRevision: 0 })), 'NOT_FOUND');
   assert.equal((await store.exportSnapshot('bob')).revision, 0);
   const anotherGrant = await connect({ ...access, grantId: 'another-grant' });
