@@ -18,7 +18,7 @@ const token = 'syntheticResetToken123456';
 
 async function account(
   policy: AccountPolicy,
-  options: { route?: AccountRoute; handler?: Handler; onSignedIn?: () => Promise<void> } = {},
+  options: { route?: AccountRoute; handler?: Handler; onSignedIn?: () => Promise<void>; accountReturnTo?: string } = {},
 ) {
   const calls = mockHttp(
     async (call) =>
@@ -30,7 +30,7 @@ async function account(
   const view = render(
     <QueryClientProvider client={client}>
       <BrowserRouter>
-        <AccountAccess initialRoute={options.route} onSignedIn={signedIn} />
+        <AccountAccess initialRoute={options.route} onSignedIn={signedIn} accountReturnTo={options.accountReturnTo} />
       </BrowserRouter>
     </QueryClientProvider>,
   );
@@ -393,4 +393,20 @@ test('credentials stay pending until Corner session confirmation settles and pre
   expect(screen.getByLabelText('Email', { exact: true })).toHaveValue('person@example.test');
   expect(screen.getByLabelText('Password', { exact: true })).toHaveValue('');
   expect(signInButton()).toBeEnabled();
+});
+
+test('OAuth connection destination survives the emailed password recovery callback', async () => {
+  const destination = '/oauth/sign-in?returnTo=%2Foauth%2Fauthorize%3Fclient_id%3Dsynthetic';
+  const view = await account(hosted, {
+    accountReturnTo: destination,
+    handler: (call) => call.path === '/api/auth/request-password-reset' ? json({ status: true }) : undefined,
+  });
+  await view.user.click(screen.getByRole('button', { name: 'Forgot password?' }));
+  await view.user.type(screen.getByLabelText('Email', { exact: true }), 'person@example.test');
+  await view.user.click(screen.getByRole('button', { name: 'Send reset link' }));
+  await screen.findByRole('button', { name: 'Return to sign in' });
+  const callback = new URL(String(view.calls.find((call) => call.path === '/api/auth/request-password-reset')?.body?.redirectTo));
+  expect(callback.origin).toBe(window.location.origin);
+  expect(callback.pathname).toBe('/account/reset-password');
+  expect(callback.searchParams.get('oauthReturn')).toBe(destination);
 });

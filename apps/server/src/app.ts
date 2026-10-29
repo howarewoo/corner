@@ -3,7 +3,10 @@ import { requirePrincipal } from './auth.js';
 import type { Config } from './config.js';
 import { ApiError, errorResponse, json, readJson, requireSameOrigin } from './http.js';
 import { RPC_PREFIX } from '@packages/api/protocol';
+import { delegatedAccountReturn } from '@packages/api/delegation';
 import { createRPCHandler, type RPCServices } from './rpc.js';
+import { createDelegationService, type DelegationService } from './delegation.js';
+import { handleMcp, protectedResourceMetadata } from './mcp.js';
 
 const redirectFields = [
   'callbackURL',
@@ -52,14 +55,25 @@ function accountBody(path: string, raw: unknown, config: Config): unknown {
       config,
       '/account/reset-password',
     );
+    const destination = new URL(body.redirectTo as string);
+    const returnValues = destination.searchParams.getAll('oauthReturn');
+    if (
+      [...destination.searchParams.keys()].some((key) => key !== 'oauthReturn') ||
+      returnValues.length > 1 ||
+      (returnValues.length === 1 &&
+        delegatedAccountReturn(returnValues[0], config.origin) !== returnValues[0])
+    ) {
+      throw new ApiError(400, 'INVALID_ACCOUNT_REDIRECT', 'Use a valid Corner recovery return link.');
+    }
   }
   return body;
 }
 
 /** Shared Hono API app; runtime entrypoints own listeners, assets, and resources. */
-export function createApp(options: RPCServices) {
+export function createApp(options: RPCServices & { delegation?: DelegationService }) {
   const { config, auth } = options;
   const rpc = createRPCHandler(options);
+  const delegation = options.delegation ?? createDelegationService(config);
   // Preserve literal API paths instead of Hono's default percent-decoding.
   const app = new Hono({ getPath: (request) => new URL(request.url).pathname });
   app.onError(errorResponse);
@@ -76,6 +90,9 @@ export function createApp(options: RPCServices) {
 
   // Hono also dispatches HEAD to GET. Only GET is public in the existing API.
   app.get('/api/health', (c, next) => (c.req.method === 'GET' ? json({ ok: true }) : next()));
+  app.on('ALL', '/mcp', (c) => handleMcp(c.req.raw, options.store, delegation, config.origin));
+  app.get('/.well-known/oauth-protected-resource/mcp', (c, next) =>
+    c.req.method === 'GET' ? protectedResourceMetadata(config.origin) : next());
   app.on('ALL', ['/api/auth', '/api/auth/*'], async (c) => {
     const request = c.req.raw;
     const path = c.req.path;
