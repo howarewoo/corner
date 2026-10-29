@@ -5,7 +5,10 @@ test('manual food entries persist their servings and nutrition after reload with
   page,
   account,
 }) => {
-  await signIn(page, account);
+  await signIn(page, account, '/settings');
+  await expect(page.getByLabel('Preferred name', { exact: true })).toHaveValue('Synthetic trainee');
+  expect((await account.api.workspace.get()).revision).toBe(0);
+  await page.goto('/');
   await page.getByRole('button', { name: 'Add food', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Add to your food log' });
   await expect(dialog).toBeVisible();
@@ -36,4 +39,8 @@ test('manual food entries persist their servings and nutrition after reload with
   await expect(edit.getByText('20g P', { exact: true })).toBeVisible();
   await expect(edit.getByText('24g C', { exact: true })).toBeVisible();
   await expect(edit.getByText('8g F', { exact: true })).toBeVisible();
+  await edit.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await page.goto('/settings');
+  await page.reload();
+  await expect(page.getByLabel('Preferred name', { exact: true })).toHaveValue('Synthetic trainee');
 });
