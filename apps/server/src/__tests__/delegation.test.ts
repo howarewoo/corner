@@ -389,6 +389,38 @@ test('a valid maintained token with a different stored audience cannot access th
   assert.equal((await mcp(token.data.access_token)).status, 200);
 });
 
+test('owner-selected training permissions perform real HTTP writes and keep history separately scoped', async () => {
+  const client = await register();
+  const token = await exchange(client, await authorize(client, alice, 'routines:write workout-plans:write workout-history:write', ['routines:write', 'workout-plans:write']));
+  assert.equal(token.status, 200);
+  const visible = await call('/mcp', { jsonrpc: '2.0', id: 1, method: 'tools/list' }, { bearer: token.data.access_token, origin: null });
+  assert.deepEqual(visible.data.result.tools.map((tool: { name: string }) => tool.name).sort(), ['create_routine', 'edit_workout_plans', 'update_routine']);
+  const revision = (await store.exportSnapshot(alice.id)).revision;
+  const routine = { id: 'http-routine', name: 'HTTP walk', kind: 'conditioning', description: '', durationMinutes: 30, exercises: [] };
+  const created = await mcp(token.data.access_token, 'create_routine', { operationId: 'http-routine-create', expectedRevision: revision, routine });
+  assert.deepEqual(created.data.result.structuredContent, { revision: revision + 1 });
+  assert.equal(created.headers.get('Set-Cookie'), null);
+  const entry = { id: 'http-plan', date: '2026-10-28', name: 'HTTP plan', kind: 'conditioning', unit: 'kg', exercises: [], plannedMinutes: 30, notes: '', changeReason: '' };
+  const plans = await mcp(token.data.access_token, 'edit_workout_plans', { operationId: 'http-plan-create', expectedRevision: revision + 1, changes: [{ action: 'create', entry }] });
+  assert.deepEqual(plans.data.result.structuredContent, { revision: revision + 2 });
+  const existing = (await store.exportSnapshot(alice.id)).state.training.sessions.find((item) => item.id === 'session')!;
+  const correction = { operationId: 'http-history-correct', expectedRevision: revision + 2, id: 'session', expectedUpdatedAt: existing.updatedAt, patch: { notes: 'HTTP corrected history' } };
+  assert.equal((await mcp(token.data.access_token, 'update_workout_history', correction)).data.result.isError, true);
+  const protectedPlan = await mcp(token.data.access_token, 'edit_workout_plans', { operationId: 'http-history-protected', expectedRevision: revision + 2, changes: [{ action: 'update', id: 'session', expectedUpdatedAt: existing.updatedAt, patch: { notes: 'Must not change' } }] });
+  assert.equal(protectedPlan.data.result.structuredContent.code, 'HISTORY_PROTECTED');
+  const historyClient = await register();
+  const historyToken = await exchange(historyClient, await authorize(historyClient, alice, 'workout-history:write'));
+  const corrected = await mcp(historyToken.data.access_token, 'update_workout_history', correction);
+  assert.deepEqual(corrected.data.result.structuredContent, { revision: revision + 3 });
+  const saved = (await store.exportSnapshot(alice.id)).state.training.sessions.find((item) => item.id === 'session')!;
+  assert.equal(saved.status, 'completed'); assert.equal(saved.durationMinutes, existing.durationMinutes);
+  assert.equal(saved.notes, 'HTTP corrected history'); assert.notEqual(saved.updatedAt, existing.updatedAt);
+  const grant = await connection(historyClient);
+  assert.deepEqual(grant.scopes, ['workout-history:write']);
+  assert.equal((await call('/api/delegation/revoke', { id: grant.id }, { jar: alice.jar })).status, 200);
+  assert.equal((await mcp(historyToken.data.access_token, 'update_workout_history', correction)).status, 401);
+});
+
 test('another actual managed session for the same owner cannot take over pending consent', async () => {
   const pending = await start(await register());
   const replacement: Jar = new Map();
