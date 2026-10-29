@@ -7,6 +7,8 @@ import { ApiError, json, readJson } from './http.js';
 import { registerNutritionWrites } from './mcp-writes.js';
 import { registerTrainingWrites } from './mcp-training.js';
 import type { OriginalToolArguments } from './mcp-writes.js';
+import { registerImports } from './mcp-imports.js';
+import { MAX_MCP_REQUEST_BYTES } from './additive-import.js';
 
 export function protectedResourceMetadata(origin: string) {
   return json({
@@ -32,11 +34,16 @@ export async function handleMcp(
     return json({ error: 'A current delegated access token is required.' }, 401, {
       'WWW-Authenticate': `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource/mcp", error="invalid_token"`,
     });
-  const parsedBody = request.method === 'POST' ? await readJson(request) : undefined;
+  const parsedBody = request.method === 'POST' ? await readJson(request, MAX_MCP_REQUEST_BYTES) : undefined;
+  if (Array.isArray(parsedBody))
+    throw new ApiError(400, 'INVALID_INPUT', 'Use one JSON-RPC request at a time.');
+  if (parsedBody && typeof parsedBody === 'object' && 'id' in parsedBody &&
+      Buffer.byteLength(JSON.stringify(parsedBody.id), 'utf8') > 256)
+    throw new ApiError(400, 'INVALID_INPUT', 'The JSON-RPC request ID is too large.');
   const transport = new WebStandardStreamableHTTPServerTransport({
     sessionIdGenerator: undefined,
     enableJsonResponse: true,
-    maxRequestBodySize: 192 * 1024,
+    maxRequestBodySize: MAX_MCP_REQUEST_BYTES,
   });
   const server = createReadMcpServer(store, access);
   const original: OriginalToolArguments = (tool) => {
@@ -62,6 +69,7 @@ export async function handleMcp(
   };
   registerNutritionWrites(server, store, access, original);
   registerTrainingWrites(server, store, access, original);
+  registerImports(server, store, access, original);
   try {
     await server.connect(transport);
     // Authentication is repeated for every request; SDK sessions never become an authority.

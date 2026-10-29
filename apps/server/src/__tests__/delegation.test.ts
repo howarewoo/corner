@@ -985,6 +985,43 @@ test('owner-selected meal writes cross real OAuth and HTTP, retain raw retries a
   assert.equal((await mcp(renewed.data.access_token, 'edit_meal_plans', input)).status, 401);
 });
 
+test('workout import consent grants additive history only across real OAuth HTTP and revocation', async () => {
+  const client = await register();
+  const token = await exchange(client, await authorize(client, alice,
+    'workouts:import workouts:read workout-history:write', ['workouts:import']));
+  assert.equal(token.status, 200);
+  const tools = await call('/mcp', { jsonrpc: '2.0', id: 2, method: 'tools/list' },
+    { bearer: token.data.access_token, origin: null });
+  assert.deepEqual(tools.data.result.tools.map((tool: { name: string }) => tool.name).sort(),
+    ['get_workspace_revision', 'import_workouts']);
+  const metadata = await mcp(token.data.access_token, 'get_workspace_revision');
+  const { revision } = metadata.data.result.structuredContent;
+  const input = {
+    operationId: 'oauth-workout-import', expectedRevision: revision, sourceNamespace: 'workout-archive',
+    records: [{ sourceRecordId: 'archive-walk', workout: {
+      id: 'imported-walk', date: '2026-10-28', name: 'Historical walk', kind: 'conditioning',
+      status: 'completed', unit: 'kg', plannedMinutes: null, durationMinutes: 28,
+      rounds: null, sessionRpe: null, readiness: null, exercises: [], notes: '', changeReason: '',
+    } }],
+  };
+  const imported = await mcp(token.data.access_token, 'import_workouts', input);
+  assert.deepEqual(imported.data.result.structuredContent, {
+    revision: revision + 1,
+    outcomes: [{ sourceRecordId: 'archive-walk', destinationId: 'imported-walk', outcome: 'created' }],
+  });
+  assert.equal((await store.exportSnapshot(alice.id)).state.training.sessions.find(
+    (session) => session.id === 'imported-walk')?.plannedMinutes, null);
+  assert.equal((await mcp(token.data.access_token, 'get_workouts', { ids: ['imported-walk'] })).data.result.isError, true);
+  assert.equal((await mcp(token.data.access_token, 'update_workout_history', {
+    operationId: 'ungranted-history-correction', expectedRevision: revision + 1,
+    id: 'imported-walk', expectedUpdatedAt: '2026-10-28T12:00:00.000Z', patch: { notes: 'Forbidden' },
+  })).data.result.isError, true);
+  const grant = await connection(client);
+  assert.deepEqual(grant.scopes, ['workouts:import']);
+  assert.equal((await call('/api/delegation/revoke', { id: grant.id }, { jar: alice.jar })).status, 200);
+  assert.equal((await mcp(token.data.access_token, 'import_workouts', input)).status, 401);
+});
+
 test('nutrition OAuth grants keep edit/delete independent and HTTP CRUD returns no ungranted domain data', async () => {
   const client = await register();
   const requested = 'recipes:write recipes:delete food-logs:write food-logs:delete';
