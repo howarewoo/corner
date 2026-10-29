@@ -51,6 +51,29 @@ For production, `DATABASE_URL` is the pooled application connection; `DATABASE_U
 
 The runtime neither requires nor generates model encryption/session-binding keys. Preserve existing `data/`, `.corner-local/`, private configuration, backups, and matching original keys; retirement does not delete or rotate them. The local controller still requires independent Auth/password/control secrets and TLS keys. Production `CORNER_ORIGIN` must match the origin registered with Neon Auth.
 
+### Owner-approved MCP reads
+
+An external MCP client can connect to **`<CORNER_ORIGIN>/mcp`** using Streamable HTTP. This is a separate, read-only delegated connection, not an in-app model connection. Corner does not receive the client's conversations, memories, model credentials, or prompts beyond actual MCP tool arguments.
+
+Clients discover the protected resource at `/.well-known/oauth-protected-resource/mcp` and the authorization server at `/.well-known/oauth-authorization-server`. Dynamic registration, authorization, token exchange/refresh, revocation, and public signing keys use `/oauth/register`, `/oauth/authorize`, `/oauth/token`, `/oauth/revoke`, and `/oauth/jwks`. Authorization-code clients require **S256 PKCE** and the exact Corner `/mcp` resource. Retired `/auth/callback` and AI/request/review executors remain unavailable.
+
+The browser signs in through the existing managed account flow and shows the requesting client, actual account, and selectable requested read permissions. A decision binds that fresh managed session and interaction; changing accounts or sessions requires starting again. A connected client can refresh independently after browser sign-out, until its grant expires or its owner revokes it in **Settings → Connected clients**. Revocation affects every token in that connection; reconnecting creates a new grant rather than reactivating old credentials. Access tokens last five minutes; grants and refresh tokens have a thirty-day maximum lifetime. Each MCP request checks both its token and live grant.
+
+| Read permission | Implemented tools |
+| --- | --- |
+| `workouts:read` | `list_workouts`, `get_workouts`, `exercise_history` |
+| `routines:read` | `list_routines`, `get_routines` |
+| `meal-plans:read` | `list_meal_plans`, `get_meal_plans` |
+| `food-logs:read` | `list_food_logs` |
+| `recipes:read` | `list_recipes`, `get_recipes` |
+
+Clients see only their granted tools. Tools capture the grant's owner server-side; arguments cannot select a different owner/resource. Meal-plan and food-log lists require explicit date windows of at most 93 calendar days. Lists/details reuse existing bounded domain queries and return actual revisions, record versions where supplied, and continuation cursors. Clients must explicitly follow cursors; no tool silently reads lifetime state. These permissions grant no edits, proposals, progress/check-in/settings export, provider archives, or inference.
+
+Delegation storage is additive PostgreSQL migration `0002_delegated_access.sql`. On first OAuth use, Corner transactionally creates one server-only cookie-signing secret and private issuer JWK in `delegation_issuer`; it does not write keys at startup or require a new environment secret. Back up that table with `delegation_objects`. Workspace JSON exports/imports do not transfer these keys, clients, grants, or tokens. Existing retired provider keys and records are neither reused nor modified.
+
+The maintained issuer is `oidc-provider` `9.13.2`, with MCP SDK `1.32.2`. Node uses the existing listener; Workers uses Cloudflare's native HTTP adapter in the existing full-stack Worker. The issuer explicitly warns that Workers is an unsupported runtime: observed local compatibility is not vendor support or hosted qualification. [Release notes](RELEASE-NOTES.md#delegated-read-connections) distinguish exercised local checks from release evidence. **Hosted consumer release remains on HOLD until the approved Access-protected flow is qualified; do not bypass Access to connect a client.** Browser session/API exact-origin rules remain; bearer clients may omit Origin, but a supplied Origin must equal Corner's configured origin.
+
+
 ### Build and run production locally
 
 ```bash
@@ -279,8 +302,6 @@ The configuration helper detects personal versus organization ownership. Persona
 `--report` appends profile/command elapsed times as JSONL, not a qualification receipt. Compare at least three docs/web/full runs with the same runner and cache conditions; report the median, cold-install cost, and runner cost separately. No speed SLA or CI saving is inferred from a plan preview or Turbo cache hit.
 
 Both persistent branches run the full profile, then package/exercise the standalone format-4 single-Worker payload (including the packaged `worker/maintenance-worker.js` gate for explicit operator maintenance cutovers) before uploading `corner-release-<sourceSHA>` with 90-day retention. Preserve current/recovery references longer; missing artifacts block promotion. CI itself does not deploy. After successful exact current trusted staging push CI, the credential-free listener in `.github/workflows/staging.yml` dispatches its deployment job explicitly on `staging`, independent of GitHub's default branch. `scripts/staging-preview.mjs` consumes the identical full-stack bundle/assets/Drizzle migrator without rebuilding and records separate `corner-preview` / `corner-staging-preview` staging ledgers. After successful current main push CI, `.github/workflows/production.yml` dispatches `release.yml` explicitly on main; `scripts/release.mjs deploy` qualifies and promotes that exact artifact without a separate approval or invented human review, and never invokes preserving cutover or maintenance implicitly. Production records one version in its format-4 `corner-release` / `corner-production` receipt. Pre-Drizzle artifacts and receipts are not recovery targets. [HOSTING.md](HOSTING.md#build-migrate-and-release) owns activation, credentials, automatic updates, explicit operator releases, verification states, and recovery.
-
-The provider contract is implemented against the official documentation above. A real account must complete consent before live subscription inference can be verified. Browser visual verification and Docker execution are reported separately in the release notes; automated success should not be mistaken for those checks.
 
 ### Persistent branch workflow
 

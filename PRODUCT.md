@@ -16,7 +16,7 @@ Corner's intended primary audience is performance-focused trainees managing thei
 
 Bring manual meal planning, nutrition tracking, workouts, and progress into one daily tool.
 
-Near-term priorities are daily tracking usability, especially on phones, and hosted product readiness. No hosted AI integration is planned.
+Near-term priorities are daily tracking usability, especially on phones, and hosted product readiness. Corner does not host model inference. Optional owner-approved MCP read connections let a separately chosen client read only its granted workspace domains; they do not expose that client's conversations or memories to Corner.
 
 ## Operating Context
 
@@ -35,6 +35,7 @@ Corner does not read ChatGPT conversations, memories, an original Corner Site, o
 - Managed accounts, verification-code entry, and password recovery. Neon owns delivery; production requires custom SMTP and matching verification policy.
 - Previewed imports into empty workspaces, workspace JSON export, and individual recipe text downloads. Workspace exports exclude credentials and separate agent request history; they are not complete installation backups.
 - Manual recipe creation/editing and direct food logging remain available. Historical recipe requests and training requests/reviews survive supported workspace import/export as archive data, without executable request or review commands.
+- Optional delegated MCP reads for workout history, routines, dated meal plans, food logs and recipes, with session-bound selectable consent and Settings revocation. No edits, proposals, model connections or inference are exposed by these permissions.
 
 Node remains one Corner process backed by Neon Postgres. Cloudflare Workers serves the same manual tools. Neither runtime connects models or starts inference.
 

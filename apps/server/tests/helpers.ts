@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Pool } from 'pg';
 import { betterAuth } from 'better-auth';
+import type { BetterAuthOptions } from 'better-auth';
 import { getMigrations } from 'better-auth/db/migration';
 import { createDatabase } from '../src/database.ts';
 import { migrate } from '../src/migrate.ts';
@@ -57,14 +58,18 @@ export async function closeTestDatabase(database: Pool): Promise<void> {
 }
 
 /** Actual Better Auth on disposable Postgres stands in for the managed service; no network or mail. */
-export async function createTestAuth(config: Config, database: Pool) {
+export async function createTestAuth(
+  config: Config,
+  database: Pool,
+  sendResetPassword?: NonNullable<BetterAuthOptions['emailAndPassword']>['sendResetPassword'],
+) {
   const options = {
     database,
     secret: 'synthetic-managed-auth-fixture-secret-over-32-characters',
     baseURL: config.neonAuthBaseUrl,
     basePath: '/neondb/auth',
     trustedOrigins: [config.origin],
-    emailAndPassword: { enabled: true, minPasswordLength: 12 },
+    emailAndPassword: { enabled: true, minPasswordLength: 12, sendResetPassword },
     advanced: { useSecureCookies: true, cookiePrefix: 'neon-auth' },
     logger: { disabled: true },
   };

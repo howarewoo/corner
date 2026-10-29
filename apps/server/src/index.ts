@@ -11,6 +11,7 @@ import { WorkspaceStore } from './store.js';
 import { workspaceMetadata } from './schema.js';
 import { createApp } from './app.js';
 import { requestClientIP, verifiedProxyIP } from './request-identity.js';
+import { createDelegationService, isDelegationNativePath } from './delegation.js';
 
 const development = process.argv.includes('--dev');
 const config = loadConfig(process.env, { development });
@@ -18,11 +19,13 @@ const db = createDatabase(config.databaseUrl);
 const auth = createAuth(config);
 const queries = createQueries(db);
 const store = new WorkspaceStore(queries);
+const delegation = createDelegationService(config);
 await store.db.select({ user_id: workspaceMetadata.user_id }).from(workspaceMetadata).limit(1);
 const app = createApp({
   config,
   auth,
   store,
+  delegation,
 });
 const server = createServer();
 const dist = join(REPOSITORY_ROOT, 'apps', 'web', 'dist');
@@ -80,7 +83,11 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse) {
       res.end('Use the configured HTTPS address to open Corner.');
       return;
     }
-    if (path.startsWith('/api/') || path === '/auth/callback') {
+    if (isDelegationNativePath(path)) {
+      await delegation.handleNative(req, res, { db: queries, auth });
+      return;
+    }
+    if (path.startsWith('/api/') || path === '/auth/callback' || path === '/mcp' || path === '/.well-known/oauth-protected-resource/mcp') {
       const request = toWebRequest(req);
       const response = await app.fetch(request);
       // Rejected bodies must not leave an unread stream on a reusable HTTP connection.
@@ -210,9 +217,11 @@ async function serveStatic(req: IncomingMessage, res: ServerResponse, path: stri
   res.writeHead(200, {
     'Content-Type': mime[extname(file)] ?? 'application/octet-stream',
     'Content-Length': content.length,
-    'Cache-Control': file.includes(`${sep}assets${sep}`)
-      ? 'public, max-age=31536000, immutable'
-      : 'no-cache',
+    'Cache-Control': path.startsWith('/oauth/')
+      ? 'private, no-store, max-age=0'
+      : file.includes(`${sep}assets${sep}`)
+        ? 'public, max-age=31536000, immutable'
+        : 'no-cache',
     'Content-Security-Policy':
       "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
     'Referrer-Policy': 'no-referrer',
