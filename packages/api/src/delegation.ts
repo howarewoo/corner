@@ -5,6 +5,10 @@ export const DELEGATED_PERMISSIONS = [
   { scope: 'food-logs:read', label: 'Read food logs' },
   { scope: 'recipes:read', label: 'Read recipes' },
   { scope: 'meal-plans:write', label: 'Create and edit dated meal plans' },
+  { scope: 'food-logs:write', label: 'Create and edit food logs' },
+  { scope: 'food-logs:delete', label: 'Delete food logs' },
+  { scope: 'recipes:write', label: 'Create and edit recipes' },
+  { scope: 'recipes:delete', label: 'Delete recipes' },
 ] as const;
 
 export type DelegatedScope = (typeof DELEGATED_PERMISSIONS)[number]['scope'];
