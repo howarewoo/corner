@@ -63,6 +63,21 @@ test('meal write permission is independently selectable and discloses autonomous
   expect(calls.find((call) => call.init.method === 'POST')?.body).toEqual({ accepted: true, scopes: ['meal-plans:write'] });
 });
 
+test('food and recipe delete permissions remain independent of edit permissions', async () => {
+  const requested = DELEGATED_PERMISSIONS.filter(({ scope }) => ['food-logs:write', 'food-logs:delete', 'recipes:write', 'recipes:delete'].includes(scope));
+  const calls = mockHttp((call) => call.init.method === 'POST'
+    ? json({ error: 'Request expired' }, 400)
+    : json({ ...consent, requestedScopes: requested.map(({ scope }) => scope), permissions: requested }));
+  mountConsent();
+  await screen.findByText(clientName);
+  expect(screen.getAllByRole('checkbox')).toHaveLength(4);
+  await userEvent.click(screen.getByRole('checkbox', { name: 'Delete food logs' }));
+  await userEvent.click(screen.getByRole('checkbox', { name: 'Create and edit recipes' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Approve access' }));
+  await screen.findByText('Request expired');
+  expect(calls.find((call) => call.init.method === 'POST')?.body).toEqual({ accepted: true, scopes: ['food-logs:write', 'recipes:delete'] });
+});
+
 test('only the exact local authorize endpoint can resume authorization', () => {
   expect(safeAuthorizeReturn('/oauth/authorize?client_id=synthetic&state=abc')).toBe('/oauth/authorize?client_id=synthetic&state=abc');
   for (const value of [null, 'https://evil.test/oauth/authorize?x=1', '//evil.test/oauth/authorize?x=1', '/oauth/authorize/../consent?x=1', '/oauth/authorize?x=1#secret', '/oauth/authorize?x=1\\evil', '/settings', '/oauth/%61uthorize?x=1']) expect(safeAuthorizeReturn(value)).toBeNull();

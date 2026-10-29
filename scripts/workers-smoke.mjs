@@ -660,6 +660,109 @@ try {
     assert.equal((await delegatedCall('/mcp', { jsonrpc: '2.0', id: 3, method: 'tools/list' }, { bearer: credential, browser: false })).status, 401);
   }
 
+  // Worker/Neon transactions must preserve the same guarded nutrition effects as Node.
+  const nutritionToken = async (scopes) => {
+    const registration = await delegatedCall('/oauth/register', {
+      client_name: `Canonical Worker nutrition ${scopes.join(' ')}`,
+      redirect_uris: ['http://127.0.0.1/callback'], grant_types: ['authorization_code', 'refresh_token'],
+      response_types: ['code'], token_endpoint_auth_method: 'none',
+    }, { browser: false });
+    assert.equal(registration.status, 201);
+    const started = await delegatedCall('/oauth/authorize?' + new URLSearchParams({
+      client_id: registration.data.client_id, redirect_uri: 'http://127.0.0.1/callback',
+      response_type: 'code', scope: scopes.join(' '), prompt: 'consent', resource: delegatedResource,
+      code_challenge: createHash('sha256').update(delegatedVerifier).digest('base64url'),
+      code_challenge_method: 'S256', state: 'worker-nutrition-state',
+    }));
+    assert.equal(started.status, 303);
+    const uid = new URL(started.location, origin).pathname.split('/').at(-1);
+    const consent = await delegatedCall(`/api/delegation/consent/${uid}`);
+    assert.equal(consent.status, 200);
+    assert.deepEqual(consent.data.requestedScopes.slice().sort(), scopes.slice().sort());
+    const approval = await delegatedCall(`/api/delegation/consent/${uid}`, { accepted: true, scopes });
+    assert.equal(approval.status, 200);
+    const resumed = await delegatedCall(approval.data.redirectTo);
+    assert.equal(resumed.status, 303);
+    const callback = new URL(resumed.location);
+    assert.equal(callback.origin + callback.pathname, 'http://127.0.0.1/callback');
+    assert.equal(callback.searchParams.get('state'), 'worker-nutrition-state');
+    assert(callback.searchParams.get('code'));
+    const tokens = await delegatedCall('/oauth/token', {
+      grant_type: 'authorization_code', client_id: registration.data.client_id,
+      redirect_uri: 'http://127.0.0.1/callback', code: callback.searchParams.get('code'),
+      code_verifier: delegatedVerifier, resource: delegatedResource,
+    }, { form: true, browser: false });
+    assert.equal(tokens.status, 200);
+    return tokens.data.access_token;
+  };
+  const nutritionWriter = await nutritionToken(['meal-plans:write', 'recipes:write', 'food-logs:write']);
+  const nutritionDelete = await nutritionToken(['recipes:delete']);
+  const nutritionCall = async (bearer, name, args) => {
+    const response = await delegatedCall('/mcp', {
+      jsonrpc: '2.0', id: 4, method: 'tools/call', params: { name, arguments: args },
+    }, { bearer, browser: false });
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('Set-Cookie'), null);
+    return response.data.result;
+  };
+  const deleteCatalog = await delegatedCall('/mcp', { jsonrpc: '2.0', id: 5, method: 'tools/list' }, { bearer: nutritionDelete, browser: false });
+  assert.deepEqual(deleteCatalog.data.result.tools.map((tool) => tool.name), ['delete_recipe']);
+  const nutritionBefore = await snapshot(alice);
+  let nutritionRevision = nutritionBefore.revision;
+  const workerRecipe = {
+    id: 'worker-mcp-recipe', name: 'Explicit Worker oats', description: '', category: 'breakfast',
+    prepMinutes: 1, cookMinutes: 0, nutrition: { calories: 100, protein: 10, carbs: 10, fat: 2 },
+    ingredients: [{ name: 'Oats', quantity: 100, unit: 'g', aisle: 'Grains' }], steps: ['Mix'],
+    storage: '', variation: '', tags: [], color: '#234b35', source: 'manual',
+    favorite: false, createdAt: '2026-10-28T12:00:00.000Z',
+  };
+  const workerMeal = { id: 'worker-mcp-meal', date: '2026-10-28', slot: 'breakfast', recipeId: workerRecipe.id, servings: 1 };
+  const recipeApplied = await nutritionCall(nutritionWriter, 'create_recipe', {
+    operationId: 'worker-mcp-create-recipe', expectedRevision: nutritionRevision, recipe: workerRecipe,
+  });
+  assert.deepEqual(recipeApplied.structuredContent, { revision: ++nutritionRevision });
+  const mealArguments = { operationId: 'worker-mcp-create-meal', expectedRevision: nutritionRevision, changes: [{ action: 'create', entry: workerMeal }] };
+  assert.deepEqual((await nutritionCall(nutritionWriter, 'edit_meal_plans', mealArguments)).structuredContent, { revision: ++nutritionRevision });
+  const workerFood = {
+    id: 'worker-mcp-food', date: workerMeal.date, slot: workerMeal.slot, name: 'Explicit historical snapshot',
+    nutrition: { calories: 123, protein: 8, carbs: 16, fat: 3 }, servings: 2,
+    recipeId: workerRecipe.id, createdAt: workerRecipe.createdAt,
+  };
+  assert.deepEqual((await nutritionCall(nutritionWriter, 'create_food_log', {
+    operationId: 'worker-mcp-create-food', expectedRevision: nutritionRevision, entry: workerFood,
+  })).structuredContent, { revision: ++nutritionRevision });
+  const nutritionApplied = await snapshot(alice);
+  assert.equal(nutritionApplied.revision, nutritionRevision);
+  assert.deepEqual(nutritionApplied.state.plan.find((entry) => entry.id === workerMeal.id), workerMeal);
+  assert.deepEqual(nutritionApplied.state.logs.find((entry) => entry.id === workerFood.id), workerFood);
+  const failedBatch = await nutritionCall(nutritionWriter, 'edit_meal_plans', {
+    operationId: 'worker-mcp-atomic-failure', expectedRevision: nutritionRevision,
+    changes: [{ action: 'update', id: workerMeal.id, patch: { servings: 9 } }, { action: 'update', id: 'missing-worker-meal', patch: { servings: 2 } }],
+  });
+  assert.equal(failedBatch.isError, true);
+  assert.equal(failedBatch.structuredContent.code, 'NOT_FOUND');
+  assert.deepEqual(await snapshot(alice), nutritionApplied);
+  assert.deepEqual((await nutritionCall(nutritionWriter, 'edit_meal_plans', mealArguments)).structuredContent, { revision: nutritionRevision - 1 });
+  assert.deepEqual(await snapshot(alice), nutritionApplied);
+  const deleteArguments = { operationId: 'worker-mcp-delete-recipe', expectedRevision: nutritionRevision, id: workerRecipe.id };
+  assert.equal((await nutritionCall(nutritionWriter, 'delete_recipe', deleteArguments)).isError, true);
+  const inUse = await nutritionCall(nutritionDelete, 'delete_recipe', deleteArguments);
+  assert.equal(inUse.isError, true);
+  assert.equal(inUse.structuredContent.code, 'INVALID_INPUT');
+  assert.deepEqual(await snapshot(alice), nutritionApplied);
+  // Plan deletion is deliberately manual-only; the delegated delete cannot cascade it.
+  const removedPlan = await client(alice).workspace.mutate({
+    requestId: 'worker-owner-remove-source-plan', mutation: { type: 'plan.delete', data: { id: workerMeal.id } },
+  });
+  assert.deepEqual(removedPlan, { revision: ++nutritionRevision });
+  const deletedRecipe = await nutritionCall(nutritionDelete, 'delete_recipe', { ...deleteArguments, expectedRevision: nutritionRevision });
+  assert.deepEqual(deletedRecipe.structuredContent, { revision: ++nutritionRevision });
+  const nutritionAfter = await snapshot(alice);
+  assert.equal(nutritionAfter.revision, nutritionRevision);
+  assert.equal(nutritionAfter.state.recipes.some((entry) => entry.id === workerRecipe.id), false);
+  assert.deepEqual(nutritionAfter.state.logs, [...nutritionBefore.state.logs, workerFood]);
+  assert.equal((await snapshot(bob)).state.logs.some((entry) => entry.id === workerFood.id), false);
+
   const validateRecords = async (migrator) => {
     const connection = await backend.database.connect();
     try {
