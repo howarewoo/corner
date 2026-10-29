@@ -17,9 +17,6 @@ import { Route as WorkspacePlannerRouteImport } from './routes/_workspace.planne
 import { Route as WorkspaceRecipesRouteImport } from './routes/_workspace.recipes'
 import { Route as WorkspaceSettingsRouteImport } from './routes/_workspace.settings'
 import { Route as WorkspaceWorkoutsRouteImport } from './routes/_workspace.workouts'
-import { Route as AccountResetPasswordRouteImport } from './routes/account.reset-password'
-import { Route as WorkspaceOauthSignInRouteImport } from './routes/_workspace.oauth.sign-in'
-import { Route as WorkspaceOauthConsentUidRouteImport } from './routes/_workspace.oauth.consent.$uid'
 
 const WorkspaceRoute = WorkspaceRouteImport.update({
   id: '/_workspace',
@@ -60,22 +57,6 @@ const WorkspaceWorkoutsRoute = WorkspaceWorkoutsRouteImport.update({
   path: '/workouts',
   getParentRoute: () => WorkspaceRoute,
 } as any)
-const AccountResetPasswordRoute = AccountResetPasswordRouteImport.update({
-  id: '/account/reset-password',
-  path: '/account/reset-password',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const WorkspaceOauthSignInRoute = WorkspaceOauthSignInRouteImport.update({
-  id: '/oauth/sign-in',
-  path: '/oauth/sign-in',
-  getParentRoute: () => WorkspaceRoute,
-} as any)
-const WorkspaceOauthConsentUidRoute =
-  WorkspaceOauthConsentUidRouteImport.update({
-    id: '/oauth/consent/$uid',
-    path: '/oauth/consent/$uid',
-    getParentRoute: () => WorkspaceRoute,
-  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof WorkspaceIndexRoute
@@ -85,9 +66,6 @@ export interface FileRoutesByFullPath {
   '/recipes': typeof WorkspaceRecipesRoute
   '/settings': typeof WorkspaceSettingsRoute
   '/workouts': typeof WorkspaceWorkoutsRoute
-  '/account/reset-password': typeof AccountResetPasswordRoute
-  '/oauth/sign-in': typeof WorkspaceOauthSignInRoute
-  '/oauth/consent/$uid': typeof WorkspaceOauthConsentUidRoute
 }
 export interface FileRoutesByTo {
   '/$': typeof WorkspaceSplatRoute
@@ -96,10 +74,7 @@ export interface FileRoutesByTo {
   '/recipes': typeof WorkspaceRecipesRoute
   '/settings': typeof WorkspaceSettingsRoute
   '/workouts': typeof WorkspaceWorkoutsRoute
-  '/account/reset-password': typeof AccountResetPasswordRoute
   '/': typeof WorkspaceIndexRoute
-  '/oauth/sign-in': typeof WorkspaceOauthSignInRoute
-  '/oauth/consent/$uid': typeof WorkspaceOauthConsentUidRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -110,10 +85,7 @@ export interface FileRoutesById {
   '/_workspace/recipes': typeof WorkspaceRecipesRoute
   '/_workspace/settings': typeof WorkspaceSettingsRoute
   '/_workspace/workouts': typeof WorkspaceWorkoutsRoute
-  '/account/reset-password': typeof AccountResetPasswordRoute
   '/_workspace/': typeof WorkspaceIndexRoute
-  '/_workspace/oauth/sign-in': typeof WorkspaceOauthSignInRoute
-  '/_workspace/oauth/consent/$uid': typeof WorkspaceOauthConsentUidRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -125,9 +97,6 @@ export interface FileRouteTypes {
     | '/recipes'
     | '/settings'
     | '/workouts'
-    | '/account/reset-password'
-    | '/oauth/sign-in'
-    | '/oauth/consent/$uid'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/$'
@@ -136,10 +105,7 @@ export interface FileRouteTypes {
     | '/recipes'
     | '/settings'
     | '/workouts'
-    | '/account/reset-password'
     | '/'
-    | '/oauth/sign-in'
-    | '/oauth/consent/$uid'
   id:
     | '__root__'
     | '/_workspace'
@@ -149,15 +115,11 @@ export interface FileRouteTypes {
     | '/_workspace/recipes'
     | '/_workspace/settings'
     | '/_workspace/workouts'
-    | '/account/reset-password'
     | '/_workspace/'
-    | '/_workspace/oauth/sign-in'
-    | '/_workspace/oauth/consent/$uid'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   WorkspaceRoute: typeof WorkspaceRouteWithChildren
-  AccountResetPasswordRoute: typeof AccountResetPasswordRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -218,27 +180,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof WorkspaceWorkoutsRouteImport
       parentRoute: typeof WorkspaceRoute
     }
-    '/account/reset-password': {
-      id: '/account/reset-password'
-      path: '/account/reset-password'
-      fullPath: '/account/reset-password'
-      preLoaderRoute: typeof AccountResetPasswordRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/_workspace/oauth/sign-in': {
-      id: '/_workspace/oauth/sign-in'
-      path: '/oauth/sign-in'
-      fullPath: '/oauth/sign-in'
-      preLoaderRoute: typeof WorkspaceOauthSignInRouteImport
-      parentRoute: typeof WorkspaceRoute
-    }
-    '/_workspace/oauth/consent/$uid': {
-      id: '/_workspace/oauth/consent/$uid'
-      path: '/oauth/consent/$uid'
-      fullPath: '/oauth/consent/$uid'
-      preLoaderRoute: typeof WorkspaceOauthConsentUidRouteImport
-      parentRoute: typeof WorkspaceRoute
-    }
   }
 }
 
@@ -250,8 +191,6 @@ interface WorkspaceRouteChildren {
   WorkspaceSettingsRoute: typeof WorkspaceSettingsRoute
   WorkspaceWorkoutsRoute: typeof WorkspaceWorkoutsRoute
   WorkspaceIndexRoute: typeof WorkspaceIndexRoute
-  WorkspaceOauthSignInRoute: typeof WorkspaceOauthSignInRoute
-  WorkspaceOauthConsentUidRoute: typeof WorkspaceOauthConsentUidRoute
 }
 
 const WorkspaceRouteChildren: WorkspaceRouteChildren = {
@@ -262,8 +201,6 @@ const WorkspaceRouteChildren: WorkspaceRouteChildren = {
   WorkspaceSettingsRoute: WorkspaceSettingsRoute,
   WorkspaceWorkoutsRoute: WorkspaceWorkoutsRoute,
   WorkspaceIndexRoute: WorkspaceIndexRoute,
-  WorkspaceOauthSignInRoute: WorkspaceOauthSignInRoute,
-  WorkspaceOauthConsentUidRoute: WorkspaceOauthConsentUidRoute,
 }
 
 const WorkspaceRouteWithChildren = WorkspaceRoute._addFileChildren(
@@ -272,7 +209,6 @@ const WorkspaceRouteWithChildren = WorkspaceRoute._addFileChildren(
 
 const rootRouteChildren: RootRouteChildren = {
   WorkspaceRoute: WorkspaceRouteWithChildren,
-  AccountResetPasswordRoute: AccountResetPasswordRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
