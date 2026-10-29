@@ -9,6 +9,7 @@ import { createInitialState } from '@packages/workspace/initial-state';
 import type { WorkoutSession } from '@packages/training/types';
 import type { DelegatedAccess } from '../delegation.js';
 import { registerTrainingWrites } from '../mcp-training.js';
+import { registerNutritionWrites } from '../mcp-writes.js';
 import { createReadMcpServer } from '../mcp-reads.js';
 import { WorkspaceStore } from '../store.js';
 import type { Database } from '../queries.js';
@@ -74,6 +75,7 @@ afterEach(async () => {
 async function connect(identity = access) {
   let original: unknown;
   const server = createReadMcpServer(store, identity);
+  registerNutritionWrites(server, store, identity, () => original);
   registerTrainingWrites(server, store, identity, () => original);
   const client = new Client({ name: 'writer', version: '1.0.0' });
   resources.push({ client, server });
@@ -90,6 +92,76 @@ function code(result: unknown) {
   const content = result.structuredContent;
   return content && typeof content === 'object' && 'code' in content ? content.code : undefined;
 }
+
+test('routine-only grants discover revisions and explicitly recover after manual edits without record reads', async () => {
+  const granted = ['routines:write'];
+  const write = await connect({ ...access, scopes: granted });
+  const { client } = resources.at(-1)!;
+  assert.deepEqual((await client.listTools()).tools.map((tool) => tool.name).sort(), [
+    'create_routine',
+    'get_workspace_revision',
+    'update_routine',
+  ]);
+  const initial = (await write('get_workspace_revision', {})).structuredContent as {
+    revision: number;
+  };
+  assert.deepEqual(initial, { revision: 1 });
+  const created = (
+    await write('create_routine', {
+      operationId: 'routine-only-create',
+      expectedRevision: initial.revision,
+      routine,
+    })
+  ).structuredContent as { revision: number };
+  assert.deepEqual(created, { revision: initial.revision + 1 });
+  const saved = (await store.exportSnapshot('alice')).state.training.templates[0]!;
+  await store.mutate('alice', 'manual-routine-edit', {
+    type: 'training.template.save',
+    data: { ...saved, description: 'Owner edit' },
+  });
+  const edit = {
+    operationId: 'routine-only-stale',
+    expectedRevision: created.revision,
+    id: routine.id,
+    patch: { name: 'Changed' },
+  };
+  assert.equal(code(await write('update_routine', edit)), 'REVISION_CONFLICT');
+  const current = (await write('get_workspace_revision', {})).structuredContent as {
+    revision: number;
+  };
+  assert.deepEqual(current, { revision: created.revision + 1 });
+  assert.deepEqual(
+    (
+      await write('update_routine', {
+        ...edit,
+        operationId: 'routine-only-recovery',
+        expectedRevision: current.revision,
+      })
+    ).structuredContent,
+    { revision: current.revision + 1 },
+  );
+  assert.equal(
+    (await store.exportSnapshot('alice')).state.training.templates[0]!.description,
+    'Owner edit',
+  );
+  granted.splice(0);
+  assert.equal(code(await write('get_workspace_revision', {})), 'INSUFFICIENT_SCOPE');
+  const outsider = await connect({ ...access, ownerId: 'bob', scopes: ['routines:write'] });
+  assert.deepEqual((await outsider('get_workspace_revision', {})).structuredContent, {
+    revision: 0,
+  });
+});
+
+test('combined nutrition and routine grants register revision discovery exactly once', async () => {
+  await connect({ ...access, scopes: ['routines:write', 'meal-plans:write'] });
+  const { client } = resources.at(-1)!;
+  assert.deepEqual((await client.listTools()).tools.map((tool) => tool.name).sort(), [
+    'create_routine',
+    'edit_meal_plans',
+    'get_workspace_revision',
+    'update_routine',
+  ]);
+});
 
 test('routine creation and partial edits never rewrite workout snapshots, and raw requests replay exactly', async () => {
   const write = await connect();
