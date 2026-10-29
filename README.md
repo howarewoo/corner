@@ -299,14 +299,14 @@ Old feature-preview provisioning workflows are removed. Never recreate removed l
 | Folder                       | Responsibility                                                                                               |
 | ---------------------------- | ------------------------------------------------------------------------------------------------------------ |
 | `apps/web/src/`              | React account UI, profile/import settings, meal planner, recipes, workouts, and progress                     |
-| `apps/server/src/`           | Managed Auth boundary, PostgreSQL persistence, and oRPC procedures                                          |
+| `apps/server/src/`           | Managed Auth boundary, PostgreSQL persistence, and oRPC procedures                                           |
 | `packages/nutrition/src/`    | Food and recipe types/schemas, meal calendar, and macro/grocery calculations                                 |
 | `packages/training/src/`     | Workout types/rules, result prefill, exercise catalog, and provenance data                                   |
 | `packages/workspace/src/`    | Combined state/settings, validated mutation composition, training-aware nutrition targets, and initial state |
 | `packages/api/src/`          | Browser-safe oRPC contract, transport schemas, and inferred client types                                     |
 | `apps/web/src/**/__tests__/` | Vitest component/logic tests and Playwright browser journeys colocated with their owners                     |
 | `apps/web/__tests__/`        | Node-environment Vitest checks for web configuration                                                         |
-| `apps/server/tests/`         | Accounts, data isolation, migration, recovery, and proxy regression checks                                  |
+| `apps/server/tests/`         | Accounts, data isolation, migration, recovery, and proxy regression checks                                   |
 | `scripts/`                   | Workspace test runner, production/development smoke checks, configuration, and packaging                     |
 | `deployment/`                | HTTPS edge configuration for the optional hosted Compose deployment                                          |
 

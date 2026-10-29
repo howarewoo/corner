@@ -59,7 +59,9 @@ const recoveryMode = previousArtifact
 const forwardOnly = recoveryMode === 'forward-only';
 const preserving = recoveryMode === 'preserving';
 if (options['--preserving'] && !preserving)
-  throw new Error('--preserving requires a document-v1 previous artifact and relational-v1 candidate.');
+  throw new Error(
+    '--preserving requires a document-v1 previous artifact and relational-v1 candidate.',
+  );
 const directory = await mkdtemp(join(tmpdir(), 'corner-workers-smoke-'));
 const origin = 'https://corner.example.test';
 const cleanup = new AsyncDisposableStack();
@@ -111,7 +113,11 @@ try {
     NEON_AUTH_REQUIRE_EMAIL_VERIFICATION: 'false',
   };
   let workerNumber = 0;
-  const startWorker = async (config, candidate = true, { mainOverride, forbidOutbound = false } = {}) => {
+  const startWorker = async (
+    config,
+    candidate = true,
+    { mainOverride, forbidOutbound = false } = {},
+  ) => {
     const miniflareRequire = createRequire(require.resolve('wrangler'));
     const { Miniflare, convertV4MiniflareOptions, WebSocketPair, Response, Log } = await import(
       miniflareRequire.resolve('miniflare')
@@ -217,7 +223,9 @@ try {
         },
         outboundService: async (request) => {
           if (forbidOutbound)
-            assert.fail(`Maintenance Worker must not make outbound DB/Auth requests (${request.url}).`);
+            assert.fail(
+              `Maintenance Worker must not make outbound DB/Auth requests (${request.url}).`,
+            );
           if (
             request.headers.get('Upgrade')?.toLowerCase() === 'websocket' ||
             new URL(request.url).origin === proxyUrl.origin
@@ -321,12 +329,15 @@ try {
       assert.equal(previousWrite.status, 200, await previousWrite.clone().text());
       // Document-generation get includes state; relational get is bootstrap-only.
       const snapshotProcedure = previousArtifact.generation === 'document-v1' ? 'get' : 'export';
-      const response = await worker.fetch(new URL(`/api/rpc/workspace/${snapshotProcedure}`, origin), {
-        method: 'POST',
-        headers: { Origin: origin, 'Content-Type': 'application/json', Cookie: priorCookie },
-        body: '{}',
-        signal: AbortSignal.timeout(20_000),
-      });
+      const response = await worker.fetch(
+        new URL(`/api/rpc/workspace/${snapshotProcedure}`, origin),
+        {
+          method: 'POST',
+          headers: { Origin: origin, 'Content-Type': 'application/json', Cookie: priorCookie },
+          body: '{}',
+          signal: AbortSignal.timeout(20_000),
+        },
+      );
       assert.equal(response.status, 200, await response.clone().text());
       const previousSnapshot = (await response.json()).json;
       priorState = { state: previousSnapshot.state, revision: previousSnapshot.revision };
@@ -378,15 +389,19 @@ try {
       validationUrl.searchParams.delete('options');
       process.env.DATABASE_URL_UNPOOLED = validationUrl.href;
       try {
-        await validateCutoverCandidate({
-          ...candidateArtifact,
-          directory: dirname(options['--config']),
-        }, operationId, async () => ({
-          ...candidateMigrator,
-          // The existing disposable fixture isolates schemas through libpq options,
-          // forbidden on production unpooled URLs. Keep its real pool factory here.
-          createDatabase: () => candidateMigrator.createDatabase(backend.databaseUrl),
-        }));
+        await validateCutoverCandidate(
+          {
+            ...candidateArtifact,
+            directory: dirname(options['--config']),
+          },
+          operationId,
+          async () => ({
+            ...candidateMigrator,
+            // The existing disposable fixture isolates schemas through libpq options,
+            // forbidden on production unpooled URLs. Keep its real pool factory here.
+            createDatabase: () => candidateMigrator.createDatabase(backend.databaseUrl),
+          }),
+        );
       } finally {
         if (previousUnpooled === undefined) delete process.env.DATABASE_URL_UNPOOLED;
         else process.env.DATABASE_URL_UNPOOLED = previousUnpooled;
@@ -727,9 +742,12 @@ try {
     assert.equal(retired.status, 404);
     assert.match(retired.headers.get('Cache-Control'), /no-store/);
   }
-  const callback = await worker.fetch(new URL('/auth/callback?code=synthetic&state=synthetic', origin), {
-    headers: { Cookie: alice },
-  });
+  const callback = await worker.fetch(
+    new URL('/auth/callback?code=synthetic&state=synthetic', origin),
+    {
+      headers: { Cookie: alice },
+    },
+  );
   assert.equal(callback.status, 404);
   assert.match(callback.headers.get('Cache-Control'), /no-store/);
   assert.equal((await post('/api/auth/sign-out', {}, { Cookie: alice })).status, 200);

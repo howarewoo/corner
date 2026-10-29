@@ -108,7 +108,8 @@ export async function fetchMaintenance(
         versionId,
       );
     }
-    const message = 'Corner is temporarily unavailable for scheduled maintenance. Please try again shortly.';
+    const message =
+      'Corner is temporarily unavailable for scheduled maintenance. Please try again shortly.';
     if (url.pathname === '/api/rpc' || url.pathname.startsWith('/api/rpc/')) {
       return secure(
         Response.json(

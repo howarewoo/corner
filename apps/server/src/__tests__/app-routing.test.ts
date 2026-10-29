@@ -219,10 +219,7 @@ test('maintenance Worker responds 503 with Retry-After and no-store without invo
   assert.equal(authReq.status, 503);
   assert.equal((await authReq.json()).code, 'MAINTENANCE_ACTIVE');
 
-  const page = await maintenanceWorker.fetch(
-    new Request('https://corner.example.test/'),
-    env,
-  );
+  const page = await maintenanceWorker.fetch(new Request('https://corner.example.test/'), env);
   assert.equal(page.status, 503);
   assert.equal(page.headers.get('Retry-After'), '60');
   assert.match(page.headers.get('Content-Security-Policy') ?? '', /frame-ancestors 'none'/);
