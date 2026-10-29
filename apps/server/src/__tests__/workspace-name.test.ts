@@ -23,6 +23,7 @@ const config: Config = {
   port: 3000,
   dataDir: '/tmp',
   deployment: 'local',
+
 };
 const signupName = 'Fresh trainee Ω';
 const food = {
@@ -96,6 +97,11 @@ test('first food save persists the authenticated name across reload and matching
   assert.deepEqual(saved.state.logs, [food.data]);
   assert.equal(saved.revision, 1);
   assert.equal((await rpc('get')).settings.name, signupName);
+  assert.equal((await reloaded.bootstrap('another-owner', 'Other trainee')).revision, 0);
+  assert.equal(
+    (await reloaded.bootstrap('another-owner', 'Other trainee')).settings.name,
+    'Other trainee',
+  );
 });
 
 test('a non-food first mutation preserves the signup name without an earlier workspace read', async () => {
