@@ -18,6 +18,8 @@ import {
   complete,
   deploy,
   publicChecks,
+  verifyPublic,
+  PublicCheckError,
   maintenanceChecks,
   validateLiveRollback,
 } from '../release.mjs';
@@ -679,20 +681,33 @@ test('automatic production cannot bootstrap or recover an unvalidated release', 
   assert.deepEqual(f.effects, []);
 });
 
-test('automatic public failure leaves the deployed release incomplete', async () => {
+test('automatic production waits for propagation without repeating effects or retrying a security failure', async (t) => {
   const f = fixture();
+  let healthRequests = 0;
+  let securityRequests = 0;
+  t.mock.method(globalThis, 'fetch', async (url) => {
+    if (new URL(url).pathname === '/api/health')
+      return Response.json(
+        { ok: true },
+        { headers: { 'X-Corner-Version': ++healthRequests === 1 ? oldVersion : versionId } },
+      );
+    securityRequests++;
+    return Response.json({ code: 'WRONG_SECURITY_BOUNDARY' }, { status: 200 });
+  });
   await assert.rejects(
     deploy({
       ...f.options,
       runId: '1',
       sourceSha: source,
       qualify: async () => report,
-      checkPublic: async () => {
-        throw new Error('wrong deployed version');
-      },
+      checkPublic: undefined,
     }),
-    /wrong deployed version/,
+    (error) => error instanceof PublicCheckError && !error.retryable,
   );
+  assert.equal(healthRequests, 2);
+  assert.equal(securityRequests, 1);
+  for (const effect of ['upload', 'migrate', 'deploy'])
+    assert.equal(f.effects.filter((value) => value === effect).length, 1);
   assert.equal(f.records.at(-1).phase, 'deployed');
   assert.equal(f.state('schema-attempted'), 'success');
   assert.equal(f.state('deployed'), 'failure');
@@ -821,12 +836,32 @@ test('GitHub download rejects foreign repository and expired/mismatched artifact
     /expired/,
   );
 });
-test('public checks require actual deployed version, not merely a 200 response', async () => {
-  const fetcher = async (url) =>
-    new URL(url).pathname.includes('sign-up')
-      ? Response.json({ code: 'ORIGIN_NOT_ALLOWED' }, { status: 403 })
-      : Response.json({ ok: true }, { headers: { 'X-Corner-Version': oldVersion } });
-  await assert.rejects(publicChecks(config.origin, versionId, fetcher), /version identity/);
+test('public readiness exhausts its bound when HTTP 200 never serves the deployed version', async () => {
+  let healthRequests = 0;
+  let waits = 0;
+  const fetcher = async (url) => {
+    assert.equal(new URL(url).pathname, '/api/health');
+    healthRequests++;
+    return Response.json({ ok: true }, { headers: { 'X-Corner-Version': oldVersion } });
+  };
+  await assert.rejects(
+    verifyPublic(
+      config.origin,
+      versionId,
+      {},
+      (origin, version) => publicChecks(origin, version, fetcher),
+      async (milliseconds) => {
+        assert.equal(milliseconds, 5000);
+        waits++;
+      },
+    ),
+    (error) =>
+      error instanceof PublicCheckError &&
+      error.retryable &&
+      error.message.includes(`expected ${versionId}; observed ${oldVersion}`),
+  );
+  assert.equal(healthRequests, 12);
+  assert.equal(waits, 11);
 });
 test('live rollback validates relational records read-only and withholds private failures without reversing SQL', async () => {
   const statements = [];
@@ -1291,14 +1326,18 @@ test('post-upload payload changes block before migrations or traffic changes', a
   assert.deepEqual(f.effects, ['upload']);
 });
 
-test('public probes require a canonical native protected RPC error, not an obsolete REST 401', async () => {
+test('public readiness reaches the candidate before security probes and rejects obsolete REST errors without retry', async () => {
   const requests = [];
   let native = true;
+  let waits = 0;
   const fetcher = async (url, options = {}) => {
     const path = new URL(url).pathname;
     requests.push(path);
     if (path === '/api/health')
-      return Response.json({ ok: true }, { headers: { 'X-Corner-Version': versionId } });
+      return Response.json(
+        { ok: true },
+        { headers: { 'X-Corner-Version': waits ? versionId : oldVersion } },
+      );
     if (path.includes('sign-up'))
       return Response.json({ code: 'ORIGIN_NOT_ALLOWED' }, { status: 403 });
     if (path === '/api/rpc/workspace/get') {
@@ -1327,10 +1366,20 @@ test('public probes require a canonical native protected RPC error, not an obsol
       headers: { 'Content-Security-Policy': "frame-ancestors 'none'" },
     });
   };
-  await publicChecks(config.origin, versionId, fetcher);
+  const check = (origin, version) => publicChecks(origin, version, fetcher);
+  const wait = async () => {
+    waits++;
+  };
+  await verifyPublic(config.origin, versionId, {}, check, wait);
+  assert.deepEqual(requests.slice(0, 3), ['/api/health', '/api/health', '/api/auth/sign-up/email']);
+  assert.equal(waits, 1);
   assert.equal(requests.includes('/api/state'), false);
   native = false;
-  await assert.rejects(publicChecks(config.origin, versionId, fetcher), /RPC authentication/);
+  await assert.rejects(
+    verifyPublic(config.origin, versionId, {}, check, wait),
+    /RPC authentication/,
+  );
+  assert.equal(waits, 1);
 });
 
 test('shared CI loader binds branch, repository, run and retained artifact before unpacking', async () => {

@@ -8,11 +8,10 @@ import { createRequire } from 'node:module';
 import {
   deployPreview,
   completePreview,
-  verifyPreviewPublic,
   previewConfiguration,
   previewCredentials,
 } from '../staging-preview.mjs';
-import { publicChecks, PublicCheckError } from '../release.mjs';
+import { PublicCheckError } from '../release.mjs';
 
 const sourceSha = 'a'.repeat(40);
 const digest = 'b'.repeat(64);
@@ -391,55 +390,6 @@ test('Preview rejects pre-Drizzle schema and serving history before any effects'
     await assert.rejects(deployPreview(f.options));
     assert.deepEqual(f.effects, []);
   }
-});
-
-test('Preview readiness waits for the exact version and never retries a security failure', async () => {
-  let healthy = false;
-  let waits = 0;
-  const check = async (url, version, _fetcher, access) =>
-    publicChecks(
-      url,
-      version,
-      async (request) => {
-        if (new URL(request).pathname === '/api/health')
-          return Response.json(
-            { ok: true },
-            { headers: { 'X-Corner-Version': healthy ? version : 'old' } },
-          );
-        return Response.json({ code: 'ORIGIN_NOT_ALLOWED' }, { status: 403 });
-      },
-      access,
-    );
-  // The first stale health response must wait; the subsequent RPC-shaped mismatch must fail closed.
-  await assert.rejects(
-    verifyPreviewPublic(origin, 'current', {}, check, async () => {
-      waits++;
-      healthy = true;
-    }),
-    (error) => error instanceof PublicCheckError && !error.retryable,
-  );
-  assert.equal(waits, 1);
-});
-
-test('a Preview that never serves its recorded version exhausts the readiness bound', async () => {
-  let waits = 0;
-  await assert.rejects(
-    verifyPreviewPublic(
-      origin,
-      'current',
-      {},
-      async (url, version) =>
-        publicChecks(url, version, async () =>
-          Response.json({ ok: true }, { headers: { 'X-Corner-Version': 'old' } }),
-        ),
-      async () => {
-        waits++;
-        assert.ok(waits <= 11);
-      },
-    ),
-    (error) => error instanceof PublicCheckError && error.retryable,
-  );
-  assert.equal(waits, 11);
 });
 
 async function completionScenario(t) {
