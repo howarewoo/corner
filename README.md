@@ -159,6 +159,21 @@ The owner-locked batch commits every created record, provenance row, outcome, re
 
 The 1,000-receipt limit does not prune source identities. After receipt pruning or reconnect, discover the current revision and explicitly submit again: unchanged sources skip without duplication, but an expired receipt cannot replay its original outcome/revision. Workspace export/recovery carries `importSources` with original source fingerprints, even after destination corrections or when only an identity tombstone remains. Recovery binds those identities to the receiving owner, never the original account or OAuth grant. Tombstones prevent re-creating previously imported identities; provenance alone makes an account nonempty for recovery. Supported older exports lacking `importSources` receive an empty collection. Provenance is private workspace data, not proof of source authenticity or a transfer of credentials.
 
+### Static landing page
+
+[`apps/landing`](apps/landing/) is the independently buildable Astro 7.4.4 landing page. It uses the official React integration to render shared `@packages/ui` controls into static HTML without client hydration, with synthetic product examples and no account, database, environment-file, analytics, or external-font dependency.
+
+```bash
+pnpm --filter landing dev
+pnpm --filter landing check
+pnpm run build --filter=landing
+pnpm --filter landing preview
+```
+
+Development and built preview use **http://127.0.0.1:43203**. Root Turbo `check` and `build` discover the workspace automatically; the owned `pnpm dev` product controller is unchanged and does not launch it. Build output is `apps/landing/dist/index.html`, root-relative `/_astro/` assets, and `/favicon.svg`. `.astro/` is generated local metadata, not source.
+
+The agreed hosted direction is a landing page at the root domain and the existing product at its app subdomain, with existing product routes unchanged. No exact production domain is configured here. Every **Open Corner** action is a real HTML link to `/open-app`; the host integration must supply its fixed, environment-correct redirect. The standalone Astro preview deliberately has no redirect or guessed application destination, so `/open-app` returns 404 until that separate integration exists. Building the page or copying its workspace manifest into Docker does not activate public routing or qualify authentication.
+
 ### Build and run production locally
 
 ```bash
@@ -167,7 +182,7 @@ pnpm run db:migrate
 pnpm start
 ```
 
-The build compiles the nutrition, training, workspace, and API packages in dependency order, then builds `server` and `web` as separate workspace tasks. The compiled server starts on port 3000 and serves `apps/web/dist` alongside its API, preserving the same browser origin. Production runs ordinary JavaScript from `apps/server/dist`; it does not run Vite or require a TypeScript loader.
+The build compiles the nutrition, training, workspace, and API packages in dependency order, then builds the server, web product, design catalog, and static landing page as separate workspace tasks. The compiled server currently starts on port 3000 and serves `apps/web/dist` alongside its API, preserving the same browser origin; this landing-page addition does not change that runtime routing. Production runs ordinary JavaScript from `apps/server/dist`; it does not run Vite or require a TypeScript loader.
 
 ### Workspace commands
 

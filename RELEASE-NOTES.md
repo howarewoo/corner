@@ -4,6 +4,15 @@
 
 Corner has not been released. This is the current implementation baseline, not a record of a public launch, live configuration, or completed deployment. Setup commands live in [README.md](README.md); operator procedures and recovery gates live in [HOSTING.md](HOSTING.md).
 
+### Static Corner landing page
+
+- Added `apps/landing`, pinned to Astro `7.4.4`, official React integration `7.1.2`, and Astro check `0.9.12`, using the root pnpm lockfile and existing Turbo task discovery. Its `dev` and `preview` scripts use loopback port `43203`; the product development controller is unchanged.
+- Delivered the complete responsive training/nutrition/progress page, synthetic Today/workout/meal examples, daily workflow, and closing CTA. Shared `@packages/ui` controls and CSS render into HTML without hydration; built HTML has no scripts or Astro islands. Shared Tailwind discovery includes landing source, and Docker's manifest-only workspace inventory includes its package.
+- Observed Node `24.21.0` / pnpm `10.33.2`: frozen offline installation, root lint (0 errors, 28 existing-file warnings), all 14 root check tasks, all 67 web tests across 9 files, and landing/web/design builds passed. After correcting the shared Button's server-rendered anchor role to `link`, root lint and landing check/build passed again. The mechanical design detector returned no findings.
+- Actual isolated Chromium inspection covered 1440px desktop, 390px phone, 320px narrow layout, keyboard traversal with visible focus and skip-link entry, reduced motion, native browser Page zoom at 200%, and JavaScript-disabled content/section links. No page-level horizontal overflow was observed. The no-JS CTA issued the native `/open-app` request; its standalone-preview 404 is expected, not a passing public redirect/authentication check.
+- Full and production pnpm audits each reported one low `deepmerge` `4.3.1` advisory ([GHSA-gcqx-w48m-w2h4](https://github.com/advisories/GHSA-gcqx-w48m-w2h4)) through the existing web Neon Auth UI email-rendering dependency path, with no patched version published. No unrelated account dependency upgrade was made.
+- Output is `apps/landing/dist/index.html` with root-relative static assets and `/favicon.svg`, without an Auth/database runtime dependency. Public routing, the environment-correct `/open-app` redirect, app-subdomain/session qualification, deployment, and real-device proof are separate work; no production domain or live configuration is invented here.
+
 ### Production smoke port isolation
 
 - Moved only the compiled Node production-smoke listeners to 14337/14338, below the default Linux/macOS ephemeral TCP ranges. The previous 43137/43138 listeners overlapped Linux's default outbound allocation range. No application runtime contract, retries, or unrelated-process termination was added.
