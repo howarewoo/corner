@@ -61,33 +61,33 @@ Send one JSON-RPC call per HTTP request. JSON-RPC array/batch bodies, including 
 
 The browser signs in through the existing managed account flow and shows the requesting client, actual account, and selectable requested permissions. A decision binds that fresh managed session and interaction; changing accounts or sessions requires starting again. Granted writes apply directly without per-change Corner approval: approve only clients you trust with those changes. A connected client can refresh independently after browser sign-out, until its grant expires or its owner revokes it in **Settings → Connected clients**. Revocation affects every token in that connection; reconnecting creates a new grant rather than reactivating old credentials. Access tokens last five minutes; grants and refresh tokens have a thirty-day maximum lifetime. Each MCP request checks both its token and live grant.
 
-| Permission              | Implemented tools                                              |
-| ----------------------- | -------------------------------------------------------------- |
-| `workouts:read`         | `list_workouts`, `get_workouts`, `exercise_history`            |
-| `workouts:import`       | `import_workouts`, `get_workspace_revision`                    |
-| `routines:import`       | `import_routines`, `get_workspace_revision`                    |
-| `recipes:import`        | `import_recipes`, `get_workspace_revision`                     |
-| `meal-plans:import`     | `import_meal_plans`, `get_workspace_revision`                  |
-| `food-logs:import`      | `import_food_logs`, `get_workspace_revision`                   |
-| `check-ins:import`      | `import_check_ins`, `get_workspace_revision`                   |
-| `scheduled-dates:import` | `import_scheduled_dates`, `get_workspace_revision`            |
-| `grocery-checks:import` | `import_grocery_checks`, `get_workspace_revision`              |
-| `routines:read`         | `list_routines`, `get_routines`                                |
-| `meal-plans:read`       | `list_meal_plans`, `get_meal_plans`                            |
-| `food-logs:read`        | `list_food_logs`                                               |
-| `recipes:read`          | `list_recipes`, `get_recipes`                                  |
-| `meal-plans:write`      | `edit_meal_plans`, `get_workspace_revision`                    |
-| `food-logs:write`       | `create_food_log`, `update_food_log`, `get_workspace_revision` |
-| `food-logs:delete`      | `delete_food_log`, `get_workspace_revision`                    |
-| `recipes:write`         | `create_recipe`, `update_recipe`, `get_workspace_revision`     |
-| `recipes:delete`        | `delete_recipe`, `get_workspace_revision`                      |
-| `routines:write`        | `create_routine`, `update_routine`, `get_workspace_revision`   |
-| `workout-plans:write`   | `edit_workout_plans`, `get_workout_versions`                   |
-| `workout-history:write` | `update_workout_history`, `get_workout_versions`               |
-| `check-ins:read`        | `list_check_ins`                                               |
-| `scheduled-dates:read`  | `list_scheduled_dates`                                         |
-| `grocery-checks:read`   | `list_grocery_checks`                                          |
-| `settings:read`         | `get_settings`                                                 |
+| Permission               | Implemented tools                                              |
+| ------------------------ | -------------------------------------------------------------- |
+| `workouts:read`          | `list_workouts`, `get_workouts`, `exercise_history`            |
+| `workouts:import`        | `import_workouts`, `get_workspace_revision`                    |
+| `routines:import`        | `import_routines`, `get_workspace_revision`                    |
+| `recipes:import`         | `import_recipes`, `get_workspace_revision`                     |
+| `meal-plans:import`      | `import_meal_plans`, `get_workspace_revision`                  |
+| `food-logs:import`       | `import_food_logs`, `get_workspace_revision`                   |
+| `check-ins:import`       | `import_check_ins`, `get_workspace_revision`                   |
+| `scheduled-dates:import` | `import_scheduled_dates`, `get_workspace_revision`             |
+| `grocery-checks:import`  | `import_grocery_checks`, `get_workspace_revision`              |
+| `routines:read`          | `list_routines`, `get_routines`                                |
+| `meal-plans:read`        | `list_meal_plans`, `get_meal_plans`                            |
+| `food-logs:read`         | `list_food_logs`                                               |
+| `recipes:read`           | `list_recipes`, `get_recipes`                                  |
+| `meal-plans:write`       | `edit_meal_plans`, `get_workspace_revision`                    |
+| `food-logs:write`        | `create_food_log`, `update_food_log`, `get_workspace_revision` |
+| `food-logs:delete`       | `delete_food_log`, `get_workspace_revision`                    |
+| `recipes:write`          | `create_recipe`, `update_recipe`, `get_workspace_revision`     |
+| `recipes:delete`         | `delete_recipe`, `get_workspace_revision`                      |
+| `routines:write`         | `create_routine`, `update_routine`, `get_workspace_revision`   |
+| `workout-plans:write`    | `edit_workout_plans`, `get_workout_versions`                   |
+| `workout-history:write`  | `update_workout_history`, `get_workout_versions`               |
+| `check-ins:read`         | `list_check_ins`                                               |
+| `scheduled-dates:read`   | `list_scheduled_dates`                                         |
+| `grocery-checks:read`    | `list_grocery_checks`                                          |
+| `settings:read`          | `get_settings`                                                 |
 
 Clients see only their granted tools. Tools capture the grant's owner server-side; arguments cannot select a different owner/resource. Read permissions grant no edits; edit permissions do not imply read or delete access. Details return domain keys (`get_recipes.recipes`, `get_meal_plans.plan`, `get_workouts.sessions`, `get_routines.templates`) and fail with `RESPONSE_TOO_LARGE` rather than truncating an oversized batch. No delegated plan/history deletion, workout start/completion, proposals, provider archives, or inference are implemented; no read tool exposes account, credential, client or connection data.
 
@@ -132,16 +132,16 @@ Each tracking collection has its own import-only permission. It grants only its 
 
 Every tool uses `{ operationId, expectedRevision, sourceNamespace, records: [{ sourceRecordId, <record field> }] }`:
 
-| Permission | Tool | Record field | Native source |
-| --- | --- | --- | --- |
-| `workouts:import` | `import_workouts` | `workout` | Workout session, excluding `createdAt`/`updatedAt` |
-| `routines:import` | `import_routines` | `routine` | Workout template, excluding `createdAt`/`updatedAt` |
-| `recipes:import` | `import_recipes` | `recipe` | Recipe, excluding `createdAt` |
-| `meal-plans:import` | `import_meal_plans` | `mealPlan` | Dated plan entry |
-| `food-logs:import` | `import_food_logs` | `foodLog` | Food entry, excluding `createdAt` |
-| `check-ins:import` | `import_check_ins` | `checkIn` | Body/recovery check-in |
-| `scheduled-dates:import` | `import_scheduled_dates` | `scheduledDate` | `{ date }` |
-| `grocery-checks:import` | `import_grocery_checks` | `groceryCheck` | `{ key, checked }` |
+| Permission               | Tool                     | Record field    | Native source                                       |
+| ------------------------ | ------------------------ | --------------- | --------------------------------------------------- |
+| `workouts:import`        | `import_workouts`        | `workout`       | Workout session, excluding `createdAt`/`updatedAt`  |
+| `routines:import`        | `import_routines`        | `routine`       | Workout template, excluding `createdAt`/`updatedAt` |
+| `recipes:import`         | `import_recipes`         | `recipe`        | Recipe, excluding `createdAt`                       |
+| `meal-plans:import`      | `import_meal_plans`      | `mealPlan`      | Dated plan entry                                    |
+| `food-logs:import`       | `import_food_logs`       | `foodLog`       | Food entry, excluding `createdAt`                   |
+| `check-ins:import`       | `import_check_ins`       | `checkIn`       | Body/recovery check-in                              |
+| `scheduled-dates:import` | `import_scheduled_dates` | `scheduledDate` | `{ date }`                                          |
+| `grocery-checks:import`  | `import_grocery_checks`  | `groceryCheck`  | `{ key, checked }`                                  |
 
 A batch contains **1–100 records** and its **complete MCP JSON request must fit 2 MiB UTF-8**, including the JSON-RPC envelope, arguments and whitespace. Split explicitly when either independent limit is reached; nothing is truncated. Streaming JSON and SDK transport enforce the same cap. Native mutation bodies retain 192 KiB; workspace JSON transfers retain the separate 32 MiB limit and existing native collection/nesting bounds. JSON-RPC arrays are rejected and encoded request IDs are capped at 256 bytes. Under the owner lock, imports also enforce the supported whole-workspace capacities: 10,000 recipes and routines each; 100,000 workouts, dated meal plans, food logs, check-ins, scheduled dates and grocery checks each. Provenance has no separate fixed entry-count cap.
 
@@ -158,7 +158,6 @@ Keep source namespace/record IDs and all native record/exercise/set IDs stable a
 The owner-locked batch commits every created record, provenance row, outcome, revision and receipt atomically. Any invalid or conflicting member leaves the whole batch unchanged; previously successful batches remain. Success returns `{ revision, outcomes: [{ sourceRecordId, destinationId, outcome: "created" | "skipped" }] }`, never hidden destination records. Retained exact operation retries return the original revision **and outcomes**; changed original JSON arguments fail with `REQUEST_ID_REUSED` even when they normalize identically. New stale operations fail with `REVISION_CONFLICT`, without rebasing.
 
 The 1,000-receipt limit does not prune source identities. After receipt pruning or reconnect, discover the current revision and explicitly submit again: unchanged sources skip without duplication, but an expired receipt cannot replay its original outcome/revision. Workspace export/recovery carries `importSources` with original source fingerprints, even after destination corrections or when only an identity tombstone remains. Recovery binds those identities to the receiving owner, never the original account or OAuth grant. Tombstones prevent re-creating previously imported identities; provenance alone makes an account nonempty for recovery. Supported older exports lacking `importSources` receive an empty collection. Provenance is private workspace data, not proof of source authenticity or a transfer of credentials.
-
 
 ### Build and run production locally
 
@@ -336,7 +335,7 @@ pnpm run verify -- --full --report /tmp/corner-verification.jsonl
 
 Server tests, browser journeys, and runtime smoke checks require `CORNER_TEST_DATABASE_URL`; they never fall back to the real `DATABASE_URL`. Each fixture owns a random PostgreSQL schema and drops only that schema. Server files run sequentially in separate Node processes; web files run sequentially in isolated Vitest forks. Better Auth is a **test-only** dependency for a local managed-service fixture; no test requires live email delivery, model access, or cloud credentials.
 
-Production smoke starts disposable compiled servers on loopback ports 43137 and 43138. Development smoke starts only the web/API processes and five domain/API-package watchers on 43139 and 43140, excluding the independent design catalog. Task-prefixed streaming logs expose readiness without waiting for persistent tasks to exit. Both use actual PostgreSQL and a private local HTTPS auth fixture, exercise cookie sessions and proxy boundaries, and clean up only their own resources. Run development smoke in a clean checkout without `.env`, `.env.local`, or Vite environment files; never remove a user's configuration just to pass it.
+Production smoke starts disposable compiled servers on loopback ports 43137 and 43138. Development smoke starts only the web/API processes and five domain/API-package watchers on 43139 and 43140, excluding the independent design catalog. Task-prefixed streaming logs expose readiness without waiting for persistent tasks to exit. Both use actual PostgreSQL and a private local HTTPS auth fixture, exercise cookie sessions and proxy boundaries, and clean up only their own resources. The shared Auth fixture excludes the application's configured port when accepting an OS-assigned listener port. Run development smoke in a clean checkout without `.env`, `.env.local`, or Vite environment files; never remove a user's configuration just to pass it.
 
 Worker smoke uses an in-process, fixed-destination WebSocket-to-TCP proxy so the production Neon WebSocket driver exercises the actual PostgreSQL protocol against the disposable schema. It requires no cloud Neon connection or separately installed proxy service. It checks concurrent idempotent writes, owner isolation, transaction rollback after a receipt-write failure, and clean candidate database shutdown. Ordinary `pnpm dev`, Node runtime checks, and explicit migrations continue using native `pg`.
 
