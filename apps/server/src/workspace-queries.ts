@@ -1,4 +1,4 @@
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, eq, inArray, sql, type SQL } from 'drizzle-orm';
 import type { z } from 'zod';
 import {
   detailsSchema,
@@ -47,6 +47,38 @@ const resourceTables = {
   groceryChecks: tables.groceryChecks,
 };
 
+/** Domain filters shared by browser pages and MCP raw reads; dates and ownership stay with each caller. */
+export function contentFilters(input: {
+  resource: keyof typeof resourceTables | 'foodLogs';
+  status?: string;
+  search?: string;
+  category?: string;
+  favorite?: boolean;
+}): SQL[] {
+  const filters: SQL[] = [];
+  if (input.resource === 'sessions' && input.status)
+    filters.push(sql`${tables.workoutSessions.status} = ${input.status}`);
+  if (input.resource === 'templates' && input.search) {
+    const pattern = '%' + input.search.replace(/[\\%_]/g, '\\$&') + '%';
+    filters.push(sql`${tables.workoutTemplates.name} ilike ${pattern}`);
+  }
+  if (input.resource === 'recipes') {
+    if (input.category) filters.push(sql`${tables.recipes.category} = ${input.category}`);
+    if (input.favorite !== undefined)
+      filters.push(sql`${tables.recipes.favorite} = ${input.favorite}`);
+    if (input.search) {
+      const pattern = '%' + input.search.replace(/[\\%_]/g, '\\$&') + '%';
+      filters.push(sql`(${tables.recipes.name} ilike ${pattern} OR EXISTS (
+          SELECT 1 FROM jsonb_array_elements_text(${tables.recipes.content}->'tags') tag WHERE tag ilike ${pattern}
+        ) OR EXISTS (
+          SELECT 1 FROM jsonb_array_elements(${tables.recipes.content}->'ingredients') ingredient
+          WHERE ingredient->>'name' ilike ${pattern}
+        ))`);
+    }
+  }
+  return filters;
+}
+
 export async function recordPage(
   db: Database,
   userId: string,
@@ -59,25 +91,7 @@ export async function recordPage(
     const filters = [sql`${table.user_id} = ${userId}`];
     if (input.from && input.through && 'date' in table)
       filters.push(sql`${table.date} between ${input.from} and ${input.through}`);
-    if (input.status && 'status' in table) filters.push(sql`${table.status} = ${input.status}`);
-    if (input.resource === 'templates' && input.search) {
-      const pattern = '%' + input.search.replace(/[\\%_]/g, '\\$&') + '%';
-      filters.push(sql`${tables.workoutTemplates.name} ilike ${pattern}`);
-    }
-    if (input.resource === 'recipes') {
-      if (input.category) filters.push(sql`${tables.recipes.category} = ${input.category}`);
-      if (input.favorite !== undefined)
-        filters.push(sql`${tables.recipes.favorite} = ${input.favorite}`);
-      if (input.search) {
-        const pattern = '%' + input.search.replace(/[\\%_]/g, '\\$&') + '%';
-        filters.push(sql`(${tables.recipes.name} ilike ${pattern} OR EXISTS (
-          SELECT 1 FROM jsonb_array_elements_text(${tables.recipes.content}->'tags') tag WHERE tag ilike ${pattern}
-        ) OR EXISTS (
-          SELECT 1 FROM jsonb_array_elements(${tables.recipes.content}->'ingredients') ingredient
-          WHERE ingredient->>'name' ilike ${pattern}
-        ))`);
-      }
-    }
+    filters.push(...contentFilters(input));
     const recent =
       input.order === 'recent' && (input.resource === 'sessions' || input.resource === 'checkIns');
     const identity = 'id' in table ? table.id : 'key' in table ? table.key : table.date;

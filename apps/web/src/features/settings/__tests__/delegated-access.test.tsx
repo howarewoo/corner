@@ -189,3 +189,25 @@ test('preview explains unavailability without requesting private connections', (
   expect(screen.getByText(/unavailable in preview/)).toBeVisible();
   expect(fetch).not.toHaveBeenCalled();
 });
+
+test('profile and sensitive raw reads require separate explicit consent choices', async () => {
+  const requested = DELEGATED_PERMISSIONS.filter(({ scope }) =>
+    ['workouts:read', 'check-ins:read', 'scheduled-dates:read', 'grocery-checks:read', 'settings:read'].includes(scope),
+  );
+  const calls = mockHttp((call) =>
+    call.init.method === 'POST'
+      ? json({ error: 'Request expired' }, 400)
+      : json({ ...consent, requestedScopes: requested.map(({ scope }) => scope), permissions: requested }),
+  );
+  mountConsent();
+  await screen.findByText(clientName);
+  expect(screen.getAllByRole('checkbox')).toHaveLength(5);
+  for (const permission of requested.filter(({ scope }) => scope !== 'workouts:read')) {
+    await userEvent.click(screen.getByRole('checkbox', { name: permission.label }));
+  }
+  await userEvent.click(screen.getByRole('button', { name: 'Approve access' }));
+  await screen.findByText('Request expired');
+  expect(calls.find((call) => call.init.method === 'POST')?.body).toEqual({
+    accepted: true, scopes: ['workouts:read'],
+  });
+});

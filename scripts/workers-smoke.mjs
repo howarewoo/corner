@@ -619,6 +619,7 @@ try {
     return {
       status: response.status,
       data,
+      wireBytes: Buffer.byteLength(text, 'utf8'),
       headers: response.headers,
       location: response.headers.get('Location'),
     };
@@ -701,19 +702,36 @@ try {
     '/mcp',
     {
       jsonrpc: '2.0',
-      id: 1,
+      id: '🦉"\\'.repeat(20),
       method: 'tools/call',
-      params: { name: 'list_food_logs', arguments: foodInput },
+      params: { name: 'list_food_logs', arguments: { ...foodInput, maxBytes: 16 * 1024 } },
     },
     { bearer: delegatedTokens.data.access_token, browser: false },
   );
   assert.equal(delegatedRead.status, 200);
+  assert.ok(delegatedRead.wireBytes <= 16 * 1024, 'Actual Worker SDK response must fit maxBytes');
   assert.deepEqual(
-    delegatedRead.data.result.structuredContent.entries.map((entry) => entry.id),
+    delegatedRead.data.result.structuredContent.items.map((entry) => entry.id),
     ['workers-food-record'],
   );
   assert.equal(delegatedRead.data.result.structuredContent.revision, foodResult.revision);
+  assert.equal(delegatedRead.data.result.structuredContent.nextCursor, null);
+  assert.equal('totals' in delegatedRead.data.result.structuredContent, false);
   assert.equal(delegatedRead.headers.get('Set-Cookie'), null);
+  const oversizedReadId = await delegatedCall(
+    '/mcp',
+    { jsonrpc: '2.0', id: 'x'.repeat(257), method: 'tools/call',
+      params: { name: 'list_food_logs', arguments: foodInput } },
+    { bearer: delegatedTokens.data.access_token, browser: false },
+  );
+  assert.equal(oversizedReadId.status, 400);
+  const batchedRead = await delegatedCall(
+    '/mcp',
+    [{ jsonrpc: '2.0', id: 'x'.repeat(20 * 1024), method: 'tools/call',
+      params: { name: 'list_food_logs', arguments: { ...foodInput, maxBytes: 16 * 1024 } } }],
+    { bearer: delegatedTokens.data.access_token, browser: false },
+  );
+  assert.equal(batchedRead.status, 400, 'Singleton arrays must not bypass the ID or one-call bounds');
   const delegatedVisible = await delegatedCall(
     '/mcp',
     { jsonrpc: '2.0', id: 2, method: 'tools/list' },
