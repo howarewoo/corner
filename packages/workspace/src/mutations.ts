@@ -21,6 +21,25 @@ const id = z
   .min(1)
   .max(120)
   .regex(/^[a-zA-Z0-9_:.\-]+$/, 'Use a valid item ID.');
+
+export const GroceryKeySchema = z.string().min(1).max(500)
+  .refine((value) => !['__proto__', 'constructor', 'prototype'].includes(value));
+export const ImportDestinationSchema = z.string().min(1).max(500);
+export const ImportSourceSchema = z.object({
+  sourceNamespace: z.string().trim().min(1).max(120).regex(/^[a-zA-Z0-9_:.\-]+$/),
+  recordType: z.enum(['workouts', 'routines', 'recipes', 'meal-plans', 'food-logs', 'check-ins', 'scheduled-dates', 'grocery-checks']),
+  sourceRecordId: z.string().trim().min(1).max(240).refine((value) => !/[\u0000-\u001f\u007f]/.test(value)),
+  sourceFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+  destinationId: ImportDestinationSchema,
+}).strict().superRefine((source, context) => {
+  const schema = source.recordType === 'grocery-checks' ? GroceryKeySchema
+    : source.recordType === 'scheduled-dates' ? DateSchema : id;
+  const result = schema.safeParse(source.destinationId);
+  if (!result.success) for (const issue of result.error.issues)
+    context.addIssue({ code: 'custom', path: ['destinationId'], message: issue.message });
+  if (result.success && result.data !== source.destinationId)
+    context.addIssue({ code: 'custom', path: ['destinationId'], message: 'Use a canonical native destination ID without surrounding whitespace.' });
+});
 const finite = (max: number) => z.number().finite().min(0).max(max);
 const TimestampSchema = z
   .string()
@@ -82,8 +101,7 @@ export const MutationSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('grocery.check'),
     data: z.object({
-      key: text(500)
-        .min(1)
+      key: text(500).min(1)
         .refine((value) => !['__proto__', 'constructor', 'prototype'].includes(value)),
       checked: z.boolean(),
     }),

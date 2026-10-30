@@ -181,8 +181,9 @@ export const workoutSessions = pgTable(
     name: text().notNull(),
     kind: text().notNull(),
     status: text().notNull(),
+    allows_unknown_targets: boolean().generatedAlwaysAs(sql`status = 'completed'`),
     unit: text().notNull(),
-    planned_minutes: integer().notNull(),
+    planned_minutes: integer(),
     duration_minutes: doublePrecision(),
     rounds: integer(),
     session_rpe: doublePrecision(),
@@ -194,10 +195,15 @@ export const workoutSessions = pgTable(
   },
   (t) => [
     primaryKey({ columns: [t.user_id, t.id] }),
+    unique('workspace_workout_sessions_recorded_targets').on(t.user_id, t.id, t.allows_unknown_targets),
     index('workspace_workout_sessions_date').on(t.user_id, t.date, t.position, t.id),
     check(
       'workspace_workout_sessions_status',
       sql`${t.status} in ('planned', 'in_progress', 'completed', 'skipped')`,
+    ),
+    check(
+      'workspace_workout_sessions_planned',
+      sql`${t.status} = 'completed' or ${t.planned_minutes} is not null`,
     ),
     check('workspace_workout_sessions_unit', sql`${t.unit} in ('lb', 'kg')`),
     check(
@@ -215,15 +221,19 @@ export const workoutExercises = pgTable(
     position: integer().notNull(),
     name: text().notNull(),
     load_type: text().notNull(),
-    target_sets: integer().notNull(),
-    rep_min: integer().notNull(),
-    rep_max: integer().notNull(),
+    target_sets: integer(),
+    rep_min: integer(),
+    rep_max: integer(),
     target_rir: doublePrecision(),
-    rest_seconds: integer().notNull(),
+    rest_seconds: integer(),
     notes: text().notNull(),
     catalog_id: text(),
     target_weight: doublePrecision(),
     target_unit: text(),
+    // NULL exempts complete targets from the conditional completed-parent foreign key.
+    requires_completed: boolean().generatedAlwaysAs(
+      sql`CASE WHEN target_sets IS NULL OR rep_min IS NULL OR rep_max IS NULL OR rest_seconds IS NULL THEN true ELSE NULL END`,
+    ),
   },
   (t) => [
     primaryKey({ columns: [t.user_id, t.session_id, t.id] }),
@@ -231,10 +241,15 @@ export const workoutExercises = pgTable(
       columns: [t.user_id, t.session_id],
       foreignColumns: [workoutSessions.user_id, workoutSessions.id],
     }).onDelete('cascade'),
+    foreignKey({
+      name: 'workspace_workout_exercises_recorded_targets',
+      columns: [t.user_id, t.session_id, t.requires_completed],
+      foreignColumns: [workoutSessions.user_id, workoutSessions.id, workoutSessions.allows_unknown_targets],
+    }),
     index('workspace_workout_exercises_history').on(t.user_id, t.name, t.session_id),
     check(
       'workspace_workout_exercises_target',
-      sql`${t.target_sets} between 1 and 20 and ${t.rep_min} between 1 and 200 and ${t.rep_max} between ${t.rep_min} and 200 and ${t.rest_seconds} between 0 and 900`,
+      sql`${t.target_sets} between 1 and 20 and ${t.rep_min} between 1 and 200 and ${t.rep_max} between ${t.rep_min} and 200 and ${t.rest_seconds} between 0 and 900 and (${t.rep_min} is null) = (${t.rep_max} is null)`,
     ),
     check(
       'workspace_workout_exercises_load',
@@ -335,6 +350,24 @@ export const scheduledDates = pgTable(
   (t) => [primaryKey({ columns: [t.user_id, t.date] })],
 );
 
+export const importSources = pgTable(
+  'workspace_import_sources',
+  {
+    user_id: text().notNull().references(() => workspaceMetadata.user_id, { onDelete: 'cascade' }),
+    source_namespace: text().notNull(),
+    record_type: text().notNull(),
+    source_record_id: text().notNull(),
+    source_fingerprint: text().notNull(),
+    destination_id: text().notNull(),
+    position: position(),
+  },
+  (t) => [
+    primaryKey({ name: 'workspace_import_sources_identity', columns: [t.user_id, t.source_namespace, t.record_type, t.source_record_id] }),
+    unique('workspace_import_sources_destination').on(t.user_id, t.record_type, t.destination_id),
+    index('workspace_import_sources_export').on(t.user_id, t.position),
+  ],
+);
+
 export const mutationReceipts = pgTable(
   'mutation_receipts',
   {
@@ -343,6 +376,7 @@ export const mutationReceipts = pgTable(
     payload_hash: text().notNull(),
     revision: bigint({ mode: 'number' }).notNull(),
     created_at: text().notNull(),
+    import_outcomes: jsonb().$type<Array<{ sourceRecordId: string; destinationId: string; outcome: 'created' | 'skipped' }>>(),
   },
   (table) => [
     primaryKey({ name: 'mutation_receipts_pkey', columns: [table.user_id, table.request_id] }),

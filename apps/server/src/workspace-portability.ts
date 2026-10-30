@@ -3,7 +3,7 @@ import type { AppState, Settings } from '@packages/workspace/types';
 import { createInitialState } from '@packages/workspace/initial-state';
 import type { Transaction } from './queries.js';
 import * as tables from './schema.js';
-import { foodRecord } from './food-records.js';
+import { foodRecord, writeFoodRecord } from './food-records.js';
 import {
   planRecord,
   recipeRecord,
@@ -27,6 +27,17 @@ import {
 import { ApiError } from './http.js';
 
 import { MAX_WORKSPACE_TRANSFER_BYTES } from '@packages/api/workspace-data';
+import { ImportSourceSchema } from '@packages/workspace/mutations';
+
+export function importSourceRecord(row: typeof tables.importSources.$inferSelect) {
+  return ImportSourceSchema.parse({
+    sourceNamespace: row.source_namespace,
+    recordType: row.record_type,
+    sourceRecordId: row.source_record_id,
+    sourceFingerprint: row.source_fingerprint,
+    destinationId: row.destination_id,
+  });
+}
 
 export async function importRelational(
   connection: Transaction,
@@ -38,19 +49,7 @@ export async function importRelational(
   for (const plan of state.plan) await savePlan(connection, userId, plan, position());
   // Import is the historical serialization boundary, not a new live-source command.
   for (const entry of state.logs)
-    await connection.insert(tables.foodEntries).values({
-      user_id: userId,
-      id: entry.id,
-      position: position(),
-      date: entry.date,
-      slot: entry.slot,
-      name: entry.name,
-      ...entry.nutrition,
-      servings: entry.servings,
-      recipe_id: entry.recipeId ?? null,
-      plan_entry_id: entry.planEntryId ?? null,
-      created_at: entry.createdAt,
-    });
+    await writeFoodRecord(connection, userId, entry, position());
   for (const key of Object.keys(state.groceryChecks))
     await connection
       .insert(tables.groceryChecks)
@@ -71,6 +70,16 @@ export async function importRelational(
     await connection
       .insert(tables.scheduledDates)
       .values({ user_id: userId, date, position: position() });
+  for (const source of state.importSources)
+    await connection.insert(tables.importSources).values({
+      user_id: userId,
+      source_namespace: source.sourceNamespace,
+      record_type: source.recordType,
+      source_record_id: source.sourceRecordId,
+      source_fingerprint: source.sourceFingerprint,
+      destination_id: source.destinationId,
+      position: position(),
+    });
 }
 
 /** Caller supplies one repeatable-read transaction; each database result is a bounded batch. */
@@ -258,6 +267,13 @@ export async function exportRelational(
         state.training.scheduledDates,
         rows.map((row) => row.date),
       ),
+  );
+  const sources = state.importSources;
+  await batches(
+    (after) => connection.select().from(tables.importSources)
+      .where(and(eq(tables.importSources.user_id, userId), gt(tables.importSources.position, after)))
+      .orderBy(asc(tables.importSources.position)).limit(200),
+    (rows) => append(sources, rows.map(importSourceRecord)),
   );
   return state;
 }

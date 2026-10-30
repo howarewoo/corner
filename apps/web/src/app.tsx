@@ -1,0 +1,235 @@
+import { useCallback, useEffect, useState } from 'react';
+import { Outlet, useLocation, useMatches, useNavigate } from '@tanstack/react-router';
+import { Loader2 } from 'lucide-react';
+import CornerApp from '@/components/corner-app';
+import { Button, Alert, Toaster, createToastManager } from '@packages/ui';
+import AccountAccess, { readAccountRoute } from './account-access';
+import { authPost, errorMessage, RequestError } from './api';
+import DelegatedConsentScreen, {
+  OAuthSignInReturn,
+  safeAccountReturn,
+} from './features/settings/delegated-consent';
+import { focusManager, useQuery } from '@tanstack/react-query';
+import {
+  clearPrivateState,
+  privateKey,
+  queryClient,
+  rpc,
+  scoped,
+  sessionLifetime,
+  useSessionLifetime,
+  useWorkspace,
+} from './rpc';
+function Brand() {
+  return (
+    <div className="standalone-brand">
+      corner<span>.</span>
+    </div>
+  );
+}
+
+const accountToasts = createToastManager();
+
+async function loadSession() {
+  const session = await scoped(() => rpc.account.session());
+  if (!session.user)
+    throw new RequestError(
+      'Sign-in did not create a Corner session. Allow cookies for this site and try again. If this continues, ask the person who manages Corner to check the account settings.',
+      401,
+      'SESSION_NOT_ESTABLISHED',
+    );
+  // Retire private data only after the server confirms the new session. A failed
+  // handoff must leave the account form mounted so it can explain the failure.
+  clearPrivateState();
+  queryClient.setQueryData(privateKey('session'), session);
+}
+
+export function App() {
+  const location = useLocation();
+  const pathname = new URL(location.publicHref, window.location.origin).pathname;
+  const view = useMatches({ select: (matches) => matches.at(-1)?.staticData.view });
+  const navigate = useNavigate();
+  const consentMatch = /^\/oauth\/consent\/([A-Za-z0-9_-]+)$/.exec(pathname);
+  const oauthSignIn = pathname === '/oauth/sign-in';
+  const oauthRoute = Boolean(consentMatch) || oauthSignIn;
+  const lifetime = useSessionLifetime();
+  useEffect(
+    () =>
+      focusManager.setEventListener((handleFocus) => {
+        const refresh = () => {
+          const visible = document.visibilityState === 'visible';
+          handleFocus(visible);
+          if (visible)
+            void queryClient.invalidateQueries(
+              {
+                predicate: (query) =>
+                  query.queryKey[1] === sessionLifetime() && query.queryKey[0] !== 'session',
+              },
+              { cancelRefetch: false },
+            );
+        };
+        window.addEventListener('focus', refresh);
+        document.addEventListener('visibilitychange', refresh);
+        return () => {
+          window.removeEventListener('focus', refresh);
+          document.removeEventListener('visibilitychange', refresh);
+        };
+      }),
+    [],
+  );
+  const session = useQuery({
+    queryKey: privateKey('session'),
+    queryFn: ({ signal }) => scoped(() => rpc.account.session(undefined, { signal })),
+  });
+  const user = session.data?.user ?? null;
+  const workspaceQuery = useWorkspace(Boolean(user) && !oauthRoute);
+  const workspace = workspaceQuery.data;
+  const loading = session.isPending || (Boolean(user) && !oauthRoute && workspaceQuery.isPending);
+  const [actionError, setError] = useState('');
+  const error = actionError || session.error?.message || workspaceQuery.error?.message || '';
+  const [signingOut, setSigningOut] = useState(false);
+  const expire = useCallback(() => {
+    clearPrivateState();
+    queryClient.setQueryData(privateKey('session'), { user: null });
+  }, []);
+  const load = useCallback(async () => {
+    const generation = sessionLifetime();
+    setError('');
+    try {
+      await loadSession();
+    } catch (failure) {
+      if (generation === sessionLifetime()) setError(errorMessage(failure));
+    }
+  }, []);
+  useEffect(() => {
+    window.addEventListener('corner:session-expired', expire);
+    return () => window.removeEventListener('corner:session-expired', expire);
+  }, [expire]);
+  useEffect(() => {
+    if (user && workspace && !oauthRoute && !view) void navigate({ to: '/', replace: true });
+  }, [user, workspace, oauthRoute, view, navigate]);
+  async function signOut() {
+    if (signingOut) return;
+    setSigningOut(true);
+    setError('');
+    try {
+      await authPost('/api/auth/sign-out', {});
+      expire();
+    } catch (failure) {
+      const msg = errorMessage(failure);
+      setError(msg);
+      accountToasts.add({
+        title: 'Sign out failed',
+        description: msg,
+        type: 'error',
+        priority: 'high',
+      });
+    } finally {
+      setSigningOut(false);
+    }
+  }
+  if (loading)
+    return (
+      <main className="standalone-loading corner-ui">
+        <Brand />
+        <p role="status">
+          <Loader2 className="spin" size={20} />
+          Opening your workspace…
+        </p>
+      </main>
+    );
+  // A failed lookup says nothing about whether the server session still exists.
+  if (!user && session.isError)
+    return (
+      <main className="standalone-loading corner-ui">
+        <Brand />
+        <h1>Your account could not be loaded.</h1>
+        <Alert variant="destructive">{session.error.message}</Alert>
+        <div className="button-row">
+          <Button disabled={session.isFetching} onClick={() => void session.refetch()}>
+            {session.isFetching ? 'Trying again…' : 'Retry'}
+          </Button>
+        </div>
+      </main>
+    );
+  if (!user)
+    return (
+      <AccountAccess
+        onSignedIn={loadSession}
+        accountReturnTo={safeAccountReturn(pathname + location.searchStr) ?? undefined}
+      />
+    );
+  if (consentMatch)
+    return (
+      <DelegatedConsentScreen
+        key={`${consentMatch[1]}:${lifetime}`}
+        uid={consentMatch[1]}
+        notify={(message) =>
+          accountToasts.add({ title: 'Connection failed', description: message, type: 'error' })
+        }
+      />
+    );
+  if (oauthSignIn) {
+    const values = new URLSearchParams(location.searchStr).getAll('returnTo');
+    return <OAuthSignInReturn returnTo={values.length === 1 ? values[0] : null} />;
+  }
+  if (!workspace)
+    return (
+      <main className="standalone-loading corner-ui">
+        <Brand />
+        <h1>Your workspace could not be loaded.</h1>
+        {error ? (
+          <Alert variant="destructive">{error}</Alert>
+        ) : (
+          <p role="alert">Please try again.</p>
+        )}
+        <div className="button-row">
+          <Button variant="default" onClick={() => void load()}>
+            Retry
+          </Button>
+          <Button variant="outline" disabled={signingOut} onClick={() => void signOut()}>
+            Sign out
+          </Button>
+        </div>
+      </main>
+    );
+  if (!view) return null;
+  return (
+    <CornerApp
+      key={`${user.id}:${lifetime}`}
+      view={view}
+      initialSettings={workspace.settings}
+      preview={false}
+      displayName={user.name}
+      accountEmail={user.email}
+      signingOut={signingOut}
+      onSignOut={() => void signOut()}
+    />
+  );
+}
+
+export function AccountEntryPoint() {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const pathname = new URL(location.publicHref, window.location.origin).pathname;
+  const route = readAccountRoute({ pathname, search: location.searchStr });
+  const returnValues = new URLSearchParams(location.searchStr).getAll('oauthReturn');
+  const accountReturnTo = returnValues.length === 1 ? safeAccountReturn(returnValues[0]) : null;
+  if (route.kind !== 'default')
+    return (
+      <AccountAccess
+        initialRoute={route}
+        accountReturnTo={accountReturnTo ?? undefined}
+        onSignedIn={async () => {
+          await loadSession();
+          await navigate({ href: accountReturnTo ?? '/', replace: true });
+        }}
+      />
+    );
+  return (
+    <>
+      <Toaster toastManager={accountToasts} viewportProps={{ className: 'corner-ui' }} />
+      <Outlet />
+    </>
+  );
+}

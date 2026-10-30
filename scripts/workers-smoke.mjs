@@ -58,6 +58,7 @@ const recoveryMode = previousArtifact
   ? qualificationRecovery(candidateArtifact, previousArtifact, Boolean(options['--preserving']))
   : undefined;
 const forwardOnly = recoveryMode === 'forward-only';
+const emptyDocumentTransition = forwardOnly && previousArtifact.generation === 'document-v1';
 const preserving = recoveryMode === 'preserving';
 if (options['--preserving'] && !preserving)
   throw new Error(
@@ -75,7 +76,7 @@ try {
     candidateMigrator?.createDatabase,
   );
   cleanup.defer(() => backend.close());
-  if (forwardOnly) {
+  if (emptyDocumentTransition) {
     const retained = await startSmokeServices(
       directory,
       origin,
@@ -304,7 +305,7 @@ try {
       .getSetCookie()
       .map((cookie) => cookie.split(';', 1)[0])
       .join('; ');
-    if (!forwardOnly) {
+    if (!emptyDocumentTransition) {
       const previousWrite = await worker.fetch(new URL('/api/rpc/workspace/mutate', origin), {
         method: 'POST',
         headers: { Origin: origin, 'Content-Type': 'application/json', Cookie: priorCookie },
@@ -341,7 +342,10 @@ try {
       );
       assert.equal(response.status, 200, await response.clone().text());
       const previousSnapshot = (await response.json()).json;
-      priorState = { state: previousSnapshot.state, revision: previousSnapshot.revision };
+      priorState = {
+        state: { importSources: [], ...previousSnapshot.state },
+        revision: previousSnapshot.revision,
+      };
     }
     await worker.dispose();
     if (preserving) {
@@ -423,7 +427,7 @@ try {
     });
   const rpc = (procedure, input, headers = {}) =>
     post(`/api/rpc/${procedure}`, { json: input }, headers);
-  if (priorCookie && !forwardOnly) {
+  if (priorCookie && !emptyDocumentTransition) {
     const response = await rpc('workspace/export', undefined, { Cookie: priorCookie });
     assert.equal(response.status, 200, await response.clone().text());
     assert.deepEqual(
@@ -431,12 +435,12 @@ try {
       priorState,
       'Candidate schema migration must preserve the previous workspace.',
     );
-    if (preserving) {
+    if (preserving || forwardOnly) {
       const priorFollowup = {
-        requestId: 'preserving-candidate-followup-write',
+        requestId: 'migration-candidate-followup-write',
         mutation: {
           type: 'settings.save',
-          data: { ...priorState.state.settings, name: 'Converted and updated on relational-v1' },
+          data: { ...priorState.state.settings, name: 'Migrated and updated on relational-v1' },
         },
       };
       const firstFollowup = await rpc('workspace/mutate', priorFollowup, { Cookie: priorCookie });
@@ -450,7 +454,7 @@ try {
       assert.equal(updatedPrior.status, 200, await updatedPrior.clone().text());
       const updatedSnapshot = (await updatedPrior.json()).json;
       assert.equal(updatedSnapshot.revision, priorState.revision + 1);
-      assert.equal(updatedSnapshot.state.settings.name, 'Converted and updated on relational-v1');
+      assert.equal(updatedSnapshot.state.settings.name, 'Migrated and updated on relational-v1');
       assert.deepEqual(updatedSnapshot.state.logs, priorState.state.logs);
     }
   }
@@ -619,6 +623,7 @@ try {
     return {
       status: response.status,
       data,
+      wireBytes: Buffer.byteLength(text, 'utf8'),
       headers: response.headers,
       location: response.headers.get('Location'),
     };
@@ -701,19 +706,36 @@ try {
     '/mcp',
     {
       jsonrpc: '2.0',
-      id: 1,
+      id: '🦉"\\'.repeat(20),
       method: 'tools/call',
-      params: { name: 'list_food_logs', arguments: foodInput },
+      params: { name: 'list_food_logs', arguments: { ...foodInput, maxBytes: 16 * 1024 } },
     },
     { bearer: delegatedTokens.data.access_token, browser: false },
   );
   assert.equal(delegatedRead.status, 200);
+  assert.ok(delegatedRead.wireBytes <= 16 * 1024, 'Actual Worker SDK response must fit maxBytes');
   assert.deepEqual(
-    delegatedRead.data.result.structuredContent.entries.map((entry) => entry.id),
+    delegatedRead.data.result.structuredContent.items.map((entry) => entry.id),
     ['workers-food-record'],
   );
   assert.equal(delegatedRead.data.result.structuredContent.revision, foodResult.revision);
+  assert.equal(delegatedRead.data.result.structuredContent.nextCursor, null);
+  assert.equal('totals' in delegatedRead.data.result.structuredContent, false);
   assert.equal(delegatedRead.headers.get('Set-Cookie'), null);
+  const oversizedReadId = await delegatedCall(
+    '/mcp',
+    { jsonrpc: '2.0', id: 'x'.repeat(257), method: 'tools/call',
+      params: { name: 'list_food_logs', arguments: foodInput } },
+    { bearer: delegatedTokens.data.access_token, browser: false },
+  );
+  assert.equal(oversizedReadId.status, 400);
+  const batchedRead = await delegatedCall(
+    '/mcp',
+    [{ jsonrpc: '2.0', id: 'x'.repeat(20 * 1024), method: 'tools/call',
+      params: { name: 'list_food_logs', arguments: { ...foodInput, maxBytes: 16 * 1024 } } }],
+    { bearer: delegatedTokens.data.access_token, browser: false },
+  );
+  assert.equal(batchedRead.status, 400, 'Singleton arrays must not bypass the ID or one-call bounds');
   const delegatedVisible = await delegatedCall(
     '/mcp',
     { jsonrpc: '2.0', id: 2, method: 'tools/list' },
@@ -1008,6 +1030,122 @@ try {
     false,
   );
 
+  // Import-only grants add actual history without read/update authority.
+  const workoutImporter = await nutritionToken(['workouts:import']);
+  const importCatalog = await delegatedCall('/mcp',
+    { jsonrpc: '2.0', id: 7, method: 'tools/list' },
+    { bearer: workoutImporter, browser: false });
+  assert.deepEqual(importCatalog.data.result.tools.map((tool) => tool.name).sort(),
+    ['get_workspace_revision', 'import_workouts']);
+  const importRevision = (await nutritionCall(workoutImporter, 'get_workspace_revision', {}))
+    .structuredContent.revision;
+  const importInput = {
+    operationId: 'worker-import-history', expectedRevision: importRevision,
+    sourceNamespace: 'worker-history-archive',
+    records: [{ sourceRecordId: 'walk-source', workout: {
+      id: 'worker-imported-walk', date: '2026-10-28', name: 'Imported actual walk',
+      kind: 'conditioning', status: 'completed', unit: 'kg', exercises: [],
+      plannedMinutes: null, durationMinutes: 28, rounds: null, sessionRpe: null,
+      readiness: null, notes: '', changeReason: '',
+    } }],
+  };
+  const importCreated = await nutritionCall(workoutImporter, 'import_workouts', importInput);
+  assert.deepEqual(importCreated.structuredContent, {
+    revision: importRevision + 1,
+    outcomes: [{ sourceRecordId: 'walk-source', destinationId: 'worker-imported-walk', outcome: 'created' }],
+  });
+  const importedHistory = (await snapshot(alice)).state.training.sessions.find(
+    (session) => session.id === 'worker-imported-walk');
+  assert.equal(importedHistory.plannedMinutes, null);
+  assert.equal(importedHistory.durationMinutes, 28);
+  await client(alice).workspace.mutate({
+    requestId: 'worker-correct-import',
+    mutation: { type: 'training.session.save', data: {
+      session: { ...importedHistory, notes: 'Owner correction retained' },
+      expectedUpdatedAt: importedHistory.updatedAt,
+    } },
+  });
+  assert.deepEqual((await nutritionCall(workoutImporter, 'import_workouts', importInput)).structuredContent,
+    importCreated.structuredContent);
+  const reconnectedImporter = await nutritionToken(['workouts:import']);
+  const importSkipped = await nutritionCall(reconnectedImporter, 'import_workouts', {
+    ...importInput, operationId: 'worker-reconnect-import', expectedRevision: importRevision + 2,
+  });
+  assert.equal(importSkipped.structuredContent.outcomes[0].outcome, 'skipped');
+  const afterImport = await snapshot(alice);
+  assert.equal(afterImport.state.training.sessions.find(
+    (session) => session.id === 'worker-imported-walk').notes, 'Owner correction retained');
+  assert.equal(afterImport.state.importSources.find(
+    (source) => source.sourceNamespace === importInput.sourceNamespace).sourceRecordId, 'walk-source');
+  assert.equal((await nutritionCall(workoutImporter, 'get_workouts', { ids: ['worker-imported-walk'] })).isError, true);
+  const importConflict = await nutritionCall(workoutImporter, 'import_workouts', {
+    ...importInput, operationId: 'worker-source-conflict', expectedRevision: afterImport.revision,
+    records: [{ ...importInput.records[0], workout: { ...importInput.records[0].workout, durationMinutes: 29 } }],
+  });
+  assert.equal(importConflict.structuredContent.code, 'SOURCE_CONFLICT');
+  assert.deepEqual(await snapshot(alice), afterImport);
+  const nativeDomains = ['workouts', 'routines', 'recipes', 'meal-plans', 'food-logs', 'check-ins', 'scheduled-dates', 'grocery-checks'];
+  const nativeImporter = await nutritionToken(nativeDomains.map((domain) => `${domain}:import`));
+  const nativeBefore = await snapshot(alice);
+  let nativeRevision = nativeBefore.revision;
+  const importNative = async (tool, key, record) => {
+    const result = await nutritionCall(nativeImporter, tool, {
+      operationId: `worker-${tool}`, expectedRevision: nativeRevision, sourceNamespace: 'worker-native-archive',
+      records: [{ sourceRecordId: tool, [key]: record }],
+    });
+    assert.equal(result.isError, undefined, JSON.stringify(result));
+    assert.equal(result.structuredContent.outcomes[0].outcome, 'created');
+    nativeRevision = result.structuredContent.revision;
+  };
+  await importNative('import_routines', 'routine', {
+    id: 'worker-native-routine', name: 'Native recovery', kind: 'recovery', description: '',
+    durationMinutes: 0, exercises: [],
+  });
+  await importNative('import_recipes', 'recipe', {
+    id: 'worker-native-recipe', name: 'Native soup', description: '', category: 'main',
+    prepMinutes: 0, cookMinutes: 0, nutrition: { calories: 0, protein: 0, carbs: 0, fat: 0 },
+    ingredients: [{ name: 'Water', quantity: 0, unit: 'ml', aisle: 'Other', optional: false }],
+    steps: ['Serve'], storage: '', variation: '', tags: [], color: '#112233',
+    source: 'manual', favorite: false, pdf: '/recipes/worker-soup.pdf',
+  });
+  await importNative('import_meal_plans', 'mealPlan', {
+    id: 'worker-native-plan', date: '2010-01-01', slot: 'lunch', recipeId: 'worker-native-recipe', servings: 2,
+  });
+  await importNative('import_food_logs', 'foodLog', {
+    id: 'worker-native-food', date: '2001-01-01', slot: 'dinner', name: 'Historical snapshot',
+    recipeId: 'deleted-recipe', planEntryId: 'deleted-plan', servings: 3,
+    nutrition: { calories: 100, protein: 0, carbs: 20, fat: 0 },
+  });
+  await importNative('import_check_ins', 'checkIn', {
+    id: 'worker-native-check-in', date: '2000-01-01', bodyWeight: null, waist: null,
+    sleepHours: 0, energy: null, soreness: null, boxingQuality: null, notes: '',
+  });
+  await importNative('import_scheduled_dates', 'scheduledDate', { date: '1999-12-31' });
+  const nativeGroceryKey = ' Épicerie | 豆腐 '.padEnd(500, ' ');
+  await importNative('import_grocery_checks', 'groceryCheck', { key: nativeGroceryKey, checked: false });
+  await importNative('import_workouts', 'workout', {
+    id: 'worker-native-workout-plan', date: '1998-01-01', name: 'Explicit native plan', kind: 'recovery',
+    status: 'planned', unit: 'lb', exercises: [], plannedMinutes: 0, durationMinutes: null,
+    rounds: null, sessionRpe: null, readiness: null, notes: '', changeReason: '',
+  });
+  const nativeAfter = await snapshot(alice);
+  assert.equal(nativeAfter.revision, nativeRevision);
+  assert.deepEqual(nativeAfter.state.settings, nativeBefore.state.settings);
+  assert.deepEqual(nativeAfter.state.training.scheduledDates, [...nativeBefore.state.training.scheduledDates, '1999-12-31']);
+  assert.equal(nativeAfter.state.training.templates.find((row) => row.id === 'worker-native-routine').durationMinutes, 0);
+  assert.equal(nativeAfter.state.recipes.find((row) => row.id === 'worker-native-recipe').favorite, false);
+  assert.equal(nativeAfter.state.plan.find((row) => row.id === 'worker-native-plan').recipeId, 'worker-native-recipe');
+  const nativeFood = nativeAfter.state.logs.find((row) => row.id === 'worker-native-food');
+  assert.equal(nativeFood.nutrition.calories * nativeFood.servings, 300);
+  assert.equal(nativeFood.recipeId, 'deleted-recipe');
+  assert.equal(nativeFood.planEntryId, 'deleted-plan');
+  assert.equal(nativeAfter.state.training.checkIns.find((row) => row.id === 'worker-native-check-in').sleepHours, 0);
+  assert.equal(nativeAfter.state.groceryChecks[nativeGroceryKey], false);
+  assert.equal(nativeAfter.state.training.sessions.find((row) => row.id === 'worker-native-workout-plan').status, 'planned');
+  const importedFoodWindow = await client(alice).workspace.foodWindow({ from: '2001-01-01', through: '2001-01-01', limit: 50 });
+  assert.equal(importedFoodWindow.totals.calories, 300);
+  assert.equal(importedFoodWindow.totals.protein, 0);
+  assert.equal(importedFoodWindow.entries[0].name, 'Historical snapshot');
   // Training grants use the same actual Worker/OAuth path, separately from planning and nutrition.
   const trainingPlanner = await nutritionToken(['routines:write', 'workout-plans:write']);
   const trainingHistorian = await nutritionToken(['workout-history:write']);
@@ -1435,5 +1573,5 @@ try {
   await cleanup.disposeAsync();
 }
 process.stdout.write(
-  `Passed fullstack Worker assets, version identity, canonical origin, secure account cookies, isolated PostgreSQL writes/retries/rollback, clean candidate database shutdown, sign-out, and retired AI route rejection${previousMigrator ? ', including prior-schema writes and candidate/recovery compatibility' : ''}.\nNo live cloud, account email, or model requests were made.\n`,
+  `Passed fullstack Worker assets, version identity, canonical origin, secure account cookies, isolated PostgreSQL writes/retries/rollback, clean candidate database shutdown, sign-out, and retired AI route rejection${previousMigrator ? (recoveryMode === 'compatible' ? ', including prior-schema writes and candidate/recovery compatibility' : ', including forward migration without previous-code recovery') : ''}.\nNo live cloud, account email, or model requests were made.\n`,
 );

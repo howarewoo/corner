@@ -9,6 +9,8 @@ function need(condition: unknown): asserts condition {
 // Migration metadata is validated separately, never treated as application schema.
 // Foreign/check constraints are compared in full below; only their native FK
 // enforcement triggers are admitted. User triggers remain unsupported.
+// Only the two stored-generated workout integrity booleans are admitted; their
+// generation kind and expressions participate in the normal column comparison.
 // A table scope leaves local Auth/bookkeeping intact; unsupported schema-level objects still refuse.
 export async function applicationCatalog(
   client: PoolClient,
@@ -30,7 +32,11 @@ export async function applicationCatalog(
     EXISTS (SELECT 1 FROM pg_policy p JOIN pg_class c ON c.oid=p.polrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=$1) OR
     EXISTS (SELECT 1 FROM pg_constraint c JOIN pg_namespace n ON n.oid=c.connamespace WHERE n.nspname=$1 AND c.contype NOT IN ('p','u','n','f','c') AND ($3::text[] IS NULL OR c.conrelid IN (SELECT oid FROM pg_class WHERE relnamespace=n.oid AND relname=ANY($3::text[])))) OR
     EXISTS (SELECT 1 FROM pg_attribute a JOIN pg_class c ON c.oid=a.attrelid JOIN pg_namespace n ON n.oid=c.relnamespace JOIN pg_type t ON t.oid=a.atttypid JOIN pg_namespace tn ON tn.oid=t.typnamespace
-      WHERE n.nspname=$1 AND c.relkind='r' AND a.attnum>0 AND (a.attisdropped OR a.attidentity<>'' OR a.attgenerated<>'' OR a.atthasmissing OR a.attacl IS NOT NULL OR tn.nspname<>'pg_catalog' OR EXISTS (SELECT 1 FROM pg_collation co JOIN pg_namespace cn ON cn.oid=co.collnamespace WHERE co.oid=a.attcollation AND cn.nspname<>'pg_catalog'))) OR
+      WHERE n.nspname=$1 AND c.relkind='r' AND a.attnum>0 AND (a.attisdropped OR a.attidentity<>'' OR
+        (a.attgenerated<>'' AND NOT (a.attgenerated='s' AND t.typname='bool' AND
+          ((c.relname='workspace_workout_sessions' AND a.attname='allows_unknown_targets') OR
+           (c.relname='workspace_workout_exercises' AND a.attname='requires_completed')))) OR
+        a.atthasmissing OR a.attacl IS NOT NULL OR tn.nspname<>'pg_catalog' OR EXISTS (SELECT 1 FROM pg_collation co JOIN pg_namespace cn ON cn.oid=co.collnamespace WHERE co.oid=a.attcollation AND cn.nspname<>'pg_catalog'))) OR
     EXISTS (SELECT 1 FROM pg_inherits i JOIN pg_class c ON c.oid=i.inhrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=$1) OR
     EXISTS (SELECT 1 FROM pg_statistic_ext s JOIN pg_namespace n ON n.oid=s.stxnamespace WHERE n.nspname=$1) OR
     EXISTS (SELECT 1 FROM pg_extension e JOIN pg_namespace n ON n.oid=e.extnamespace WHERE n.nspname=$1) OR
@@ -54,7 +60,7 @@ export async function applicationCatalog(
   await client.query(`SET LOCAL search_path TO ${quote(schema)}, pg_catalog`);
   const queries = [
     `SELECT c.relname,c.relkind,c.relpersistence,c.relreplident,am.amname FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace LEFT JOIN pg_am am ON am.oid=c.relam WHERE n.nspname=$1 AND c.relname <> ALL($2::text[]) AND NOT EXISTS (SELECT 1 FROM pg_index i JOIN pg_class t ON t.oid=i.indrelid WHERE i.indexrelid=c.oid AND t.relname = ANY($2::text[])) AND ($3::text[] IS NULL OR c.relname=ANY($3::text[]) OR EXISTS (SELECT 1 FROM pg_index i JOIN pg_class t ON t.oid=i.indrelid WHERE i.indexrelid=c.oid AND t.relname=ANY($3::text[]))) ORDER BY c.relname`,
-    `SELECT c.relname,a.attnum,a.attname,format_type(a.atttypid,a.atttypmod) AS type,a.attnotnull,a.attstorage,a.attcompression,co.collname,pg_get_expr(d.adbin,d.adrelid) AS default_value FROM pg_attribute a JOIN pg_class c ON c.oid=a.attrelid JOIN pg_namespace n ON n.oid=c.relnamespace LEFT JOIN pg_attrdef d ON d.adrelid=c.oid AND d.adnum=a.attnum LEFT JOIN pg_collation co ON co.oid=a.attcollation WHERE n.nspname=$1 AND c.relkind='r' AND c.relname <> ALL($2::text[]) AND a.attnum>0 AND ($3::text[] IS NULL OR c.relname=ANY($3::text[])) ORDER BY c.relname,a.attnum`,
+    `SELECT c.relname,a.attnum,a.attname,format_type(a.atttypid,a.atttypmod) AS type,a.attnotnull,a.attgenerated,a.attstorage,a.attcompression,co.collname,pg_get_expr(d.adbin,d.adrelid) AS default_value FROM pg_attribute a JOIN pg_class c ON c.oid=a.attrelid JOIN pg_namespace n ON n.oid=c.relnamespace LEFT JOIN pg_attrdef d ON d.adrelid=c.oid AND d.adnum=a.attnum LEFT JOIN pg_collation co ON co.oid=a.attcollation WHERE n.nspname=$1 AND c.relkind='r' AND c.relname <> ALL($2::text[]) AND a.attnum>0 AND ($3::text[] IS NULL OR c.relname=ANY($3::text[])) ORDER BY c.relname,a.attnum`,
     `SELECT t.relname,c.conname,c.contype,c.condeferrable,c.condeferred,c.convalidated,pg_get_constraintdef(c.oid) AS definition FROM pg_constraint c JOIN pg_class t ON t.oid=c.conrelid JOIN pg_namespace n ON n.oid=t.relnamespace WHERE n.nspname=$1 AND t.relname <> ALL($2::text[]) AND ($3::text[] IS NULL OR t.relname=ANY($3::text[])) ORDER BY t.relname,c.conname`,
     `SELECT t.relname,c.relname AS index_name,i.indisunique,i.indisprimary,i.indisvalid,i.indisready,i.indislive,i.indisreplident,i.indnullsnotdistinct,replace(pg_get_indexdef(i.indexrelid), ' ON ' || quote_ident($1) || '.', ' ON ') AS definition FROM pg_index i JOIN pg_class t ON t.oid=i.indrelid JOIN pg_class c ON c.oid=i.indexrelid JOIN pg_namespace n ON n.oid=t.relnamespace WHERE n.nspname=$1 AND t.relname <> ALL($2::text[]) AND ($3::text[] IS NULL OR t.relname=ANY($3::text[])) ORDER BY t.relname,c.relname`,
   ];

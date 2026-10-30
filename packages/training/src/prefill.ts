@@ -103,7 +103,9 @@ export function getWorkoutPrefill(
         reps:
           previousSet?.reps === null || previousSet?.reps === undefined
             ? exercise.repMin
-            : Math.min(exercise.repMax, Math.max(exercise.repMin, previousSet.reps)),
+            : exercise.repMin === null || exercise.repMax === null
+              ? previousSet.reps
+              : Math.min(exercise.repMax, Math.max(exercise.repMin, previousSet.reps)),
         rir: previousSet?.rir ?? exercise.targetRir,
         source: previousSet ? 'history' : 'targets',
         weightSource: hasPreviousWeight ? 'history' : plannedLoad ? 'targets' : null,

@@ -1,5 +1,13 @@
 export const DELEGATED_PERMISSIONS = [
   { scope: 'workouts:read', label: 'Read workouts and recorded history' },
+  { scope: 'workouts:import', label: 'Import workouts without reading, editing or deleting existing records' },
+  { scope: 'routines:import', label: 'Import routines without reading, editing or deleting existing records' },
+  { scope: 'recipes:import', label: 'Import recipes without reading, editing or deleting existing records' },
+  { scope: 'meal-plans:import', label: 'Import dated meal plans without reading, editing or deleting existing records' },
+  { scope: 'food-logs:import', label: 'Import food logs without reading, editing or deleting existing records' },
+  { scope: 'check-ins:import', label: 'Import body and recovery check-ins without reading, editing or deleting existing records' },
+  { scope: 'scheduled-dates:import', label: 'Import scheduled dates without reading, editing or deleting existing records' },
+  { scope: 'grocery-checks:import', label: 'Import grocery checks without reading, editing or deleting existing records' },
   { scope: 'routines:read', label: 'Read workout routines' },
   { scope: 'meal-plans:read', label: 'Read dated meal plans' },
   { scope: 'food-logs:read', label: 'Read food logs' },
@@ -15,6 +23,10 @@ export const DELEGATED_PERMISSIONS = [
     scope: 'workout-history:write',
     label: 'Correct existing recorded workout history without changing its status',
   },
+  { scope: 'check-ins:read', label: 'Read body and recovery check-ins' },
+  { scope: 'scheduled-dates:read', label: 'Read scheduled training dates' },
+  { scope: 'grocery-checks:read', label: 'Read grocery check marks' },
+  { scope: 'settings:read', label: 'Read profile, goals, targets, timezone, preferences and weekly schedule' },
 ] as const;
 
 export type DelegatedScope = (typeof DELEGATED_PERMISSIONS)[number]['scope'];

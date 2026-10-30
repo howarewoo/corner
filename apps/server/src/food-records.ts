@@ -82,10 +82,17 @@ export async function saveFoodRecord(
     },
     alreadyLogged: Boolean(duplicate),
   });
+  await writeFoodRecord(connection, userId, entry, existing?.position ?? position);
+}
+
+/** Persist an authoritative native snapshot; live-link validation belongs to the caller. */
+export async function writeFoodRecord(
+  connection: Transaction, userId: string, entry: FoodEntry, position: number,
+): Promise<void> {
   const values = {
     user_id: userId,
     id: entry.id,
-    position: existing?.position ?? position,
+    position,
     date: entry.date,
     slot: entry.slot,
     name: entry.name,

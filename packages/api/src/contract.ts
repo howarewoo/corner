@@ -40,6 +40,7 @@ export type ImportPreview = {
     recipeRequests: number;
     trainingRequests: number;
     reviews: number;
+    importSources: number;
     bytes: number;
   };
   canImport: boolean;

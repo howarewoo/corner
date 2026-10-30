@@ -2,9 +2,9 @@ import type { PoolClient } from 'pg';
 import pg from 'pg';
 import { isDeepStrictEqual } from 'node:util';
 import { drizzle } from 'drizzle-orm/node-postgres';
-import { MutationSchema, SettingsSchema } from '@packages/workspace/mutations';
+import { GroceryKeySchema, SettingsSchema } from '@packages/workspace/mutations';
 import {
-  ExerciseTargetSchema,
+  WorkoutExerciseSchema,
   TrainingDateSchema,
   WorkoutSetSchema,
 } from '@packages/training/workouts';
@@ -19,6 +19,8 @@ import {
 } from './training-records.js';
 import type { Transaction } from './queries.js';
 import { quoteIdentifier as quote } from './schema-catalog.js';
+import { importSourceRecord } from './workspace-portability.js';
+import { ImportOutcomesSchema } from './additive-import.js';
 
 export const storageGeneration = 'relational-v1';
 
@@ -108,6 +110,12 @@ export async function validatePersistedRecords(
   await scan('workspace_check_ins', ['user_id', 'id'], compatible(checkInRecord));
   await scan('workspace_training_requests', ['user_id', 'id'], compatible(trainingRequestRecord));
   await scan('workspace_training_reviews', ['user_id', 'id'], compatible(reviewRecord));
+  await scan('workspace_import_sources',
+    ['user_id', 'source_namespace', 'record_type', 'source_record_id'],
+    compatible(importSourceRecord));
+  await scan<{ import_outcomes: unknown }>('mutation_receipts', ['user_id', 'request_id'], (row) => {
+    if (row.import_outcomes !== null) ImportOutcomesSchema.parse(row.import_outcomes);
+  });
   await scan<Parameters<typeof sessionRecords>[2][number]>(
     'workspace_workout_sessions',
     ['user_id', 'id'],
@@ -132,7 +140,7 @@ export async function validatePersistedRecords(
     'workspace_workout_exercises',
     ['user_id', 'session_id', 'id'],
     compatible((row) =>
-      ExerciseTargetSchema.parse({
+      WorkoutExerciseSchema.parse({
         id: row.id,
         name: row.name,
         loadType: row.load_type,
@@ -146,6 +154,7 @@ export async function validatePersistedRecords(
         ...(row.target_weight === null
           ? {}
           : { targetLoad: { weight: row.target_weight, unit: row.target_unit } }),
+        sets: [],
       }),
     ),
   );
@@ -166,12 +175,7 @@ export async function validatePersistedRecords(
   await scan<{ date: string }>('workspace_scheduled_dates', ['user_id', 'date'], (row) =>
     TrainingDateSchema.parse(row.date),
   );
-  await scan<{ key: string }>('workspace_grocery_checks', ['user_id', 'key'], (row) => {
-    const mutation = MutationSchema.parse({
-      type: 'grocery.check',
-      data: { key: row.key, checked: true },
-    });
-    if (mutation.type !== 'grocery.check' || mutation.data.key !== row.key)
-      throw new Error('Lossy grocery key.');
-  });
+  await scan<{ key: string }>('workspace_grocery_checks', ['user_id', 'key'], (row) =>
+    GroceryKeySchema.parse(row.key),
+  );
 }

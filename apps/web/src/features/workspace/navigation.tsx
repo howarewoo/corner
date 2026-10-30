@@ -1,14 +1,14 @@
 import { Home, CalendarDays, UtensilsCrossed, ShoppingBasket, Dumbbell } from 'lucide-react';
 import type { View } from './types';
 
-export const viewPaths: Record<View, string> = {
+export const viewPaths = {
   today: '/',
   workouts: '/workouts',
   planner: '/planner',
   recipes: '/recipes',
   groceries: '/groceries',
   settings: '/settings',
-};
+} as const satisfies Record<View, string>;
 export const isNutritionView = (v: View): v is 'planner' | 'recipes' | 'groceries' =>
   v === 'planner' || v === 'recipes' || v === 'groceries';
 export const sidebarGroups = [

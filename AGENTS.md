@@ -46,7 +46,7 @@ All commands below run from the repository root with dependencies installed:
 | `pnpm run db:generate`                           | Generate reviewed Drizzle SQL/snapshots from the server schema without connecting to a database                                                  |
 | `pnpm run db:check`                              | Check Drizzle Kit migration snapshot consistency                                                                                                 |
 | `pnpm run db:migrate`                            | After a build: apply checked-in Drizzle migrations via direct `DATABASE_URL_UNPOOLED`; startup never writes schema                               |
-| `pnpm run smoke`                                 | After a full build: disposable production servers on loopback ports `43137` and `43138`                                                          |
+| `pnpm run smoke`                                 | After a full build: disposable production servers on loopback ports `14337` and `14338`                                                          |
 | `pnpm run smoke:dev`                             | Actual development-stack integration on ports `43139` and `43140`; Linux/macOS, clean checkout without local environment files                   |
 | `pnpm start`                                     | After a full build: compiled production server serving the web app and API on port `3000` by default                                             |
 
@@ -63,6 +63,7 @@ A layout migration must update discovery, relative imports, and TypeScript inclu
 ## Select verification for the change
 
 - **Domain schemas, calculations, or mutation rules:** run `pnpm run check`, consuming server/web suites, and the build. Nutrition, training, and workspace exports compile into their owning `packages/<domain>/dist`; direct workspace commands do not automatically rebuild dependencies as Turbo does.
+- **Persisted-data, import/export, or recovery-contract changes:** in addition to consuming tests and the build, qualify the packaged candidate against the retained artifact actually serving the affected target, using disposable PostgreSQL. Bootstrap smoke does not prove upgrade preservation or previous-code recovery. Record whether recovery passed or the change deliberately requires forward-only repair; additive SQL alone does not establish compatibility. If the retained artifact is unavailable, report cross-version acceptance as unverified. Follow [HOSTING.md](HOSTING.md#explicit-production-operator-releases) for artifact qualification and recovery policy.
 - **UI behavior:** run the relevant Vitest web suite; run `pnpm run test:browser` when account, food-log, or workout journeys are affected. Inspect the actual changed screen at desktop and phone widths. Component tests and emulated WebKit do not prove real-iPhone usability.
 - **Account lifecycle:** run affected server/web suites. Mail fixtures are simulated; no live email without explicit authorization.
 - **HTTP runtime, origin/proxy handling, development configuration, or workspace integration:** build, then exercise the relevant production/development smoke checks. Broaden to both smoke checks when changing the shared startup/origin contract.
