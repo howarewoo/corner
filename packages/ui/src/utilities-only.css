@@ -6,6 +6,7 @@
 @source './primitives.tsx';
 @source '../../../apps/design/src';
 @source '../../../apps/web/src';
+@source '../../../apps/landing/src';
 @custom-variant dark (&:where([data-corner-theme='dark'], [data-corner-theme='dark'] *));
 
 @theme inline {
