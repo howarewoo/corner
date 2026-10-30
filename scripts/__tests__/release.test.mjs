@@ -526,6 +526,51 @@ test('successful current main CI deploys backend changes without a second human 
   assert.deepEqual(f.effects, ['public']);
 });
 
+test('dual-origin same-source reruns verify landing and propagate failures without release effects', async () => {
+  const configuration = JSON.stringify({
+    CORNER_ORIGIN: 'https://app.example.com',
+    CORNER_LANDING_ORIGIN: 'https://example.com',
+    NEON_AUTH_REQUIRE_EMAIL_VERIFICATION: 'true',
+  });
+  const config = validateConfiguration(configuration);
+  const f = fixture({ configuration });
+  const completed = {
+    id: 10,
+    payload: {
+      ...receipt,
+      sourceSha: source,
+      candidateDigest,
+      origin: config.origin,
+      runtimeConfigurationDigest: config.digest,
+      versionId,
+    },
+  };
+  f.github.baseline = async () => completed;
+  const artifact = f.github.artifact;
+  f.github.artifact = async (reference, ...args) => {
+    assert.deepEqual(reference, completed.payload);
+    const loaded = await artifact(reference, ...args);
+    loaded.manifest.files = { 'assets/landing/index.html': 'f'.repeat(64) };
+    return loaded;
+  };
+  let landingFailure = false;
+  f.options.checkPublic = async (origin, version, options) => {
+    f.effects.push('public');
+    assert.equal(origin, config.origin);
+    assert.equal(version, versionId);
+    assert.deepEqual(options, { landingOrigin: config.landingOrigin });
+    if (landingFailure) throw new Error('Landing unavailable');
+  };
+  const options = { ...f.options, runId: '1', sourceSha: source };
+  assert.equal(await deploy(options), completed);
+  assert.deepEqual(f.effects, ['public']);
+  f.effects.length = 0;
+  landingFailure = true;
+  await assert.rejects(deploy(options), /Landing unavailable/);
+  assert.deepEqual(f.effects, ['public']);
+  assert.deepEqual(f.records, []);
+});
+
 test('automatic production independently downloads and verifies real archives for planning and promotion', async (t) => {
   const { createHash } = await import('node:crypto');
   const { spawnSync } = await import('node:child_process');
