@@ -36,10 +36,11 @@ export async function handleMcp(
     });
   const parsedBody = request.method === 'POST' ? await readJson(request, MAX_MCP_REQUEST_BYTES) : undefined;
   if (Array.isArray(parsedBody))
-    throw new ApiError(400, 'INVALID_INPUT', 'Use one JSON-RPC request at a time.');
+    throw new ApiError(400, 'INVALID_INPUT', 'Use one tool call per request; JSON-RPC batches are not supported.');
+  // Keep client-selected JSON-RPC IDs within the raw-read result's framing allowance.
   if (parsedBody && typeof parsedBody === 'object' && 'id' in parsedBody &&
-      Buffer.byteLength(JSON.stringify(parsedBody.id), 'utf8') > 256)
-    throw new ApiError(400, 'INVALID_INPUT', 'The JSON-RPC request ID is too large.');
+      new TextEncoder().encode(JSON.stringify(parsedBody.id)).byteLength > 256)
+    throw new ApiError(400, 'INVALID_INPUT', 'Use a JSON-RPC request ID of at most 256 encoded bytes.');
   const transport = new WebStandardStreamableHTTPServerTransport({
     sessionIdGenerator: undefined,
     enableJsonResponse: true,
