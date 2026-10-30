@@ -26,7 +26,7 @@ if (
 export default defineConfig({
   output: 'static',
   integrations: [react()],
-  server: { host: '127.0.0.1', port: Number(landing.port || 80) },
+  server: { host: landing.hostname, port: Number(landing.port || 80) },
   vite: {
     envDir: false,
     server: {
