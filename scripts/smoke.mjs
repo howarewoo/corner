@@ -719,8 +719,10 @@ async function run(mode, port) {
 }
 
 try {
-  await run('hosted', 43137);
-  await run('local', 43138);
+  // Stay below default Linux/macOS ephemeral ranges so outbound fixture connections
+  // cannot consume the next scenario's listener port before its process starts.
+  await run('hosted', 14337);
+  await run('local', 14338);
   process.stdout.write('No live account email or model requests were made.\n');
 } finally {
   for (const child of children) {

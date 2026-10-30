@@ -79,6 +79,27 @@ test('storage transition is artifact-derived, distinct from bootstrap, and canno
     /generation mismatch/,
   );
 });
+
+test('declared relational recovery epochs allow only forward upgrades or same-epoch recovery', () => {
+  const legacy = { generation: 'relational-v1' };
+  const current = { generation: 'relational-v1', manifest: { recoveryEpoch: 1 } };
+  assert.equal(qualificationRecovery(current, legacy), 'forward-only');
+  assert.equal(qualificationRecovery(current, current), 'compatible');
+  assert.throws(() => qualificationRecovery(legacy, current), /epoch predates/);
+  const report = {
+    generation: 'relational-v1',
+    previousGeneration: 'relational-v1',
+    recovery: 'compatible',
+  };
+  assert.throws(
+    () => assertQualificationGeneration(report, current, legacy),
+    /generation mismatch/,
+  );
+  assert.throws(
+    () => assertQualificationGeneration({ ...report, recovery: 'forward-only' }, current, current),
+    /generation mismatch/,
+  );
+});
 async function fixture(t, migration = 'CREATE TABLE example (id int);') {
   const directory = await mkdtemp(join(tmpdir(), 'corner-artifact-test-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
@@ -171,11 +192,30 @@ test('verified snapshot generation cannot be relabelled by a report or an ambigu
   await assert.rejects(verifyArtifact(candidate), /Ambiguous/);
 });
 
+test('artifact recovery epoch is immutable metadata and rejects invalid declarations', async (t) => {
+  const { candidate, manifest } = await fixture(t);
+  const legacy = await verifyArtifact(candidate);
+  for (const recoveryEpoch of [-1, 0.5, '1', null, Number.MAX_SAFE_INTEGER + 1]) {
+    await writeFile(
+      join(candidate, 'manifest.json'),
+      JSON.stringify({ ...manifest, recoveryEpoch }),
+    );
+    await assert.rejects(verifyArtifact(candidate), /Invalid format-4/);
+  }
+  await writeFile(
+    join(candidate, 'manifest.json'),
+    JSON.stringify({ ...manifest, recoveryEpoch: 1 }),
+  );
+  const declared = await verifyArtifact(candidate);
+  assert.notEqual(declared.digest, legacy.digest);
+});
+
 test('packaging canonicalizes JSONC comments and trailing commas but rejects malformed configs', async (t) => {
   const { directory, candidate } = await fixture(t);
   const sourceRoot = join(directory, 'source');
   const inputs = {
     'package.json': '{"type":"module"}',
+    'apps/server/package.json': '{"type":"module","corner":{"recoveryEpoch":1}}',
     'pnpm-lock.yaml': 'lockfileVersion: "9.0"\n',
     ...Object.fromEntries(
       ['nutrition', 'training', 'workspace'].map((name) => [

@@ -299,6 +299,7 @@ test('receipt and rollback require real qualified identities and CURRENT compati
     { ...report, bootstrap: true },
     { ...report, passed: false },
     { ...report, recovery: 'forward-only', previousGeneration: 'document-v1' },
+    { ...report, recovery: 'forward-only' },
     { ...report, recovery: undefined },
     { ...report, previousGeneration: 'document-v1' },
     { ...report, generation: 'document-v1' },
@@ -412,6 +413,30 @@ test('plan persists exact real artifact and baseline qualification', async () =>
   assert.equal(result.payload.baselineId, '10');
   assert.equal(result.payload.qualification.previousDigest, previousDigest);
   assert.equal(result.payload.phase, 'planned');
+});
+test('production requires declared forward-only qualification across relational recovery epochs', async () => {
+  for (const recovery of ['compatible', 'forward-only']) {
+    const f = fixture();
+    const artifact = f.github.artifact;
+    f.github.artifact = async (reference, ...args) => {
+      const loaded = await artifact(reference, ...args);
+      if (reference.sourceSha === source) loaded.manifest.recoveryEpoch = 1;
+      return loaded;
+    };
+    const options = {
+      ...f.options,
+      runId: '1',
+      sourceSha: source,
+      qualify: async () => ({ ...report, recovery }),
+    };
+    if (recovery === 'compatible') {
+      await assert.rejects(plan(options), /generation mismatch/);
+      assert.deepEqual(f.effects, []);
+    } else {
+      await plan(options);
+      assert.deepEqual(f.effects, ['planned']);
+    }
+  }
 });
 
 test('successful promotion closes stage statuses without changing recovery journals', async () => {

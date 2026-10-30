@@ -354,6 +354,26 @@ test('interrupted B schema attempt preserves A as C compatibility baseline', asy
   assert.deepEqual(f.effects, ['schema-attempted', 'migration']);
 });
 
+test('staging requires declared forward-only qualification across relational recovery epochs', async (t) => {
+  for (const recovery of ['compatible', 'forward-only']) {
+    const f = await interruptedDeployment(t);
+    f.candidate.manifest.recoveryEpoch = 1;
+    f.options.qualify = async () => ({
+      passed: true,
+      candidateDigest: digest,
+      previousDigest: f.serving.digest,
+      generation: 'relational-v1',
+      previousGeneration: 'relational-v1',
+      recovery,
+    });
+    await assert.rejects(
+      deployPreview(f.options),
+      recovery === 'compatible' ? /generation mismatch/ : /migration failed/,
+    );
+    assert.deepEqual(f.effects, recovery === 'compatible' ? [] : ['schema-attempted', 'migration']);
+  }
+});
+
 test('C cannot remove or rewrite B attempted migrations while A serves', async (t) => {
   for (const rewrite of [false, true]) {
     const f = await interruptedDeployment(t);

@@ -49,6 +49,8 @@ export async function verifyArtifact(directory) {
     !/^\d+\.\d+\.\d+$/.test(manifest.wranglerVersion) ||
     !object(manifest.files) ||
     !Array.isArray(manifest.migrations) ||
+    (manifest.recoveryEpoch !== undefined &&
+      (!Number.isSafeInteger(manifest.recoveryEpoch) || manifest.recoveryEpoch < 0)) ||
     Object.keys(manifest).some(
       (key) =>
         ![
@@ -65,6 +67,7 @@ export async function verifyArtifact(directory) {
           'migrationEntry',
           'files',
           'migrations',
+          'recoveryEpoch',
         ].includes(key),
     )
   )
@@ -187,6 +190,14 @@ export function qualificationRecovery(current, prior, preserving = false) {
       throw new Error(
         'Preserving cutover qualification requires a document-to-relational transition.',
       );
+    if (current.generation !== 'relational-v1') return 'compatible';
+    const currentEpoch = current.manifest?.recoveryEpoch ?? 0;
+    const priorEpoch = prior.manifest?.recoveryEpoch ?? 0;
+    if (currentEpoch < priorEpoch)
+      throw new Error(
+        'Candidate recovery epoch predates the previous artifact; forward repair required.',
+      );
+    if (currentEpoch > priorEpoch) return 'forward-only';
     return 'compatible';
   }
   if (current.generation === 'relational-v1' && prior.generation === 'document-v1')
@@ -235,6 +246,11 @@ export async function packageArtifact({ root: sourceRoot = root, out, sourceSha 
   const serverRequire = createRequire(join(sourceRoot, 'apps/server/package.json'));
   const webRequire = createRequire(join(sourceRoot, 'apps/web/package.json'));
   const { experimental_readRawConfig } = await import(serverRequire.resolve('wrangler'));
+  const recoveryEpoch = JSON.parse(
+    await readFile(join(sourceRoot, 'apps/server/package.json'), 'utf8'),
+  ).corner?.recoveryEpoch;
+  if (!Number.isSafeInteger(recoveryEpoch) || recoveryEpoch < 1)
+    throw new Error('Packaging requires an explicit positive recovery epoch.');
   for (const name of ['nutrition', 'training', 'workspace']) {
     const files = await readdir(join(sourceRoot, 'packages', name, 'dist')).catch(() => []);
     if (!files.some((file) => file.endsWith('.js')))
@@ -305,6 +321,7 @@ export async function packageArtifact({ root: sourceRoot = root, out, sourceSha 
     migrationEntry: 'migration/dist/migrate.mjs',
     files,
     migrations: await migrationInventory(join(out, 'migration/migrations')),
+    recoveryEpoch,
   };
   await writeFile(join(out, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`, {
     flag: 'wx',
@@ -358,13 +375,15 @@ export async function qualifyArtifact({
     if (
       prior.generation === 'relational-v1' &&
       (receipt.generation !== prior.generation ||
-        !['bootstrap', 'forward-only', 'preserving', 'compatible'].includes(receipt.recovery) ||
         (receipt.bootstrap
           ? receipt.previousGeneration !== null || receipt.recovery !== 'bootstrap'
-          : receipt.previousGeneration !==
-            (['forward-only', 'preserving'].includes(receipt.recovery)
-              ? 'document-v1'
-              : 'relational-v1')))
+          : !(
+              (receipt.previousGeneration === 'document-v1' &&
+                ['forward-only', 'preserving'].includes(receipt.recovery)) ||
+              (receipt.previousGeneration === 'relational-v1' &&
+                (receipt.recovery === 'compatible' ||
+                  (receipt.recovery === 'forward-only' && prior.manifest.recoveryEpoch > 0)))
+            )))
     )
       throw new Error('Previous artifact has no matching storage generation qualification.');
     for (const [index, item] of prior.manifest.migrations.entries()) {
