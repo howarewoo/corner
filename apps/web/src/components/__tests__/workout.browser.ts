@@ -2,6 +2,112 @@ import { randomUUID } from 'node:crypto';
 import type { TrainingCheckIn, WorkoutSession } from '@packages/training/types';
 import { test, expect, signIn } from '../../__tests__/browser';
 
+for (const status of ['planned', 'completed'] as const) {
+  test(`custom exercise stays open while typing in a ${status} workout`, async ({
+    page,
+    account,
+  }) => {
+    await signIn(page, account, '/workouts');
+    await page.getByRole('button', { name: 'Add workout', exact: true }).click();
+    await page.getByRole('button', { name: 'Blank workout', exact: true }).click();
+    const editor = page.getByRole('dialog', { name: /^(Your workout|Workout details)$/ });
+    await editor.getByLabel('Workout name', { exact: true }).fill('Synthetic custom workout');
+    await editor.getByRole('combobox', { name: 'Status', exact: true }).selectOption(status);
+    if (status === 'completed')
+      await editor.getByLabel('Actual minutes', { exact: true }).fill('20');
+    await editor.getByRole('button', { name: 'Add exercise', exact: true }).click();
+    await editor.getByRole('button', { name: 'Use a custom exercise', exact: true }).click();
+    const name = editor.getByLabel('Exercise name', { exact: true });
+    const toggle = editor.getByRole('button', { name: 'Edit exercise or targets', exact: true });
+    await name.pressSequentially('Q');
+    await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    await expect(name).toBeFocused();
+    await name.pressSequentially('A custom row');
+    await expect(name).toHaveValue('QA custom row');
+    await expect(name).toBeFocused();
+    await toggle.click();
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    await expect(name).not.toBeVisible();
+    await toggle.click();
+    await expect(name).toHaveValue('QA custom row');
+    await name.fill('');
+    await name.pressSequentially('Saved custom row');
+    await expect(name).toBeFocused();
+    await editor.getByRole('button', { name: 'Save workout', exact: true }).click();
+    await expect(editor).not.toBeVisible();
+    await page.reload();
+    await page
+      .getByRole('button', {
+        name: status === 'completed' ? 'View / edit' : 'Start workout',
+        exact: true,
+      })
+      .click();
+    const reopened = page.getByRole('dialog', { name: /^(Your workout|Workout details)$/ });
+    const savedToggle = reopened.getByRole('button', {
+      name: 'Edit exercise or targets',
+      exact: true,
+    });
+    await expect(savedToggle).toHaveAttribute('aria-expanded', 'false');
+    await savedToggle.click();
+    await expect(reopened.getByLabel('Exercise name', { exact: true })).toHaveValue(
+      'Saved custom row',
+    );
+    const saved = (await account.api.workspace.export()).state.training.sessions;
+    expect(saved[0]?.exercises[0]?.name).toBe('Saved custom row');
+  });
+}
+
+test('catalog replacements and routines retain their initial expansion defaults', async ({
+  page,
+  account,
+}) => {
+  await signIn(page, account, '/workouts');
+  await page.getByRole('button', { name: 'Manage routines', exact: true }).click();
+  await page.getByRole('button', { name: 'New routine', exact: true }).click();
+  const editor = page.getByRole('dialog', { name: 'Edit routine', exact: true });
+  await editor.getByLabel('Workout name', { exact: true }).fill('Synthetic custom routine');
+  await editor.getByRole('button', { name: 'Add exercise', exact: true }).click();
+  await editor.getByRole('button', { name: /^Add / }).first().click();
+  const toggle = editor.getByRole('button', { name: 'Exercise & targets', exact: true });
+  const name = editor.getByLabel('Exercise name', { exact: true });
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  await expect(name).toHaveAttribute('readonly');
+  await toggle.click();
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  await toggle.click();
+  await editor.getByRole('button', { name: 'Choose from exercise library', exact: true }).click();
+  await editor.getByRole('button', { name: 'Use a custom exercise', exact: true }).click();
+  await expect(name).toBeEditable();
+  await name.pressSequentially('Routine custom row');
+  await expect(name).toHaveValue('Routine custom row');
+  await expect(name).toBeFocused();
+  await editor.getByRole('button', { name: 'Save routine', exact: true }).click();
+  await expect(editor).not.toBeVisible();
+  await page.reload();
+  await page.getByRole('button', { name: 'Manage routines', exact: true }).click();
+  await page.getByRole('button', { name: /Synthetic custom routine/ }).click();
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  await expect(name).toHaveValue('Routine custom row');
+  await editor.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await page.getByRole('button', { name: 'Add workout', exact: true }).click();
+  await page.getByRole('button', { name: 'Blank workout', exact: true }).click();
+  const workout = page.getByRole('dialog', { name: 'Your workout', exact: true });
+  await workout.getByRole('button', { name: 'Add exercise', exact: true }).click();
+  await workout.getByRole('button', { name: /^Add / }).first().click();
+  const workoutToggle = workout.getByRole('button', {
+    name: 'Edit exercise or targets',
+    exact: true,
+  });
+  await expect(workoutToggle).toHaveAttribute('aria-expanded', 'false');
+  await workoutToggle.click();
+  await expect(workout.getByLabel('Exercise name', { exact: true })).toHaveAttribute('readonly');
+  await workout.getByRole('button', { name: 'Choose from exercise library', exact: true }).click();
+  await workout.getByRole('button', { name: 'Use a custom exercise', exact: true }).click();
+  await expect(workoutToggle).toHaveAttribute('aria-expanded', 'true');
+  await workout.getByLabel('Exercise name', { exact: true }).pressSequentially('Replacement row');
+  await expect(workout.getByLabel('Exercise name', { exact: true })).toHaveValue('Replacement row');
+});
+
 test('check-in summaries fit narrow cards and edit the selected saved record', async ({
   page,
   account,

@@ -436,7 +436,11 @@ function SessionEditor({
   const [remaining, setRemaining] = useState(0);
   const [pickerTarget, setPickerTarget] = useState<string | null>(null);
   const [focusExerciseId, setFocusExerciseId] = useState<string | null>(null);
-  const [openTargets, setOpenTargets] = useState<Record<string, boolean>>({});
+  const [openTargets, setOpenTargets] = useState<Record<string, boolean>>(() =>
+    Object.fromEntries(
+      editor.session.exercises.map((exercise) => [exercise.id, templateMode || !exercise.name]),
+    ),
+  );
   const prefillContext = {
     id: draft.id,
     date: draft.date,
@@ -580,6 +584,7 @@ function SessionEditor({
     } else {
       form.pushFieldValue('session.exercises', exercise, workoutRowValueOptions);
     }
+    setOpenTargets((prev) => ({ ...prev, [exercise.id]: templateMode || !entry }));
     setPickerTarget(null);
     setFocusExerciseId(exercise.id);
   };
@@ -790,7 +795,7 @@ function SessionEditor({
                 </div>
               </div>
               <Collapsible
-                open={openTargets[exercise.id] ?? (templateMode || !exercise.name)}
+                open={openTargets[exercise.id] ?? false}
                 onOpenChange={(isOpen) =>
                   setOpenTargets((prev) => ({ ...prev, [exercise.id]: isOpen }))
                 }
