@@ -232,6 +232,8 @@ Historical recipe requests and training requests/reviews remain supported worksp
 
 Workout targets and previous performance supply editable prefills. A proposed load is separate from an actual logged set. Dumbbell loads marked “per hand” are the weight of each dumbbell.
 
+Completed workout history can contain actual results without a known plan. Unknown planned minutes, target sets, rep limits, and rest seconds remain blank in the editor and `null` in workspace JSON; saving a correction does not infer targets from performed sets. Completed working sets can still supply prefills for a later plan. Plans, in-progress workouts, skipped workouts, and routines require valid planned targets; Complete follows the completed-workout rule, while ordinary Save keeps the target requirement. Checked sets still require actual reps and load (except bodyweight-only load). Supported older workspace exports remain importable; this representation does not add an MCP history-import tool.
+
 ## Retired assistance and preserved history
 
 Recipe studio, Describe food, My agent, Training Coach, model connections, and inference are retired. There is no hosted AI roadmap or replacement provider. Retired RPC namespaces and OAuth callbacks are rejected rather than aliased.

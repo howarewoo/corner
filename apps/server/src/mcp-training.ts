@@ -37,7 +37,7 @@ const planned = z
     kind: sessionFields.kind,
     unit: sessionFields.unit,
     exercises: z.array(ExerciseTargetSchema).max(25),
-    plannedMinutes: sessionFields.plannedMinutes,
+    plannedMinutes: sessionFields.plannedMinutes.unwrap(),
     notes: sessionFields.notes,
     changeReason: sessionFields.changeReason,
   })

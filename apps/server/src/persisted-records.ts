@@ -4,7 +4,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { MutationSchema, SettingsSchema } from '@packages/workspace/mutations';
 import {
-  ExerciseTargetSchema,
+  WorkoutExerciseSchema,
   TrainingDateSchema,
   WorkoutSetSchema,
 } from '@packages/training/workouts';
@@ -132,7 +132,7 @@ export async function validatePersistedRecords(
     'workspace_workout_exercises',
     ['user_id', 'session_id', 'id'],
     compatible((row) =>
-      ExerciseTargetSchema.parse({
+      WorkoutExerciseSchema.parse({
         id: row.id,
         name: row.name,
         loadType: row.load_type,
@@ -146,6 +146,7 @@ export async function validatePersistedRecords(
         ...(row.target_weight === null
           ? {}
           : { targetLoad: { weight: row.target_weight, unit: row.target_unit } }),
+        sets: [],
       }),
     ),
   );

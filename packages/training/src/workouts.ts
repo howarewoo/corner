@@ -58,10 +58,21 @@ export const ExerciseTargetSchema = z
       .optional(),
   })
   .strict();
+/** Planned target fields may be unknown (null) so actual-only history never invents them; session rules require them outside completed history. */
 export const WorkoutExerciseSchema = ExerciseTargetSchema.extend({
+  targetSets: ExerciseTargetSchema.shape.targetSets.nullable(),
+  repMin: ExerciseTargetSchema.shape.repMin.nullable(),
+  repMax: ExerciseTargetSchema.shape.repMax.nullable(),
+  restSeconds: ExerciseTargetSchema.shape.restSeconds.nullable(),
   sets: z.array(WorkoutSetSchema).max(30),
 }).superRefine((exercise, context) => {
-  if (exercise.repMin > exercise.repMax)
+  if ((exercise.repMin === null) !== (exercise.repMax === null))
+    context.addIssue({
+      code: 'custom',
+      message: 'Set both rep limits or neither.',
+      path: ['repMin'],
+    });
+  else if (exercise.repMin !== null && exercise.repMax !== null && exercise.repMin > exercise.repMax)
     context.addIssue({
       code: 'custom',
       message: 'Minimum reps must not exceed maximum reps.',
@@ -133,7 +144,7 @@ export const WorkoutSessionSchema = z
     status: z.enum(['planned', 'in_progress', 'completed', 'skipped']),
     unit: z.enum(['lb', 'kg']),
     exercises: z.array(WorkoutExerciseSchema).max(25),
-    plannedMinutes: number(600).int(),
+    plannedMinutes: number(600).int().nullable(),
     durationMinutes: number(600).nullable(),
     rounds: number(100).int().nullable(),
     sessionRpe: number(10, 1).nullable(),
@@ -151,6 +162,23 @@ export const WorkoutSessionSchema = z
         message: 'Exercise IDs must be unique.',
         path: ['exercises'],
       });
+    if (session.status !== 'completed') {
+      if (session.plannedMinutes === null)
+        context.addIssue({
+          code: 'custom',
+          message: 'Enter the planned minutes.',
+          path: ['plannedMinutes'],
+        });
+      session.exercises.forEach((exercise, index) => {
+        for (const field of ['targetSets', 'repMin', 'repMax', 'restSeconds'] as const)
+          if (exercise[field] === null)
+            context.addIssue({
+              code: 'custom',
+              message: 'Enter the exercise targets.',
+              path: ['exercises', index, field],
+            });
+      });
+    }
     const completedSets = session.exercises
       .flatMap((exercise) => exercise.sets)
       .filter((set) => set.completed);

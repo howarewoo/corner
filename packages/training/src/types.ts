@@ -22,7 +22,17 @@ export type ExerciseTarget = {
   catalogId?: string;
   targetLoad?: { weight: number; unit: 'lb' | 'kg' };
 };
-export type WorkoutExercise = ExerciseTarget & { sets: WorkoutSet[] };
+/** Planned fields are null only on completed actual-only history; a plan always carries them. */
+export type WorkoutExercise = Omit<
+  ExerciseTarget,
+  'targetSets' | 'repMin' | 'repMax' | 'restSeconds'
+> & {
+  targetSets: number | null;
+  repMin: number | null;
+  repMax: number | null;
+  restSeconds: number | null;
+  sets: WorkoutSet[];
+};
 export type WorkoutTemplate = {
   id: string;
   name: string;
@@ -42,7 +52,7 @@ export type WorkoutSession = {
   status: WorkoutStatus;
   unit: 'lb' | 'kg';
   exercises: WorkoutExercise[];
-  plannedMinutes: number;
+  plannedMinutes: number | null;
   durationMinutes: number | null;
   rounds: number | null;
   sessionRpe: number | null;

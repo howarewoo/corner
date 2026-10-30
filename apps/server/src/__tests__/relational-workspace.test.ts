@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { afterEach, beforeEach, test } from 'node:test';
+import { ZodError } from 'zod';
 import type { Pool } from 'pg';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { testDatabase, closeTestDatabase } from '../../tests/helpers.ts';
@@ -16,6 +17,11 @@ import {
 import { groceries } from '../grocery-queries.js';
 import type { Recipe, FoodEntry } from '@packages/nutrition/types';
 import type { WorkoutSession } from '@packages/training/types';
+import {
+  ExerciseTargetSchema,
+  WorkoutSessionSchema,
+  WorkoutTemplateSchema,
+} from '@packages/training/workouts';
 import { getWorkoutPrefill } from '@packages/training/prefill';
 import { ApiError } from '../http.js';
 import { createInitialState } from '@packages/workspace/initial-state';
@@ -451,7 +457,8 @@ test('nested IDs keep session/exercise scope, optional values and ordering round
   const second = { ...workout('second'), date: '2026-10-23' };
   state.training.sessions = [second, first];
   state.training.scheduledDates = ['2026-10-25', '2026-10-22'];
-  const { sets: _sets, ...target } = first.exercises[0];
+  const { sets: _sets, ...plannedTarget } = first.exercises[0];
+  const target = ExerciseTargetSchema.parse(plannedTarget);
   state.training.templates = [
     {
       id: 'source-template',
@@ -511,7 +518,8 @@ test('nested IDs keep session/exercise scope, optional values and ordering round
 
 test('routine search filters before pagination and treats wildcard characters literally', async () => {
   const state = createInitialState();
-  const { sets: _sets, ...exercise } = workout().exercises[0];
+  const { sets: _sets, ...plannedExercise } = workout().exercises[0];
+  const exercise = ExerciseTargetSchema.parse(plannedExercise);
   state.training.templates = [
     'Unrelated routine',
     'Strength 100%_\\ routine',
@@ -614,6 +622,212 @@ test('workout versions retain millisecond precision, zero-valued actuals and com
       },
     }),
     errorCode('INVALID_INPUT'),
+  );
+});
+
+function recordedWorkout(id: string, date: string): WorkoutSession {
+  return {
+    ...workout(id, date),
+    status: 'completed',
+    plannedMinutes: null,
+    durationMinutes: 35,
+    exercises: [
+      {
+        id: 'recorded-exercise',
+        name: 'Bench press',
+        loadType: 'total',
+        targetSets: null,
+        repMin: null,
+        repMax: null,
+        targetRir: null,
+        restSeconds: null,
+        notes: '',
+        sets: [
+          { id: 'recorded-set', weight: 62.5, reps: 7, rir: 2, completed: true, kind: 'working' },
+        ],
+      },
+    ],
+  };
+}
+
+test('unknown plans never weaken completed actuals or routine target validation', () => {
+  const recorded = recordedWorkout('recorded', '2026-10-20');
+  assert.equal(WorkoutSessionSchema.safeParse(recorded).success, true);
+  for (const field of ['weight', 'reps'] as const) {
+    const incomplete = structuredClone(recorded);
+    incomplete.exercises[0].sets[0][field] = null;
+    assert.equal(WorkoutSessionSchema.safeParse(incomplete).success, false);
+  }
+  const halfRange = structuredClone(recorded);
+  halfRange.exercises[0].repMin = 8;
+  assert.equal(WorkoutSessionSchema.safeParse(halfRange).success, false);
+  const { sets: _sets, ...target } = recorded.exercises[0];
+  assert.equal(
+    WorkoutTemplateSchema.safeParse({
+      id: 'routine',
+      name: recorded.name,
+      kind: recorded.kind,
+      description: '',
+      durationMinutes: 35,
+      exercises: [target],
+      createdAt: stamp,
+      updatedAt: stamp,
+    }).success,
+    false,
+  );
+});
+
+test('actual-only completed workouts keep unknown plan fields through storage, prefill, edits and export/import', async () => {
+  await store.mutate('alice', 'save-recorded-workout', {
+    type: 'training.session.save',
+    data: { session: recordedWorkout('recorded', '2026-10-20'), expectedUpdatedAt: null },
+  });
+  const [saved] = (await recordDetails(store.db, 'alice', { sessionIds: ['recorded'] })).sessions;
+  const unknownPlan = (session: WorkoutSession) => [
+    session.plannedMinutes,
+    ...session.exercises.flatMap((exercise) => [
+      exercise.targetSets,
+      exercise.repMin,
+      exercise.repMax,
+      exercise.restSeconds,
+    ]),
+  ];
+  assert.deepEqual(unknownPlan(saved), [null, null, null, null, null]);
+  assert.deepEqual(saved.exercises[0].sets, recordedWorkout('x', saved.date).exercises[0].sets);
+
+  const draft = workout('later', '2026-10-22');
+  const history = await prefillHistory(store.db, 'alice', { session: draft });
+  assert.deepEqual(
+    history.sessions.map((session) => session.id),
+    ['recorded'],
+  );
+  const suggestion = getWorkoutPrefill(draft, history.sessions).exercise.set;
+  assert.equal(suggestion.weight, 62.5);
+  assert.equal(suggestion.reps, 7);
+
+  await store.mutate('alice', 'edit-recorded-workout', {
+    type: 'training.session.save',
+    data: { session: { ...saved, notes: 'Felt strong' }, expectedUpdatedAt: saved.updatedAt },
+  });
+  const [edited] = (await recordDetails(store.db, 'alice', { sessionIds: ['recorded'] })).sessions;
+  assert.equal(edited.notes, 'Felt strong');
+  assert.deepEqual(unknownPlan(edited), [null, null, null, null, null]);
+  assert.deepEqual(edited.exercises[0].sets, saved.exercises[0].sets);
+
+  const exported = await store.exportSnapshot('alice');
+  await store.replaceImport('bob', 'import-recorded-workout', exported.state, 0);
+  assert.deepEqual(
+    (await store.exportSnapshot('bob')).state.training.sessions,
+    exported.state.training.sessions,
+  );
+});
+
+test('plans and their stored rows still require every target', async () => {
+  await assert.rejects(
+    store.mutate('alice', 'plan-without-minutes', {
+      type: 'training.session.save',
+      data: { session: { ...workout('bad-minutes'), plannedMinutes: null }, expectedUpdatedAt: null },
+    }),
+    (error: unknown) =>
+      error instanceof ZodError &&
+      error.issues.some(
+        (issue) => issue.code === 'custom' && issue.path.at(-1) === 'plannedMinutes',
+      ),
+  );
+  const missingTarget = workout('bad-target');
+  missingTarget.exercises[0].repMin = null;
+  missingTarget.exercises[0].repMax = null;
+  await assert.rejects(
+    store.mutate('alice', 'plan-without-targets', {
+      type: 'training.session.save',
+      data: { session: missingTarget, expectedUpdatedAt: null },
+    }),
+    (error: unknown) =>
+      error instanceof ZodError &&
+      error.issues.some(
+        (issue) =>
+          issue.code === 'custom' &&
+          issue.path.includes('exercises') &&
+          issue.path.at(-1) === 'repMin',
+      ),
+  );
+  await store.mutate('alice', 'save-valid-plan', {
+    type: 'training.session.save',
+    data: { session: workout('plan'), expectedUpdatedAt: null },
+  });
+  await assert.rejects(
+    database.query(
+      "UPDATE workspace_workout_sessions SET planned_minutes=NULL WHERE user_id='alice' AND id='plan'",
+    ),
+  );
+  await assert.rejects(
+    database.query(
+      "UPDATE workspace_workout_exercises SET rep_min=NULL WHERE user_id='alice' AND session_id='plan'",
+    ),
+  );
+});
+
+test('SQL unknown exercise targets require completed parents across child writes and parent transitions', async () => {
+  for (const status of ['planned', 'in_progress', 'skipped'] as const) {
+    await store.mutate('alice', `create-${status}`, {
+      type: 'training.session.save',
+      data: { session: { ...workout(status), status }, expectedUpdatedAt: null },
+    });
+    for (const assignment of [
+      'target_sets=NULL',
+      'rest_seconds=NULL',
+      'rep_min=NULL,rep_max=NULL',
+    ]) {
+      await assert.rejects(
+        database.query(
+          `UPDATE workspace_workout_exercises SET ${assignment} WHERE user_id=$1 AND session_id=$2`,
+          ['alice', status],
+        ),
+        (error: unknown) =>
+          Boolean(error && typeof error === 'object' && 'code' in error && error.code === '23503'),
+      );
+    }
+    await assert.rejects(
+      database.query(
+        `INSERT INTO workspace_workout_exercises
+          (user_id,id,session_id,position,name,load_type,target_sets,rep_min,rep_max,rest_seconds,notes)
+          VALUES ('alice','unknown',$1,1,'Unplanned press','total',NULL,NULL,NULL,NULL,'')`,
+        [status],
+      ),
+      (error: unknown) =>
+        Boolean(error && typeof error === 'object' && 'code' in error && error.code === '23503'),
+    );
+  }
+  await store.mutate('alice', 'create-actual-only', {
+    type: 'training.session.save',
+    data: { session: recordedWorkout('actual-only', '2026-10-20'), expectedUpdatedAt: null },
+  });
+  for (const status of ['planned', 'in_progress', 'skipped']) {
+    await assert.rejects(
+      database.query(
+        `UPDATE workspace_workout_sessions SET status=$1,planned_minutes=40
+          WHERE user_id='alice' AND id='actual-only'`,
+        [status],
+      ),
+      (error: unknown) =>
+        Boolean(error && typeof error === 'object' && 'code' in error && error.code === '23503'),
+    );
+  }
+  // Native restoration is possible in dependency order; normal commands keep completed history completed.
+  await database.query(
+    `UPDATE workspace_workout_exercises SET target_sets=1,rep_min=6,rep_max=10,rest_seconds=90
+      WHERE user_id='alice' AND session_id='actual-only'`,
+  );
+  await database.query(
+    `UPDATE workspace_workout_sessions SET status='in_progress',planned_minutes=40
+      WHERE user_id='alice' AND id='actual-only'`,
+  );
+  const [restored] = (await recordDetails(store.db, 'alice', { sessionIds: ['actual-only'] })).sessions;
+  assert.equal(restored.status, 'in_progress');
+  assert.equal(restored.exercises[0].targetSets, 1);
+  assert.deepEqual(
+    restored.exercises[0].sets,
+    recordedWorkout('expected', '2026-10-20').exercises[0].sets,
   );
 });
 
