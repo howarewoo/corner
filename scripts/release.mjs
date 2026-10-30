@@ -1973,9 +1973,12 @@ export async function deploy(options) {
     automatic: true,
   });
   if (prepared.payload.phase !== 'planned') {
+    const config = validateConfiguration(options.configuration);
+    const candidate = await options.github.artifact(prepared.payload, join(options.work, 'candidate'));
     await (options.checkPublic ?? verifyPublic)(
       prepared.payload.origin,
       prepared.payload.versionId,
+      publicCheckOptions(candidate, config),
     );
     return prepared;
   }
