@@ -182,7 +182,11 @@ async function uploadingScenario(t, workerName = 'corner') {
         ? {
             id: 'native-deployment',
             env: {
-              CORNER_ORIGIN: { type: 'plain_text', text: origin },
+              ...Object.fromEntries(
+                Object.entries(JSON.parse(f.options.environment.CORNER_STAGING_CONFIG_JSON)).map(
+                  ([name, text]) => [name, { type: 'plain_text', text }],
+                ),
+              ),
               ...Object.fromEntries(
                 ['DATABASE_URL', 'NEON_AUTH_BASE_URL'].map((name) => [
                   name,
@@ -210,6 +214,41 @@ test('successful upload with noisy stdout records and verifies the serving deplo
     'public',
     'complete',
   ]);
+});
+
+test('dual-origin Preview refuses missing landing configuration before schema effects', async (t) => {
+  const f = await scenario(t);
+  const candidate = await f.options.loadArtifact();
+  candidate.manifest.files = { 'assets/landing/index.html': 'c'.repeat(64) };
+  await assert.rejects(deployPreview(f.options), /requires CORNER_LANDING_ORIGIN/);
+  assert.deepEqual(f.effects, []);
+  const value = JSON.parse(f.options.environment.CORNER_STAGING_CONFIG_JSON);
+  value.CORNER_LANDING_ORIGIN = 'https://staging.previews.example.com';
+  const configured = previewConfiguration(JSON.stringify(value), f.options.environment);
+  assert.equal(configured.landingOrigin, value.CORNER_LANDING_ORIGIN);
+  for (const invalid of [origin, 'http://staging.example.com', `${value.CORNER_LANDING_ORIGIN}/`])
+    assert.throws(() =>
+      previewConfiguration(
+        JSON.stringify({ ...value, CORNER_LANDING_ORIGIN: invalid }),
+        f.options.environment,
+      ),
+    );
+});
+
+test('single-site Preview cannot qualify an explicit dual-origin configuration', async (t) => {
+  const f = await scenario(t);
+  const value = JSON.parse(f.options.environment.CORNER_STAGING_CONFIG_JSON);
+  value.CORNER_LANDING_ORIGIN = 'https://staging.previews.example.com';
+  f.options.environment.CORNER_STAGING_CONFIG_JSON = JSON.stringify(value);
+  let qualifications = 0;
+  const qualify = f.options.qualify;
+  f.options.qualify = async (...args) => {
+    qualifications++;
+    return qualify(...args);
+  };
+  await assert.rejects(deployPreview(f.options));
+  assert.equal(qualifications, 0);
+  assert.deepEqual(f.effects, []);
 });
 
 test('machine output for another Worker cannot become the staging serving baseline', async (t) => {

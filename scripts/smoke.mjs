@@ -35,6 +35,7 @@ async function exitOf(child) {
 
 async function run(mode, port) {
   const origin = mode === 'hosted' ? 'https://corner.example.test' : `http://127.0.0.1:${port}`;
+  const landingOrigin = mode === 'hosted' ? 'https://example.test' : `http://localhost:${port}`;
   const listener = `http://127.0.0.1:${port}`;
   const backend = await startSmokeServices(temporary, origin);
   services.add(backend);
@@ -64,6 +65,7 @@ async function run(mode, port) {
     NODE_ENV: 'production',
     CORNER_DEPLOYMENT: mode,
     CORNER_ORIGIN: origin,
+    CORNER_LANDING_ORIGIN: landingOrigin,
     CORNER_HOST: '127.0.0.1',
     CORNER_PORT: String(port),
     CORNER_DATA_DIR: join(temporary, mode),
@@ -180,10 +182,68 @@ async function run(mode, port) {
     emailVerificationRequired: false,
     passwordResetAvailable: true,
   });
+  const landingHeaders = { Host: new URL(landingOrigin).host };
+  const landing = await call('/', { headers: landingHeaders });
+  assert.equal(landing.status, 200);
+  assert.equal(landing.headers.get('Set-Cookie'), null);
+  const landingHtml = await landing.text();
+  assert.match(landingHtml, /href="\/open-app"/);
+  const landingAsset = landingHtml.match(/href="([^"]+\.css)"/)?.[1];
+  assert(landingAsset, 'Landing must serve its built stylesheet.');
+  assert.equal((await call(landingAsset, { headers: landingHeaders })).status, 200);
+  assert.equal((await call(landingAsset)).status, 404);
+  for (const path of [
+    '/api/health',
+    '/api/auth/get-session',
+    '/mcp',
+    '/oauth/authorize',
+    '/.well-known/oauth-authorization-server',
+    '/sw.js',
+    '/manifest.webmanifest',
+    '/workouts',
+    '/app/index.html',
+  ]) {
+    const denied = await call(path, { headers: landingHeaders });
+    assert.equal(denied.status, 404, path);
+    assert.equal(denied.headers.get('Set-Cookie'), null);
+  }
+  assert.equal(
+    (await call('/bad%escape', { headers: landingHeaders })).status,
+    400,
+    'Malformed landing paths must be rejected without an internal server error.',
+  );
+  for (const method of ['GET', 'HEAD']) {
+    const redirect = await call('/open-app?returnTo=https://evil.test', {
+      method,
+      headers: landingHeaders,
+    });
+    assert.equal(redirect.status, 302);
+    assert.equal(redirect.headers.get('Location'), origin);
+    assert.match(redirect.headers.get('Cache-Control'), /no-store/);
+    assert.equal(await redirect.text(), '');
+  }
+  const landingHead = await call('/', { method: 'HEAD', headers: landingHeaders });
+  assert.equal(landingHead.status, 200);
+  assert.equal(await landingHead.text(), '');
+  assert.equal(landingHead.headers.get('Content-Length'), String(Buffer.byteLength(landingHtml)));
+  assert.equal(
+    (
+      await call('/', {
+        headers: { Host: 'unknown.test', 'X-Forwarded-Host': new URL(origin).host },
+      })
+    ).status,
+    400,
+  );
+  assert.equal((await rpc('account/policy', undefined, { Origin: landingOrigin })).status, 403);
   const page = await call('/account/reset-password');
   assert.equal(page.status, 200);
   assert.match(page.headers.get('Content-Security-Policy'), /frame-ancestors 'none'/);
-  assert.match(await page.text(), /<div id="root"><\/div>/);
+  const appHtml = await page.text();
+  assert.match(appHtml, /<div id="root"><\/div>/);
+  const appAsset = appHtml.match(/src="([^"]+\.js)"/)?.[1];
+  assert(appAsset);
+  assert.equal((await call(appAsset)).status, 200);
+  assert.equal((await call(appAsset, { headers: landingHeaders })).status, 404);
   assert.equal((await call('/.env.hosted')).status, 404);
   const check = spawn(process.execPath, ['scripts/healthcheck.mjs'], {
     cwd: root,

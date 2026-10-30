@@ -8,6 +8,7 @@ export const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), 
 
 export type Config = {
   origin: string;
+  landingOrigin: string;
   host: string;
   port: number;
   dataDir: string;

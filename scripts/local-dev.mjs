@@ -335,6 +335,7 @@ async function stopChildren(children) {
 
 async function serve(config, engine, port) {
   const origin = `http://127.0.0.1:${port}`;
+  const landingOrigin = `http://localhost:${port + 3}`;
   const handle = await open(lock, 'wx', 0o600).catch(() => {
     throw new Error('Local controller lock exists. Run pnpm run dev:down before restarting.');
   });
@@ -372,7 +373,7 @@ async function serve(config, engine, port) {
   process.once('SIGINT', onSignal);
   process.once('SIGTERM', onSignal);
   try {
-    await Promise.all([port, port + 1, port + 2].map(availablePort));
+    await Promise.all([port, port + 1, port + 2, port + 3].map(availablePort));
     if (stopRequested) return;
     // Build code before migration; no root environment file is loaded by these tasks.
     await command('pnpm', ['run', 'build', '--filter=server'], isolatedEnvironment());
@@ -419,7 +420,7 @@ async function serve(config, engine, port) {
         }
         res.setHeader('Content-Type', 'application/json');
         if (req.url === '/stop') res.once('finish', onSignal);
-        res.end(JSON.stringify({ instance: config.instance, origin }));
+        res.end(JSON.stringify({ instance: config.instance, origin, landingOrigin }));
       } catch (error) {
         res.writeHead(409);
         res.end(error.message);
@@ -437,6 +438,7 @@ async function serve(config, engine, port) {
       NODE_ENV: 'development',
       CORNER_DEPLOYMENT: 'local',
       CORNER_ORIGIN: origin,
+      CORNER_LANDING_ORIGIN: landingOrigin,
       CORNER_DEV_API_PORT: String(port + 1),
       CORNER_DESIGN_PORT: String(port + 2),
       CORNER_DATA_DIR: join(stateDirectory, 'data'),
@@ -476,6 +478,7 @@ async function serve(config, engine, port) {
           'server',
           'web',
           'design',
+          'landing',
           '@packages/nutrition',
           '@packages/training',
           '@packages/workspace',
@@ -485,7 +488,7 @@ async function serve(config, engine, port) {
       root,
     );
     console.log(
-      `Local-only Corner: ${origin}\nRun pnpm run dev:seed to create synthetic users. No cloud credentials are used.`,
+      `Local-only Corner: ${origin}\nLanding: ${landingOrigin}\nRun pnpm run dev:seed to create synthetic users. No cloud credentials are used.`,
     );
     await ended;
     await stopping;
@@ -506,7 +509,7 @@ export function localArguments(args) {
     (action === 'up' && option !== undefined && !/^--port=\d+$/.test(option)) ||
     !Number.isInteger(port) ||
     port < 1024 ||
-    port > 65533 ||
+    port > 65532 ||
     (action === 'reset' && option !== '--confirm-delete-local-data')
   )
     throw new Error(
@@ -536,7 +539,7 @@ export async function main(args = process.argv.slice(2)) {
     try {
       const running = await control(config, 'status');
       console.log(
-        `Local-only Corner is already running at ${running.origin}. Reusing it; no services were started or stopped.`,
+        `Local-only Corner is already running at ${running.origin}.\nLanding: ${running.landingOrigin}\nReusing it; no services were started or stopped.`,
       );
       return;
     } catch (error) {

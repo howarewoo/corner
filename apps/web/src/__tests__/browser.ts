@@ -10,7 +10,9 @@ export const test = base.extend<{ account: BrowserAccount }>({
     if (baseURL !== 'http://127.0.0.1:43141')
       throw new Error('Browser tests require the owned loopback runtime.');
     await context.route('**/*', (route) =>
-      new URL(route.request().url()).origin === baseURL ? route.continue() : route.abort(),
+      [baseURL, 'http://localhost:43141'].includes(new URL(route.request().url()).origin)
+        ? route.continue()
+        : route.abort(),
     );
     const email = `browser-${randomUUID()}@corner.test`;
     const password = 'Synthetic-browser-password-2026!';

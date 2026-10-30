@@ -10,7 +10,7 @@
     "binding": "CF_VERSION_METADATA",
   },
   "assets": {
-    "directory": "../web/dist",
+    "directory": "dist/assets",
     "binding": "ASSETS",
     "run_worker_first": true,
     "html_handling": "none",

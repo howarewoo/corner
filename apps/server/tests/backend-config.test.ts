@@ -137,6 +137,7 @@ test('hosted startup needs no retired AI secrets and still rejects insecure orig
     CORNER_DATA_DIR: dataDir,
     CORNER_DEPLOYMENT: 'hosted',
     CORNER_ORIGIN: 'https://corner.example',
+    CORNER_LANDING_ORIGIN: 'https://example.test',
   };
   assert.throws(
     () => loadConfig({ ...neonEnvironment, ...env, CORNER_ORIGIN: 'http://corner.example' }),
@@ -152,6 +153,33 @@ test('hosted startup needs no retired AI secrets and still rejects insecure orig
         CORNER_ORIGIN: 'http://public.example',
       }),
     /loopback/,
+  );
+});
+
+test('landing origin rejects shared cookie hosts, credentials, noncanonical URLs and public local origins', () => {
+  const env = {
+    ...neonEnvironment,
+    CORNER_DEPLOYMENT: 'hosted',
+    CORNER_ORIGIN: 'https://app.example.test',
+    CORNER_LANDING_ORIGIN: 'https://example.test',
+  };
+  assert.equal(loadConfig(env).landingOrigin, 'https://example.test');
+  for (const landing of [
+    undefined,
+    'http://example.test',
+    'https://app.example.test:444',
+    'https://user:password@example.test',
+    'https://example.test/',
+    'https://example.test/path',
+    'https://example.test?next=https://evil.test',
+  ])
+    assert.throws(
+      () => loadConfig({ ...env, CORNER_LANDING_ORIGIN: landing }),
+      /CORNER_LANDING_ORIGIN/,
+    );
+  assert.throws(
+    () => loadConfig({ ...neonEnvironment, CORNER_LANDING_ORIGIN: 'http://public.example.test' }),
+    /CORNER_LANDING_ORIGIN/,
   );
 });
 

@@ -1,5 +1,6 @@
 import { loadRuntimeConfig } from './runtime-config.js';
 import type { WorkerEnvironment } from './worker.js';
+import { fetchSiteAssets } from './worker-assets.js';
 
 const RETRY_AFTER_SECONDS = '60';
 
@@ -70,18 +71,24 @@ export async function fetchMaintenance(
       {
         CORNER_DEPLOYMENT: 'hosted',
         CORNER_ORIGIN: env.CORNER_ORIGIN,
+        CORNER_LANDING_ORIGIN: env.CORNER_LANDING_ORIGIN,
         DATABASE_URL: env.DATABASE_URL,
         NEON_AUTH_BASE_URL: env.NEON_AUTH_BASE_URL,
         NEON_AUTH_REQUIRE_EMAIL_VERIFICATION: env.NEON_AUTH_REQUIRE_EMAIL_VERIFICATION,
       },
       { dataDir: '/tmp/corner' },
     );
-    if (url.origin !== config.origin)
+    if (
+      (url.origin !== config.origin && url.origin !== config.landingOrigin) ||
+      (request.headers.has('Host') && request.headers.get('Host') !== url.host)
+    )
       return secure(
         new Response('Open Corner using its configured origin.', { status: 400 }),
         true,
         versionId,
       );
+    if (url.origin === config.landingOrigin)
+      return await fetchSiteAssets(request, config, env.ASSETS, versionId);
     if (!api) {
       if (!['GET', 'HEAD'].includes(request.method))
         return secure(new Response(null, { status: 405 }), false, versionId);
