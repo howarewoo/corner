@@ -46,7 +46,7 @@ All commands below run from the repository root with dependencies installed:
 | `pnpm run db:generate`                           | Generate reviewed Drizzle SQL/snapshots from the server schema without connecting to a database                                                  |
 | `pnpm run db:check`                              | Check Drizzle Kit migration snapshot consistency                                                                                                 |
 | `pnpm run db:migrate`                            | After a build: apply checked-in Drizzle migrations via direct `DATABASE_URL_UNPOOLED`; startup never writes schema                               |
-| `pnpm run smoke`                                 | After a full build: disposable production servers on loopback ports `43137` and `43138`                                                          |
+| `pnpm run smoke`                                 | After a full build: disposable production servers on loopback ports `14337` and `14338`                                                          |
 | `pnpm run smoke:dev`                             | Actual development-stack integration on ports `43139` and `43140`; Linux/macOS, clean checkout without local environment files                   |
 | `pnpm start`                                     | After a full build: compiled production server serving the web app and API on port `3000` by default                                             |
 
