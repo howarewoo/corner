@@ -22,6 +22,13 @@
       "when": 1793228857532,
       "tag": "0002_delegated_access",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1793305060194,
+      "tag": "0003_recorded_workout_facts",
+      "breakpoints": true
     }
   ]
 }

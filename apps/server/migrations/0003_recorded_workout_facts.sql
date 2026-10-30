@@ -1,0 +1,12 @@
+ALTER TABLE "workspace_workout_exercises" DROP CONSTRAINT "workspace_workout_exercises_target";--> statement-breakpoint
+ALTER TABLE "workspace_workout_exercises" ALTER COLUMN "target_sets" DROP NOT NULL;--> statement-breakpoint
+ALTER TABLE "workspace_workout_exercises" ALTER COLUMN "rep_min" DROP NOT NULL;--> statement-breakpoint
+ALTER TABLE "workspace_workout_exercises" ALTER COLUMN "rep_max" DROP NOT NULL;--> statement-breakpoint
+ALTER TABLE "workspace_workout_exercises" ALTER COLUMN "rest_seconds" DROP NOT NULL;--> statement-breakpoint
+ALTER TABLE "workspace_workout_sessions" ALTER COLUMN "planned_minutes" DROP NOT NULL;--> statement-breakpoint
+ALTER TABLE "workspace_workout_exercises" ADD COLUMN "requires_completed" boolean GENERATED ALWAYS AS (CASE WHEN target_sets IS NULL OR rep_min IS NULL OR rep_max IS NULL OR rest_seconds IS NULL THEN true ELSE NULL END) STORED;--> statement-breakpoint
+ALTER TABLE "workspace_workout_sessions" ADD COLUMN "allows_unknown_targets" boolean GENERATED ALWAYS AS (status = 'completed') STORED;--> statement-breakpoint
+ALTER TABLE "workspace_workout_sessions" ADD CONSTRAINT "workspace_workout_sessions_recorded_targets" UNIQUE("user_id","id","allows_unknown_targets");--> statement-breakpoint
+ALTER TABLE "workspace_workout_exercises" ADD CONSTRAINT "workspace_workout_exercises_recorded_targets" FOREIGN KEY ("user_id","session_id","requires_completed") REFERENCES "workspace_workout_sessions"("user_id","id","allows_unknown_targets") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "workspace_workout_exercises" ADD CONSTRAINT "workspace_workout_exercises_target" CHECK ("workspace_workout_exercises"."target_sets" between 1 and 20 and "workspace_workout_exercises"."rep_min" between 1 and 200 and "workspace_workout_exercises"."rep_max" between "workspace_workout_exercises"."rep_min" and 200 and "workspace_workout_exercises"."rest_seconds" between 0 and 900 and ("workspace_workout_exercises"."rep_min" is null) = ("workspace_workout_exercises"."rep_max" is null));--> statement-breakpoint
+ALTER TABLE "workspace_workout_sessions" ADD CONSTRAINT "workspace_workout_sessions_planned" CHECK ("workspace_workout_sessions"."status" = 'completed' or "workspace_workout_sessions"."planned_minutes" is not null);

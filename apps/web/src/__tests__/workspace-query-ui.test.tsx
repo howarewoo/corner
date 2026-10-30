@@ -822,6 +822,126 @@ test('workout prefill uses the bounded historical context without recording disp
   );
 });
 
+test('an actual-only completed workout shows no invented plan and saves its actuals with plan fields still unknown', async () => {
+  const recorded: WorkoutSession = {
+    ...historicalSession,
+    id: 'recorded-only',
+    date: plannedSession.date,
+    plannedMinutes: null,
+    exercises: [
+      {
+        ...historicalSession.exercises[0]!,
+        targetSets: null,
+        repMin: null,
+        repMax: null,
+        restSeconds: null,
+      },
+    ],
+  };
+  const state = createInitialState();
+  state.training.sessions = [structuredClone(recorded)];
+  const mutate = vi.fn(async (..._args: unknown[]) => true);
+  render(
+    <QueryClientProvider client={runtime.queryClient}>
+      <TrainingPanel
+        state={state}
+        settings={state.settings}
+        selectedDate={recorded.date}
+        onDateChange={() => {}}
+        mutate={mutate}
+        busy={false}
+        notify={() => {}}
+      />
+    </QueryClientProvider>,
+  );
+  expect(await screen.findByText('Synthetic strength session')).toBeVisible();
+  expect(screen.queryByText(/min planned/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/null|NaN|undefined/)).not.toBeInTheDocument();
+  const user = userEvent.setup();
+  await user.click(screen.getByRole('button', { name: 'View / edit' }));
+  expect(screen.getByLabelText('Planned minutes')).toHaveValue(null);
+  await user.type(screen.getByLabelText('Session notes'), 'Recorded elsewhere');
+  await user.click(screen.getByRole('button', { name: 'Save workout' }));
+  await waitFor(() => expect(mutate).toHaveBeenCalledTimes(1));
+  expect(mutate.mock.calls[0]?.[0]).toEqual(
+    {
+      type: 'training.session.save',
+      data: {
+        expectedUpdatedAt: recorded.updatedAt,
+        session: expect.objectContaining({
+          status: 'completed',
+          plannedMinutes: null,
+          notes: 'Recorded elsewhere',
+          exercises: recorded.exercises,
+        }),
+      },
+    },
+  );
+});
+
+test('Complete validates native inputs against completed intent while ordinary Save still requires a plan', async () => {
+  const recorded: WorkoutSession = {
+    ...plannedSession,
+    status: 'in_progress',
+    exercises: [
+      {
+        ...plannedSession.exercises[0]!,
+        sets: [{ id: 'actual', weight: 70, reps: 8, rir: 2, completed: true, kind: 'working' }],
+      },
+    ],
+  };
+  const state = createInitialState();
+  state.training.sessions = [structuredClone(recorded)];
+  const mutate = vi.fn(async (..._args: unknown[]) => true);
+  render(
+    <QueryClientProvider client={runtime.queryClient}>
+      <TrainingPanel
+        state={state}
+        settings={state.settings}
+        selectedDate={recorded.date}
+        onDateChange={() => {}}
+        mutate={mutate}
+        busy={false}
+        notify={() => {}}
+      />
+    </QueryClientProvider>,
+  );
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole('button', { name: 'Continue logging' }));
+  await user.click(screen.getByRole('button', { name: 'Edit exercise or targets' }));
+  for (const label of ['Planned minutes', 'Target sets', 'Reps from', 'Reps to', 'Rest seconds'])
+    await user.clear(screen.getByLabelText(label));
+  await user.click(screen.getByRole('button', { name: 'Save workout' }));
+  expect(mutate).not.toHaveBeenCalled();
+  expect(screen.getByLabelText('Planned minutes')).toBeInvalid();
+  await user.type(screen.getByLabelText('Planned minutes'), '601');
+  await user.click(screen.getByRole('button', { name: 'Complete workout' }));
+  expect(mutate).not.toHaveBeenCalled();
+  expect(screen.getByLabelText('Planned minutes')).toBeInvalid();
+  await user.clear(screen.getByLabelText('Planned minutes'));
+  await user.click(screen.getByRole('button', { name: 'Complete workout' }));
+  await waitFor(() => expect(mutate).toHaveBeenCalledTimes(1));
+  expect(mutate.mock.calls[0]?.[0]).toEqual({
+    type: 'training.session.save',
+    data: {
+      expectedUpdatedAt: recorded.updatedAt,
+      session: expect.objectContaining({
+        status: 'completed',
+        plannedMinutes: null,
+        exercises: [
+          expect.objectContaining({
+            targetSets: null,
+            repMin: null,
+            repMax: null,
+            restSeconds: null,
+            sets: recorded.exercises[0]!.sets,
+          }),
+        ],
+      }),
+    },
+  });
+});
+
 test('workout row edits and explicitly cleared suggestions stay with dotted domain IDs across moves and deletions', async () => {
   const session: WorkoutSession = {
     ...plannedSession,

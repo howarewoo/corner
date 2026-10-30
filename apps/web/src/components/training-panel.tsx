@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { flushSync } from 'react-dom';
 import { useForm, useStore } from '@tanstack/react-form';
 import {
   Activity,
@@ -34,6 +35,7 @@ import { calendarPage, useRecordPage, useCursorResource } from '../features/work
 import { ResourceStatus, ResourcePaging } from '../features/workspace/workspace-ui';
 import type { WorkspaceMutationInput } from '@packages/api/schemas';
 import type {
+  ExerciseTarget,
   LoadType,
   TrainingCheckIn,
   WorkoutExercise,
@@ -148,24 +150,43 @@ const blankSet = (): WorkoutSet => ({
   completed: false,
   kind: 'working',
 });
-const blankExercise = (): WorkoutExercise => ({
+/** Exercises added to completed history carry no invented plan targets. */
+const blankExercise = (planned: boolean): WorkoutExercise => ({
   id: uid(),
   name: '',
   loadType: 'total',
-  targetSets: 2,
-  repMin: 8,
-  repMax: 12,
+  targetSets: planned ? 2 : null,
+  repMin: planned ? 8 : null,
+  repMax: planned ? 12 : null,
   targetRir: null,
-  restSeconds: 90,
+  restSeconds: planned ? 90 : null,
   notes: '',
   sets: [blankSet(), blankSet()],
 });
+const exerciseDoneSets = (exercise: WorkoutExercise) =>
+  exercise.sets.filter((set) => set.completed && set.kind === 'working').length;
 const doneSets = (session: WorkoutSession) =>
-  session.exercises.reduce(
-    (sum, exercise) =>
-      sum + exercise.sets.filter((set) => set.completed && set.kind === 'working').length,
-    0,
-  );
+  session.exercises.reduce((sum, exercise) => sum + exerciseDoneSets(exercise), 0);
+/** Plan sets-by-reps label; null when the targets are unknown (actual-only history). */
+const targetSummary = (exercise: WorkoutExercise) =>
+  exercise.targetSets === null || exercise.repMin === null || exercise.repMax === null
+    ? null
+    : `${exercise.targetSets} × ${exercise.repMin}–${exercise.repMax}`;
+/** Plans and routines require every target; null means some target is still unknown. */
+function plannedTargets(
+  session: WorkoutSession,
+): { durationMinutes: number; exercises: ExerciseTarget[] } | null {
+  const exercises: ExerciseTarget[] = [];
+  for (const { sets: _sets, ...exercise } of session.exercises) {
+    const { targetSets, repMin, repMax, restSeconds } = exercise;
+    if (targetSets === null || repMin === null || repMax === null || restSeconds === null)
+      return null;
+    exercises.push({ ...exercise, targetSets, repMin, repMax, restSeconds });
+  }
+  return session.plannedMinutes === null
+    ? null
+    : { durationMinutes: session.plannedMinutes, exercises };
+}
 const kindIcon = (kind: WorkoutKind) =>
   kind === 'strength' ? Dumbbell : kind === 'recovery' ? Leaf : Activity;
 
@@ -286,9 +307,19 @@ const workoutRowValueOptions = { dontUpdateMeta: true, dontRunListeners: true };
 function sessionError(next: WorkoutSession, templateMode: boolean): string | undefined {
   if (!next.name.trim() || !next.date) return 'Add a workout name and date.';
   if (
-    next.exercises.some((exercise) => !exercise.name.trim() || exercise.repMax < exercise.repMin)
+    next.exercises.some(
+      (exercise) =>
+        !exercise.name.trim() ||
+        (exercise.repMin !== null && exercise.repMax !== null && exercise.repMax < exercise.repMin),
+    )
   ) {
     return 'Name each exercise and keep the top rep target at or above the bottom of the range.';
+  }
+  if (next.exercises.some((exercise) => (exercise.repMin === null) !== (exercise.repMax === null))) {
+    return 'Enter both rep limits, or leave both blank.';
+  }
+  if ((templateMode || next.status !== 'completed') && !plannedTargets(next)) {
+    return 'Enter the planned minutes and every exercise target before saving a plan or routine.';
   }
   if (
     !templateMode &&
@@ -382,13 +413,14 @@ function SessionEditor({
         updatedAt: new Date().toISOString(),
       };
       if (templateMode) {
+        const routine = plannedTargets(next);
+        if (!routine) return;
         const template: WorkoutTemplate = {
           ...editor.template!,
           name: next.name,
           kind: next.kind,
           description: value.templateDescription,
-          durationMinutes: next.plannedMinutes,
-          exercises: next.exercises.map(({ sets: _sets, ...target }) => target),
+          ...routine,
           updatedAt: new Date().toISOString(),
         };
         if (await onSaveTemplate(template)) onClose();
@@ -397,6 +429,7 @@ function SessionEditor({
   });
   const values = useStore(form.store, (state) => state.values);
   const draft = values.session;
+  const targetsRequired = templateMode || (values.submitStatus ?? draft.status) !== 'completed';
   const error = useStore(form.store, (state) => state.errorMap.onSubmit);
   const submitting = useStore(form.store, (state) => state.isSubmitting);
   const [restEnd, setRestEnd] = useState<number | null>(null);
@@ -525,7 +558,7 @@ function SessionEditor({
               ? 'bodyweight'
               : 'total';
     const exercise: WorkoutExercise = {
-      ...blankExercise(),
+      ...blankExercise(draft.status !== 'completed'),
       ...(previous
         ? {
             targetSets: previous.targetSets,
@@ -570,7 +603,10 @@ function SessionEditor({
   }, [restEnd]);
   const save = async (status: WorkoutStatus | null = null) => {
     if (busy || form.state.isSubmitting) return;
-    form.setFieldValue('submitStatus', status, { dontUpdateMeta: true });
+    // Native validity must observe this click's lifecycle intent, not the previous render.
+    flushSync(() => {
+      form.setFieldValue('submitStatus', status, { dontUpdateMeta: true });
+    });
     form.setErrorMap({ onSubmit: undefined });
     if (!formRef.current?.reportValidity()) return;
     await form.handleSubmit();
@@ -645,12 +681,12 @@ function SessionEditor({
           </FormField>
           <FormField label="Planned minutes">
             <Input
-              required
+              required={targetsRequired}
               type="number"
               min="0"
               max="600"
-              value={draft.plannedMinutes}
-              onChange={(event) => patch({ plannedMinutes: Number(event.target.value) })}
+              value={draft.plannedMinutes ?? ''}
+              onChange={(event) => patch({ plannedMinutes: nullableNumber(event.target.value) })}
             />
           </FormField>
           {!templateMode && (
@@ -695,7 +731,9 @@ function SessionEditor({
           </p>
         )}
         <div className="workout-exercises">
-          {draft.exercises.map((exercise, index) => (
+          {draft.exercises.map((exercise, index) => {
+            const targets = targetSummary(exercise);
+            return (
             <section
               className="workout-exercise"
               key={exercise.id}
@@ -707,7 +745,7 @@ function SessionEditor({
                   <span className="training-eyebrow">Exercise {index + 1}</span>
                   <h3>{exercise.name || 'New exercise'}</h3>
                   <p>
-                    {exercise.targetSets} × {exercise.repMin}–{exercise.repMax} reps ·{' '}
+                    {targets && `${targets} reps · `}
                     {exercise.targetRir === null ? 'RIR not set' : `${exercise.targetRir} RIR`} ·{' '}
                     {loadLabels[exercise.loadType]}
                   </p>
@@ -805,37 +843,39 @@ function SessionEditor({
                     </FormField>
                     <FormField label="Target sets">
                       <Input
-                        required
+                        required={targetsRequired}
                         type="number"
                         min="1"
                         max="20"
-                        value={exercise.targetSets}
+                        value={exercise.targetSets ?? ''}
                         onChange={(event) =>
-                          changeExercise(exercise.id, { targetSets: Number(event.target.value) })
+                          changeExercise(exercise.id, {
+                            targetSets: nullableNumber(event.target.value),
+                          })
                         }
                       />
                     </FormField>
                     <FormField label="Reps from">
                       <Input
-                        required
+                        required={targetsRequired}
                         type="number"
                         min="1"
                         max="200"
-                        value={exercise.repMin}
+                        value={exercise.repMin ?? ''}
                         onChange={(event) =>
-                          changeExercise(exercise.id, { repMin: Number(event.target.value) })
+                          changeExercise(exercise.id, { repMin: nullableNumber(event.target.value) })
                         }
                       />
                     </FormField>
                     <FormField label="Reps to">
                       <Input
-                        required
+                        required={targetsRequired}
                         type="number"
                         min="1"
                         max="200"
-                        value={exercise.repMax}
+                        value={exercise.repMax ?? ''}
                         onChange={(event) =>
-                          changeExercise(exercise.id, { repMax: Number(event.target.value) })
+                          changeExercise(exercise.id, { repMax: nullableNumber(event.target.value) })
                         }
                       />
                     </FormField>
@@ -884,14 +924,16 @@ function SessionEditor({
                     </FormField>
                     <FormField label="Rest seconds">
                       <Input
-                        required
+                        required={targetsRequired}
                         type="number"
                         min="0"
                         max="900"
                         step="1"
-                        value={exercise.restSeconds}
+                        value={exercise.restSeconds ?? ''}
                         onChange={(event) =>
-                          changeExercise(exercise.id, { restSeconds: Number(event.target.value) })
+                          changeExercise(exercise.id, {
+                            restSeconds: nullableNumber(event.target.value),
+                          })
                         }
                       />
                     </FormField>
@@ -1084,23 +1126,26 @@ function SessionEditor({
                       <Plus size={15} />
                       Add set
                     </Button>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => {
-                        setRemaining(exercise.restSeconds);
-                        setRestEnd(Date.now() + exercise.restSeconds * 1000);
-                      }}
-                    >
-                      <Timer size={15} />
-                      Rest {exercise.restSeconds}s
-                    </Button>
+                    {exercise.restSeconds !== null && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          setRemaining(exercise.restSeconds!);
+                          setRestEnd(Date.now() + exercise.restSeconds! * 1000);
+                        }}
+                      >
+                        <Timer size={15} />
+                        Rest {exercise.restSeconds}s
+                      </Button>
+                    )}
                   </div>
                 </>
               )}
             </section>
-          ))}
+            );
+          })}
         </div>
         {pickerTarget ? (
           <ExercisePicker
@@ -1886,7 +1931,9 @@ export default function TrainingPanel({
                             ? session.durationMinutes === null
                               ? 'Time not logged'
                               : `${session.durationMinutes} min logged`
-                            : `${session.plannedMinutes} min planned`}
+                            : session.plannedMinutes === null
+                              ? 'Time not planned'
+                              : `${session.plannedMinutes} min planned`}
                         </span>
                         {session.exercises.length > 0 && (
                           <span>
@@ -1904,7 +1951,7 @@ export default function TrainingPanel({
                             <li key={exercise.id}>
                               <span>{exercise.name}</span>
                               <b>
-                                {exercise.targetSets} × {exercise.repMin}–{exercise.repMax}
+                                {targetSummary(exercise) ?? `${exerciseDoneSets(exercise)} sets`}
                               </b>
                             </li>
                           ))}
