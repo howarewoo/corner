@@ -1,5 +1,6 @@
 export const DELEGATED_PERMISSIONS = [
   { scope: 'workouts:read', label: 'Read workouts and recorded history' },
+  { scope: 'workouts:import', label: 'Import workouts without reading, editing or deleting existing records' },
   { scope: 'routines:read', label: 'Read workout routines' },
   { scope: 'meal-plans:read', label: 'Read dated meal plans' },
   { scope: 'food-logs:read', label: 'Read food logs' },

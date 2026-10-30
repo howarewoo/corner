@@ -40,5 +40,6 @@ export function createInitialState(name?: string): AppState {
     groceryChecks: {},
     requests: [],
     training: createTrainingState(),
+    importSources: [],
   };
 }

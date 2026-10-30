@@ -1,9 +1,9 @@
-import { createHash } from 'node:crypto';
+import { fingerprint } from './fingerprint.js';
 import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import type { Database, Transaction } from './queries.js';
 import { mutationReceipts, workspaceMetadata } from './schema.js';
 import { z } from 'zod';
-import { MutationSchema, SettingsSchema } from '@packages/workspace/mutations';
+import { MutationSchema, SettingsSchema, ImportSourceSchema } from '@packages/workspace/mutations';
 import {
   FoodEntrySchema,
   PlanEntrySchema,
@@ -26,6 +26,7 @@ import {
 } from '@packages/api/workspace-data';
 import { exportRelational, importRelational } from './workspace-portability.js';
 import type { DelegatedAccess } from './delegation.js';
+import { importBatch, MAX_MCP_REQUEST_BYTES, type ImportAdapter, type ImportMember, type ImportOutcome, type ImportResult } from './additive-import.js';
 
 export type WorkspaceSnapshot = { state: AppState; revision: number };
 export type ImportCounts = {
@@ -38,6 +39,7 @@ export type ImportCounts = {
   recipeRequests: number;
   trainingRequests: number;
   reviews: number;
+  importSources: number;
 };
 
 const StateSchema = z
@@ -57,6 +59,7 @@ const StateSchema = z
       )
       .refine((value) => Object.keys(value).length <= 100000, 'Too many grocery checkboxes.'),
     requests: z.array(RecipeRequestSchema).max(10000),
+    importSources: z.array(ImportSourceSchema).default([]),
     training: TrainingStateSchema.extend({
       templates: z.array(TrainingStateSchema.shape.templates.element).max(10000),
       sessions: z.array(TrainingStateSchema.shape.sessions.element).max(100000),
@@ -122,6 +125,16 @@ export function inspectImport(rawState: unknown): {
   uniqueIds(state.training.reviews, 'Training reviews');
   if (new Set(state.training.scheduledDates).size !== state.training.scheduledDates.length)
     throw new ApiError(400, 'INVALID_STATE', 'Scheduled dates must be unique.');
+  const identities = new Set<string>();
+  const destinations = new Set<string>();
+  for (const source of state.importSources) {
+    const identity = JSON.stringify([source.sourceNamespace, source.recordType, source.sourceRecordId]);
+    const destination = JSON.stringify([source.recordType, source.destinationId]);
+    if (identities.has(identity) || destinations.has(destination))
+      throw new ApiError(400, 'INVALID_STATE', 'Import source identities and destinations must be unique.');
+    identities.add(identity);
+    destinations.add(destination);
+  }
   const recipes = new Set(state.recipes.map((recipe) => recipe.id));
   if (state.plan.some((entry) => !recipes.has(entry.recipeId)))
     throw new ApiError(
@@ -148,6 +161,7 @@ export function inspectImport(rawState: unknown): {
     recipeRequests: state.requests.length,
     trainingRequests: state.training.requests.length,
     reviews: state.training.reviews.length,
+    importSources: state.importSources.length,
   };
   const bytes = Buffer.byteLength(JSON.stringify(state));
   if (bytes > MAX_WORKSPACE_TRANSFER_BYTES)
@@ -155,20 +169,6 @@ export function inspectImport(rawState: unknown): {
   return { state, counts, bytes };
 }
 
-function canonical(value: unknown): string {
-  if (value === undefined || value === null) return 'null';
-  if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
-  if (typeof value !== 'object') return JSON.stringify(value);
-  const record = value as Record<string, unknown>;
-  return `{${Object.keys(record)
-    .sort()
-    .map((key) => `${JSON.stringify(key)}:${canonical(record[key])}`)
-    .join(',')}}`;
-}
-
-function fingerprint(value: unknown): string {
-  return createHash('sha256').update(canonical(value)).digest('hex');
-}
 const userSchema = z
   .string()
   .min(1)
@@ -269,9 +269,45 @@ export class WorkspaceStore {
     );
   }
 
+  async delegatedImport<T>(
+    access: DelegatedAccess,
+    scope: string,
+    tool: string,
+    originalArguments: unknown,
+    operationId: string,
+    expectedRevision: number,
+    sourceNamespace: string,
+    records: ImportMember<T>[],
+    adapter: ImportAdapter<T>,
+  ): Promise<ImportResult> {
+    if (!access.scopes.includes(scope))
+      throw new ApiError(403, 'INSUFFICIENT_SCOPE', 'This connection does not permit this import.');
+    requestIdSchema.parse(operationId);
+    revisionSchema.parse(expectedRevision);
+    let outcomes: ImportOutcome[] = [];
+    if (Buffer.byteLength(JSON.stringify(originalArguments), 'utf8') > MAX_MCP_REQUEST_BYTES)
+      throw new ApiError(413, 'REQUEST_TOO_LARGE', 'This import request is too large. Split the batch.');
+    const result = await this.commit(
+      access.ownerId,
+      `mcp:${fingerprint([access.clientId, access.grantId, operationId])}`,
+      { kind: 'delegated-import', tool, arguments: originalArguments },
+      expectedRevision,
+      async (connection, current, position) => {
+        outcomes = await importBatch(connection, access.ownerId, sourceNamespace, records, adapter, current, position);
+        return current.settings;
+      },
+      true,
+      undefined,
+      () => outcomes,
+    );
+    if (!result.outcomes) throw new Error('Missing import receipt outcomes.');
+    return { revision: result.revision, outcomes: result.outcomes };
+  }
+
   async isEmpty(userId: string, connection: Database = this.db): Promise<boolean> {
     userSchema.parse(userId);
     const result = await connection.execute(sql`SELECT NOT (
+      EXISTS (SELECT 1 FROM workspace_import_sources WHERE user_id = ${userId}) OR
       EXISTS (SELECT 1 FROM workspace_recipes WHERE user_id = ${userId}) OR
       EXISTS (SELECT 1 FROM workspace_planned_meals WHERE user_id = ${userId}) OR
       EXISTS (SELECT 1 FROM workspace_food_entries WHERE user_id = ${userId}) OR
@@ -350,7 +386,8 @@ export class WorkspaceStore {
     ) => Promise<Settings>,
     replayCommittedRevision = false,
     name?: string,
-  ): Promise<CommandResult> {
+    importOutcomes?: () => ImportOutcome[],
+  ): Promise<CommandResult & { outcomes?: ImportOutcome[] }> {
     userSchema.parse(userId);
     requestIdSchema.parse(requestId);
     if (expectedRevision !== undefined) revisionSchema.parse(expectedRevision);
@@ -362,6 +399,7 @@ export class WorkspaceStore {
           .select({
             payload_hash: mutationReceipts.payload_hash,
             revision: mutationReceipts.revision,
+            import_outcomes: mutationReceipts.import_outcomes,
           })
           .from(mutationReceipts)
           .where(
@@ -377,7 +415,10 @@ export class WorkspaceStore {
             'REQUEST_ID_REUSED',
             'This request identifier was already used for a different change.',
           );
-        return { revision: replayCommittedRevision ? receipt.revision : current.revision };
+        return {
+          revision: replayCommittedRevision ? receipt.revision : current.revision,
+          ...(receipt.import_outcomes ? { outcomes: receipt.import_outcomes } : {}),
+        };
       }
       if (expectedRevision !== undefined && current.revision !== expectedRevision)
         throw new ApiError(
@@ -438,6 +479,7 @@ export class WorkspaceStore {
         payload_hash: hash,
         revision,
         created_at: new Date().toISOString(),
+        import_outcomes: importOutcomes?.() ?? null,
       });
       await connection
         .delete(mutationReceipts)
@@ -455,7 +497,7 @@ export class WorkspaceStore {
             ),
           ),
         );
-      return { revision };
+      return { revision, ...(importOutcomes ? { outcomes: importOutcomes() } : {}) };
     });
   }
 }

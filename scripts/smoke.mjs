@@ -1,6 +1,7 @@
 // Real loopback HTTP checks against the production entrypoint. All accounts,
 // secrets, and databases are disposable. No mail or AI request is sent.
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { request as httpRequest } from 'node:http';
@@ -252,6 +253,106 @@ async function run(mode, port) {
         .status,
       401,
     );
+    // Real compiled Node OAuth + MCP effects, not an in-memory transport.
+    const issuerCookies = new Map(cookie.split('; ').map((item) => {
+      const separator = item.indexOf('=');
+      return [item.slice(0, separator), item.slice(separator + 1)];
+    }));
+    const oauthCall = async (path, body, form = false) => {
+      const response = await call(path, {
+        method: body === undefined ? 'GET' : 'POST',
+        headers: {
+          Origin: origin,
+          Cookie: [...issuerCookies].map(([key, value]) => `${key}=${value}`).join('; '),
+          ...(body === undefined ? {} : { 'Content-Type': form
+            ? 'application/x-www-form-urlencoded' : 'application/json' }),
+        },
+        body: body === undefined ? undefined : form ? new URLSearchParams(body).toString() : JSON.stringify(body),
+      });
+      for (const value of response.headers.getSetCookie()) {
+        const pair = value.split(';', 1)[0];
+        const separator = pair.indexOf('=');
+        issuerCookies.set(pair.slice(0, separator), pair.slice(separator + 1));
+      }
+      return response;
+    };
+    const registration = await oauthCall('/oauth/register', {
+      client_name: 'Compiled Node import-only client', redirect_uris: ['http://127.0.0.1/callback'],
+      grant_types: ['authorization_code', 'refresh_token'], response_types: ['code'],
+      token_endpoint_auth_method: 'none',
+    });
+    assert.equal(registration.status, 201);
+    const registrationData = await registration.json();
+    const verifier = 'node-import-smoke-pkce-verifier-with-at-least-forty-three-characters';
+    const authorize = await oauthCall('/oauth/authorize?' + new URLSearchParams({
+      client_id: registrationData.client_id, redirect_uri: 'http://127.0.0.1/callback',
+      response_type: 'code', scope: 'workouts:import workouts:read', prompt: 'consent',
+      resource: origin + '/mcp', code_challenge: createHash('sha256').update(verifier).digest('base64url'),
+      code_challenge_method: 'S256', state: 'node-import-state',
+    }));
+    assert.equal(authorize.status, 303);
+    const uid = new URL(authorize.headers.get('Location'), origin).pathname.split('/').at(-1);
+    const consent = await oauthCall(`/api/delegation/consent/${uid}`);
+    assert.equal(consent.status, 200);
+    assert.deepEqual((await consent.json()).requestedScopes.sort(), ['workouts:import', 'workouts:read']);
+    const approval = await oauthCall(`/api/delegation/consent/${uid}`, { accepted: true, scopes: ['workouts:import'] });
+    assert.equal(approval.status, 200);
+    const resumeUrl = new URL((await approval.json()).redirectTo, origin);
+    assert.equal(resumeUrl.origin, origin);
+    const resumed = await oauthCall(resumeUrl.pathname + resumeUrl.search);
+    assert.equal(resumed.status, 303);
+    const callback = new URL(resumed.headers.get('Location'));
+    assert.equal(callback.searchParams.get('state'), 'node-import-state');
+    const tokenResponse = await oauthCall('/oauth/token', {
+      grant_type: 'authorization_code', client_id: registrationData.client_id,
+      redirect_uri: 'http://127.0.0.1/callback', code: callback.searchParams.get('code'),
+      code_verifier: verifier, resource: origin + '/mcp',
+    }, true);
+    assert.equal(tokenResponse.status, 200);
+    const token = (await tokenResponse.json()).access_token;
+    const mcpCall = async (method, params) => {
+      const response = await json('/mcp', { jsonrpc: '2.0', id: 1, method, ...(params ? { params } : {}) },
+        { Authorization: `Bearer ${token}`, Accept: 'application/json, text/event-stream' });
+      assert.equal(response.status, 200);
+      return (await response.json()).result;
+    };
+    assert.deepEqual((await mcpCall('tools/list')).tools.map((tool) => tool.name).sort(),
+      ['get_workspace_revision', 'import_workouts']);
+    const input = {
+      operationId: 'node-import-workout', expectedRevision: workspace.revision, sourceNamespace: 'node-history-archive',
+      records: [{ sourceRecordId: 'walk-source', workout: {
+        id: 'node-imported-walk', date: '2026-10-28', name: 'Recorded walk', kind: 'conditioning',
+        status: 'completed', unit: 'kg', exercises: [], plannedMinutes: null,
+        durationMinutes: 28, rounds: null, sessionRpe: null, readiness: null, notes: '', changeReason: '',
+      } }],
+    };
+    const created = await mcpCall('tools/call', { name: 'import_workouts', arguments: input });
+    assert.deepEqual(created.structuredContent, { revision: workspace.revision + 1,
+      outcomes: [{ sourceRecordId: 'walk-source', destinationId: 'node-imported-walk', outcome: 'created' }] });
+    const imported = (await native.workspace.export()).state.training.sessions[0];
+    assert.equal(imported.plannedMinutes, null);
+    assert.equal(imported.durationMinutes, 28);
+    await native.workspace.mutate({ requestId: 'node-owner-correction', mutation: {
+      type: 'training.session.save', data: { session: { ...imported, notes: 'Owner correction' },
+        expectedUpdatedAt: imported.updatedAt },
+    } });
+    assert.deepEqual((await mcpCall('tools/call', { name: 'import_workouts', arguments: input })).structuredContent,
+      created.structuredContent);
+    const skip = await mcpCall('tools/call', { name: 'import_workouts', arguments: {
+      ...input, operationId: 'node-import-skip', expectedRevision: workspace.revision + 2,
+    } });
+    assert.equal(skip.structuredContent.outcomes[0].outcome, 'skipped');
+    const after = await native.workspace.export();
+    assert.equal(after.state.training.sessions[0].notes, 'Owner correction');
+    assert.equal(after.state.importSources[0].sourceRecordId, 'walk-source');
+    const conflict = await mcpCall('tools/call', { name: 'import_workouts', arguments: {
+      ...input, operationId: 'node-import-conflict', expectedRevision: after.revision,
+      records: [{ ...input.records[0], workout: { ...input.records[0].workout, durationMinutes: 29 } }],
+    } });
+    assert.equal(conflict.structuredContent.code, 'SOURCE_CONFLICT');
+    assert.deepEqual(await native.workspace.export(), after);
+    assert.equal((await mcpCall('tools/call', { name: 'get_workouts',
+      arguments: { ids: ['node-imported-walk'] } })).isError, true);
     assert.equal(
       (
         await json(

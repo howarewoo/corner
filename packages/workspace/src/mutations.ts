@@ -21,6 +21,14 @@ const id = z
   .min(1)
   .max(120)
   .regex(/^[a-zA-Z0-9_:.\-]+$/, 'Use a valid item ID.');
+
+export const ImportSourceSchema = z.object({
+  sourceNamespace: z.string().trim().min(1).max(120).regex(/^[a-zA-Z0-9_:.\-]+$/),
+  recordType: z.literal('workouts'),
+  sourceRecordId: z.string().trim().min(1).max(240).refine((value) => !/[\u0000-\u001f\u007f]/.test(value)),
+  sourceFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+  destinationId: id,
+}).strict();
 const finite = (max: number) => z.number().finite().min(0).max(max);
 const TimestampSchema = z
   .string()

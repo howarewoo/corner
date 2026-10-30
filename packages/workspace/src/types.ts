@@ -25,6 +25,14 @@ export type Settings = {
   };
   setup?: { completedAt: string | null; nutritionTargetsSet: boolean };
 };
+
+export type ImportSource = {
+  sourceNamespace: string;
+  recordType: 'workouts';
+  sourceRecordId: string;
+  sourceFingerprint: string;
+  destinationId: string;
+};
 export type AppState = {
   recipes: Recipe[];
   plan: PlanEntry[];
@@ -33,6 +41,7 @@ export type AppState = {
   groceryChecks: Record<string, boolean>;
   requests: RecipeRequest[];
   training: TrainingState;
+  importSources: ImportSource[];
 };
 export type Mutation =
   | {

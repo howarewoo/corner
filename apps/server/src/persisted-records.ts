@@ -19,6 +19,8 @@ import {
 } from './training-records.js';
 import type { Transaction } from './queries.js';
 import { quoteIdentifier as quote } from './schema-catalog.js';
+import { importSourceRecord } from './workspace-portability.js';
+import { ImportOutcomesSchema } from './additive-import.js';
 
 export const storageGeneration = 'relational-v1';
 
@@ -108,6 +110,12 @@ export async function validatePersistedRecords(
   await scan('workspace_check_ins', ['user_id', 'id'], compatible(checkInRecord));
   await scan('workspace_training_requests', ['user_id', 'id'], compatible(trainingRequestRecord));
   await scan('workspace_training_reviews', ['user_id', 'id'], compatible(reviewRecord));
+  await scan('workspace_import_sources',
+    ['user_id', 'source_namespace', 'record_type', 'source_record_id'],
+    compatible(importSourceRecord));
+  await scan<{ import_outcomes: unknown }>('mutation_receipts', ['user_id', 'request_id'], (row) => {
+    if (row.import_outcomes !== null) ImportOutcomesSchema.parse(row.import_outcomes);
+  });
   await scan<Parameters<typeof sessionRecords>[2][number]>(
     'workspace_workout_sessions',
     ['user_id', 'id'],
