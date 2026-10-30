@@ -4,6 +4,11 @@
 
 Corner has not been released. This is the current implementation baseline, not a record of a public launch, live configuration, or completed deployment. Setup commands live in [README.md](README.md); operator procedures and recovery gates live in [HOSTING.md](HOSTING.md).
 
+### Production smoke port isolation
+
+- Moved only the compiled Node production-smoke listeners to 14337/14338, below the default Linux/macOS ephemeral TCP ranges. The previous 43137/43138 listeners overlapped Linux's default outbound allocation range. No application runtime contract, retries, or unrelated-process termination was added.
+- Verification passed the workspace build, root lint (0 errors, 28 warnings), and the existing Auth-fixture port regression. A disposable Linux socket probe reproduced the old outbound-port bind conflict and accepted the replacement port. Actual compiled hosted/local smoke passed with old port 43138 occupied; occupying new port 14338 still failed startup without disturbing that listener. All owned smoke schemas were removed. The original PR #79 runner's conflicting socket owner remains unknown; no remote rerun or deployment is claimed.
+
 ### All native tracking MCP imports
 
 - Extended the qualified additive importer to all eight tracking domains, with independent import-only consent and revision discovery: `workouts:import` → `import_workouts` / `workout`; `routines:import` → `import_routines` / `routine`; `recipes:import` → `import_recipes` / `recipe`; `meal-plans:import` → `import_meal_plans` / `mealPlan`; `food-logs:import` → `import_food_logs` / `foodLog`; `check-ins:import` → `import_check_ins` / `checkIn`; `scheduled-dates:import` → `import_scheduled_dates` / `scheduledDate`; `grocery-checks:import` → `import_grocery_checks` / `groceryCheck`. Each record member also has `sourceRecordId`; all requests retain `operationId`, `expectedRevision`, `sourceNamespace` and `records`. No import implies record reads, existing-record edits/deletion, live workout transitions or configuration writes.
