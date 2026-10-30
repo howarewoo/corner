@@ -61,33 +61,33 @@ Send one JSON-RPC call per HTTP request. JSON-RPC array/batch bodies, including 
 
 The browser signs in through the existing managed account flow and shows the requesting client, actual account, and selectable requested permissions. A decision binds that fresh managed session and interaction; changing accounts or sessions requires starting again. Granted writes apply directly without per-change Corner approval: approve only clients you trust with those changes. A connected client can refresh independently after browser sign-out, until its grant expires or its owner revokes it in **Settings → Connected clients**. Revocation affects every token in that connection; reconnecting creates a new grant rather than reactivating old credentials. Access tokens last five minutes; grants and refresh tokens have a thirty-day maximum lifetime. Each MCP request checks both its token and live grant.
 
-| Permission              | Implemented tools                                              |
-| ----------------------- | -------------------------------------------------------------- |
-| `workouts:read`         | `list_workouts`, `get_workouts`, `exercise_history`            |
-| `workouts:import`       | `import_workouts`, `get_workspace_revision`                    |
-| `routines:import`       | `import_routines`, `get_workspace_revision`                    |
-| `recipes:import`        | `import_recipes`, `get_workspace_revision`                     |
-| `meal-plans:import`     | `import_meal_plans`, `get_workspace_revision`                  |
-| `food-logs:import`      | `import_food_logs`, `get_workspace_revision`                   |
-| `check-ins:import`      | `import_check_ins`, `get_workspace_revision`                   |
-| `scheduled-dates:import` | `import_scheduled_dates`, `get_workspace_revision`            |
-| `grocery-checks:import` | `import_grocery_checks`, `get_workspace_revision`              |
-| `routines:read`         | `list_routines`, `get_routines`                                |
-| `meal-plans:read`       | `list_meal_plans`, `get_meal_plans`                            |
-| `food-logs:read`        | `list_food_logs`                                               |
-| `recipes:read`          | `list_recipes`, `get_recipes`                                  |
-| `meal-plans:write`      | `edit_meal_plans`, `get_workspace_revision`                    |
-| `food-logs:write`       | `create_food_log`, `update_food_log`, `get_workspace_revision` |
-| `food-logs:delete`      | `delete_food_log`, `get_workspace_revision`                    |
-| `recipes:write`         | `create_recipe`, `update_recipe`, `get_workspace_revision`     |
-| `recipes:delete`        | `delete_recipe`, `get_workspace_revision`                      |
-| `routines:write`        | `create_routine`, `update_routine`, `get_workspace_revision`   |
-| `workout-plans:write`   | `edit_workout_plans`, `get_workout_versions`                   |
-| `workout-history:write` | `update_workout_history`, `get_workout_versions`               |
-| `check-ins:read`        | `list_check_ins`                                               |
-| `scheduled-dates:read`  | `list_scheduled_dates`                                         |
-| `grocery-checks:read`   | `list_grocery_checks`                                          |
-| `settings:read`         | `get_settings`                                                 |
+| Permission               | Implemented tools                                              |
+| ------------------------ | -------------------------------------------------------------- |
+| `workouts:read`          | `list_workouts`, `get_workouts`, `exercise_history`            |
+| `workouts:import`        | `import_workouts`, `get_workspace_revision`                    |
+| `routines:import`        | `import_routines`, `get_workspace_revision`                    |
+| `recipes:import`         | `import_recipes`, `get_workspace_revision`                     |
+| `meal-plans:import`      | `import_meal_plans`, `get_workspace_revision`                  |
+| `food-logs:import`       | `import_food_logs`, `get_workspace_revision`                   |
+| `check-ins:import`       | `import_check_ins`, `get_workspace_revision`                   |
+| `scheduled-dates:import` | `import_scheduled_dates`, `get_workspace_revision`             |
+| `grocery-checks:import`  | `import_grocery_checks`, `get_workspace_revision`              |
+| `routines:read`          | `list_routines`, `get_routines`                                |
+| `meal-plans:read`        | `list_meal_plans`, `get_meal_plans`                            |
+| `food-logs:read`         | `list_food_logs`                                               |
+| `recipes:read`           | `list_recipes`, `get_recipes`                                  |
+| `meal-plans:write`       | `edit_meal_plans`, `get_workspace_revision`                    |
+| `food-logs:write`        | `create_food_log`, `update_food_log`, `get_workspace_revision` |
+| `food-logs:delete`       | `delete_food_log`, `get_workspace_revision`                    |
+| `recipes:write`          | `create_recipe`, `update_recipe`, `get_workspace_revision`     |
+| `recipes:delete`         | `delete_recipe`, `get_workspace_revision`                      |
+| `routines:write`         | `create_routine`, `update_routine`, `get_workspace_revision`   |
+| `workout-plans:write`    | `edit_workout_plans`, `get_workout_versions`                   |
+| `workout-history:write`  | `update_workout_history`, `get_workout_versions`               |
+| `check-ins:read`         | `list_check_ins`                                               |
+| `scheduled-dates:read`   | `list_scheduled_dates`                                         |
+| `grocery-checks:read`    | `list_grocery_checks`                                          |
+| `settings:read`          | `get_settings`                                                 |
 
 Clients see only their granted tools. Tools capture the grant's owner server-side; arguments cannot select a different owner/resource. Read permissions grant no edits; edit permissions do not imply read or delete access. Details return domain keys (`get_recipes.recipes`, `get_meal_plans.plan`, `get_workouts.sessions`, `get_routines.templates`) and fail with `RESPONSE_TOO_LARGE` rather than truncating an oversized batch. No delegated plan/history deletion, workout start/completion, proposals, provider archives, or inference are implemented; no read tool exposes account, credential, client or connection data.
 
@@ -132,16 +132,16 @@ Each tracking collection has its own import-only permission. It grants only its 
 
 Every tool uses `{ operationId, expectedRevision, sourceNamespace, records: [{ sourceRecordId, <record field> }] }`:
 
-| Permission | Tool | Record field | Native source |
-| --- | --- | --- | --- |
-| `workouts:import` | `import_workouts` | `workout` | Workout session, excluding `createdAt`/`updatedAt` |
-| `routines:import` | `import_routines` | `routine` | Workout template, excluding `createdAt`/`updatedAt` |
-| `recipes:import` | `import_recipes` | `recipe` | Recipe, excluding `createdAt` |
-| `meal-plans:import` | `import_meal_plans` | `mealPlan` | Dated plan entry |
-| `food-logs:import` | `import_food_logs` | `foodLog` | Food entry, excluding `createdAt` |
-| `check-ins:import` | `import_check_ins` | `checkIn` | Body/recovery check-in |
-| `scheduled-dates:import` | `import_scheduled_dates` | `scheduledDate` | `{ date }` |
-| `grocery-checks:import` | `import_grocery_checks` | `groceryCheck` | `{ key, checked }` |
+| Permission               | Tool                     | Record field    | Native source                                       |
+| ------------------------ | ------------------------ | --------------- | --------------------------------------------------- |
+| `workouts:import`        | `import_workouts`        | `workout`       | Workout session, excluding `createdAt`/`updatedAt`  |
+| `routines:import`        | `import_routines`        | `routine`       | Workout template, excluding `createdAt`/`updatedAt` |
+| `recipes:import`         | `import_recipes`         | `recipe`        | Recipe, excluding `createdAt`                       |
+| `meal-plans:import`      | `import_meal_plans`      | `mealPlan`      | Dated plan entry                                    |
+| `food-logs:import`       | `import_food_logs`       | `foodLog`       | Food entry, excluding `createdAt`                   |
+| `check-ins:import`       | `import_check_ins`       | `checkIn`       | Body/recovery check-in                              |
+| `scheduled-dates:import` | `import_scheduled_dates` | `scheduledDate` | `{ date }`                                          |
+| `grocery-checks:import`  | `import_grocery_checks`  | `groceryCheck`  | `{ key, checked }`                                  |
 
 A batch contains **1–100 records** and its **complete MCP JSON request must fit 2 MiB UTF-8**, including the JSON-RPC envelope, arguments and whitespace. Split explicitly when either independent limit is reached; nothing is truncated. Streaming JSON and SDK transport enforce the same cap. Native mutation bodies retain 192 KiB; workspace JSON transfers retain the separate 32 MiB limit and existing native collection/nesting bounds. JSON-RPC arrays are rejected and encoded request IDs are capped at 256 bytes. Under the owner lock, imports also enforce the supported whole-workspace capacities: 10,000 recipes and routines each; 100,000 workouts, dated meal plans, food logs, check-ins, scheduled dates and grocery checks each. Provenance has no separate fixed entry-count cap.
 
@@ -159,6 +159,20 @@ The owner-locked batch commits every created record, provenance row, outcome, re
 
 The 1,000-receipt limit does not prune source identities. After receipt pruning or reconnect, discover the current revision and explicitly submit again: unchanged sources skip without duplication, but an expired receipt cannot replay its original outcome/revision. Workspace export/recovery carries `importSources` with original source fingerprints, even after destination corrections or when only an identity tombstone remains. Recovery binds those identities to the receiving owner, never the original account or OAuth grant. Tombstones prevent re-creating previously imported identities; provenance alone makes an account nonempty for recovery. Supported older exports lacking `importSources` receive an empty collection. Provenance is private workspace data, not proof of source authenticity or a transfer of credentials.
 
+### Static landing page
+
+[`apps/landing`](apps/landing/) is the independently buildable Astro 7.4.4 landing page. It uses the official React integration to render shared `@packages/ui` controls into static HTML without client hydration, with synthetic product examples and no account, database, environment-file, analytics, or external-font dependency.
+
+```bash
+pnpm --filter landing dev
+pnpm --filter landing check
+pnpm run build --filter=landing
+pnpm --filter landing preview
+```
+
+Development and built preview use **http://127.0.0.1:43203**. Root Turbo `check` and `build` discover the workspace automatically; the owned `pnpm dev` product controller is unchanged and does not launch it. Build output is `apps/landing/dist/index.html`, root-relative `/_astro/` assets, and `/favicon.svg`. `.astro/` is generated local metadata, not source.
+
+The agreed hosted direction is a landing page at the root domain and the existing product at its app subdomain, with existing product routes unchanged. No exact production domain is configured here. Every **Open Corner** action is a real HTML link to `/open-app`; the host integration must supply its fixed, environment-correct redirect. The standalone Astro preview deliberately has no redirect or guessed application destination, so `/open-app` returns 404 until that separate integration exists. Building the page or copying its workspace manifest into Docker does not activate public routing or qualify authentication.
 
 ### Build and run production locally
 
@@ -168,7 +182,7 @@ pnpm run db:migrate
 pnpm start
 ```
 
-The build compiles the nutrition, training, workspace, and API packages in dependency order, then builds `server` and `web` as separate workspace tasks. The compiled server starts on port 3000 and serves `apps/web/dist` alongside its API, preserving the same browser origin. Production runs ordinary JavaScript from `apps/server/dist`; it does not run Vite or require a TypeScript loader.
+The build compiles the nutrition, training, workspace, and API packages in dependency order, then builds the server, web product, design catalog, and static landing page as separate workspace tasks. The compiled server currently starts on port 3000 and serves `apps/web/dist` alongside its API, preserving the same browser origin; this landing-page addition does not change that runtime routing. Production runs ordinary JavaScript from `apps/server/dist`; it does not run Vite or require a TypeScript loader.
 
 ### Workspace commands
 
