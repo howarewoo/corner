@@ -114,7 +114,6 @@ try {
   cleanup.defer(() => worker?.dispose());
   const bindings = {
     CORNER_ORIGIN: origin,
-    CORNER_LANDING_ORIGIN: landingOrigin,
     DATABASE_URL: backend.databaseUrl,
     NEON_AUTH_BASE_URL: backend.authUrl,
     NEON_AUTH_REQUIRE_EMAIL_VERIFICATION: 'false',
@@ -192,6 +191,9 @@ try {
       return new Response(null, { status: 101, webSocket: pair[0] });
     };
     const { rawConfig: original } = experimental_readRawConfig({ config });
+    // These synthetic defaults follow each artifact, not the protected release configuration.
+    const artifact = config === options['--previous-config'] ? previousArtifact : candidateArtifact;
+    const workerHasLanding = !artifact || artifact.assetLayout === 'dual-origin';
     const bundle = mainOverride
       ? resolve(dirname(config), mainOverride)
       : original.no_bundle
@@ -221,6 +223,7 @@ try {
         scriptPath: bundle,
         bindings: {
           ...bindings,
+          ...(workerHasLanding ? { CORNER_LANDING_ORIGIN: landingOrigin } : {}),
           ...(options['--previous-config'] && config === options['--previous-config']
             ? {
                 BETTER_AUTH_SECRET: 'synthetic-workers-session-binding-secret-over-32-characters',

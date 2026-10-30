@@ -85,6 +85,10 @@ Artifact format **4** uses `configurationEntry: "wrangler.json"`, `workerEntry: 
 
 New dual-origin artifacts contain `assets/app/index.html` and `assets/landing/index.html` with disjoint private trees. Worker rewrites public site-relative paths internally; neither site's assets or SPA fallback are exposed on the other origin. Historical single-site format-4 artifacts retain their original `assets/index.html`, manifest inventories and digests; do not relabel or mutate them. An origin cutover does not add a database migration.
 
+Artifact and protected origin configuration must agree in both directions: dual-origin code requires `CORNER_LANDING_ORIGIN`; single-site code cannot qualify that setting with app-only probes. Compatible single-site format-4 recovery remains supported, as does an ordinary same-storage-generation upgrade from single-site to dual-origin code.
+
+Do not combine a preserving storage-generation transition with an origin-capability change that the serving artifact cannot support. Planning and promotion validate the serving artifact before qualification or maintenance effects; a pre-cutover abort validates the artifact selected for restoration before database inspection or deployment. If an incompatible retained journal/configuration is encountered, stop at operator HOLD without clearing maintenance, synthesizing prior configuration, mutating artifact/receipt identity, or inventing a legacy build/recovery path. No such live mismatch is asserted by source or fixture verification.
+
 #### Root/app origin cutover
 
 Before accepting staging or promoting to production, provide the exact approved origin pair, configure its routing/certificates/Access as applicable, register the exact app Auth origin, advance the bindings revision, and qualify both sites with the same immutable artifact. A missing canonical production domain or landing-preview registration is a release/cutover gate. Source checks do not clear existing hosted/MCP HOLDs, prove DNS/TLS/Access/inbox delivery, or authorize live administration.

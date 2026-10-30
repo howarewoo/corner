@@ -132,7 +132,10 @@ export function validateConfiguration(
 }
 
 export function publicCheckOptions(candidate, config, access = {}) {
-  if (!candidate.manifest.files?.['assets/landing/index.html']) return access;
+  if (!candidate.manifest.files?.['assets/landing/index.html']) {
+    need(!config.landingOrigin, 'Single-site artifact cannot serve CORNER_LANDING_ORIGIN');
+    return access;
+  }
   need(config.landingOrigin, 'Dual-origin artifact requires CORNER_LANDING_ORIGIN before release');
   return { ...access, landingOrigin: config.landingOrigin };
 }
@@ -539,6 +542,7 @@ export async function plan({
           Boolean(candidate.manifest.files?.[candidate.manifest.maintenanceWorkerEntry]),
         'Preserving cutover requires a document-v1 baseline and relational-v1 candidate with a packaged maintenance Worker',
       );
+      publicCheckOptions(previous, config);
     }
     qualification = await qualify({
       candidate: candidate.directory,
@@ -1478,6 +1482,7 @@ export async function promote({
       serving,
       Boolean(p.preservingCutover),
     );
+    if (p.preservingCutover) publicCheckOptions(serving, config);
   }
   const toolVersion = createRequire(new URL('../apps/server/package.json', import.meta.url))(
     'wrangler/package.json',
@@ -1848,6 +1853,7 @@ export async function resume({
   );
   publicCheckOptions(candidate, config);
   const serving = await github.artifact(originalBaseline.payload, join(work, 'serving-generation'));
+  if (abort) publicCheckOptions(serving, config);
   assertQualificationGeneration(p.qualification, candidate, serving, true);
   const toolVersion = createRequire(new URL('../apps/server/package.json', import.meta.url))(
     'wrangler/package.json',
