@@ -58,6 +58,7 @@ const recoveryMode = previousArtifact
   ? qualificationRecovery(candidateArtifact, previousArtifact, Boolean(options['--preserving']))
   : undefined;
 const forwardOnly = recoveryMode === 'forward-only';
+const emptyDocumentTransition = forwardOnly && previousArtifact.generation === 'document-v1';
 const preserving = recoveryMode === 'preserving';
 if (options['--preserving'] && !preserving)
   throw new Error(
@@ -75,7 +76,7 @@ try {
     candidateMigrator?.createDatabase,
   );
   cleanup.defer(() => backend.close());
-  if (forwardOnly) {
+  if (emptyDocumentTransition) {
     const retained = await startSmokeServices(
       directory,
       origin,
@@ -304,7 +305,7 @@ try {
       .getSetCookie()
       .map((cookie) => cookie.split(';', 1)[0])
       .join('; ');
-    if (!forwardOnly) {
+    if (!emptyDocumentTransition) {
       const previousWrite = await worker.fetch(new URL('/api/rpc/workspace/mutate', origin), {
         method: 'POST',
         headers: { Origin: origin, 'Content-Type': 'application/json', Cookie: priorCookie },
@@ -341,7 +342,10 @@ try {
       );
       assert.equal(response.status, 200, await response.clone().text());
       const previousSnapshot = (await response.json()).json;
-      priorState = { state: previousSnapshot.state, revision: previousSnapshot.revision };
+      priorState = {
+        state: { importSources: [], ...previousSnapshot.state },
+        revision: previousSnapshot.revision,
+      };
     }
     await worker.dispose();
     if (preserving) {
@@ -423,7 +427,7 @@ try {
     });
   const rpc = (procedure, input, headers = {}) =>
     post(`/api/rpc/${procedure}`, { json: input }, headers);
-  if (priorCookie && !forwardOnly) {
+  if (priorCookie && !emptyDocumentTransition) {
     const response = await rpc('workspace/export', undefined, { Cookie: priorCookie });
     assert.equal(response.status, 200, await response.clone().text());
     assert.deepEqual(
@@ -431,12 +435,12 @@ try {
       priorState,
       'Candidate schema migration must preserve the previous workspace.',
     );
-    if (preserving) {
+    if (preserving || forwardOnly) {
       const priorFollowup = {
-        requestId: 'preserving-candidate-followup-write',
+        requestId: 'migration-candidate-followup-write',
         mutation: {
           type: 'settings.save',
-          data: { ...priorState.state.settings, name: 'Converted and updated on relational-v1' },
+          data: { ...priorState.state.settings, name: 'Migrated and updated on relational-v1' },
         },
       };
       const firstFollowup = await rpc('workspace/mutate', priorFollowup, { Cookie: priorCookie });
@@ -450,7 +454,7 @@ try {
       assert.equal(updatedPrior.status, 200, await updatedPrior.clone().text());
       const updatedSnapshot = (await updatedPrior.json()).json;
       assert.equal(updatedSnapshot.revision, priorState.revision + 1);
-      assert.equal(updatedSnapshot.state.settings.name, 'Converted and updated on relational-v1');
+      assert.equal(updatedSnapshot.state.settings.name, 'Migrated and updated on relational-v1');
       assert.deepEqual(updatedSnapshot.state.logs, priorState.state.logs);
     }
   }
@@ -1569,5 +1573,5 @@ try {
   await cleanup.disposeAsync();
 }
 process.stdout.write(
-  `Passed fullstack Worker assets, version identity, canonical origin, secure account cookies, isolated PostgreSQL writes/retries/rollback, clean candidate database shutdown, sign-out, and retired AI route rejection${previousMigrator ? ', including prior-schema writes and candidate/recovery compatibility' : ''}.\nNo live cloud, account email, or model requests were made.\n`,
+  `Passed fullstack Worker assets, version identity, canonical origin, secure account cookies, isolated PostgreSQL writes/retries/rollback, clean candidate database shutdown, sign-out, and retired AI route rejection${previousMigrator ? (recoveryMode === 'compatible' ? ', including prior-schema writes and candidate/recovery compatibility' : ', including forward migration without previous-code recovery') : ''}.\nNo live cloud, account email, or model requests were made.\n`,
 );
