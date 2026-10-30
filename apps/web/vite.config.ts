@@ -103,7 +103,13 @@ export default defineConfig(({ command }) => {
         name: 'corner-oauth-document-privacy',
         apply: 'serve',
         configureServer(server) {
+          const appHost = new URL(environment.CORNER_ORIGIN || 'http://127.0.0.1:3000').host;
           server.middlewares.use((request, response, next) => {
+            if (request.headers.host !== appHost) {
+              response.writeHead(400, { 'Cache-Control': 'no-store' });
+              response.end('Open Corner using its configured app origin.');
+              return;
+            }
             if (request.url?.split('?', 1)[0]?.startsWith('/oauth/')) {
               response.setHeader('Cache-Control', 'private, no-store, max-age=0');
               response.setHeader('Referrer-Policy', 'no-referrer');

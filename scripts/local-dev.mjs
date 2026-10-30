@@ -372,7 +372,7 @@ async function serve(config, engine, port) {
   process.once('SIGINT', onSignal);
   process.once('SIGTERM', onSignal);
   try {
-    await Promise.all([port, port + 1, port + 2].map(availablePort));
+    await Promise.all([port, port + 1, port + 2, port + 3].map(availablePort));
     if (stopRequested) return;
     // Build code before migration; no root environment file is loaded by these tasks.
     await command('pnpm', ['run', 'build', '--filter=server'], isolatedEnvironment());
@@ -437,6 +437,7 @@ async function serve(config, engine, port) {
       NODE_ENV: 'development',
       CORNER_DEPLOYMENT: 'local',
       CORNER_ORIGIN: origin,
+      CORNER_LANDING_ORIGIN: `http://localhost:${port + 3}`,
       CORNER_DEV_API_PORT: String(port + 1),
       CORNER_DESIGN_PORT: String(port + 2),
       CORNER_DATA_DIR: join(stateDirectory, 'data'),
@@ -476,6 +477,7 @@ async function serve(config, engine, port) {
           'server',
           'web',
           'design',
+          'landing',
           '@packages/nutrition',
           '@packages/training',
           '@packages/workspace',
@@ -506,7 +508,7 @@ export function localArguments(args) {
     (action === 'up' && option !== undefined && !/^--port=\d+$/.test(option)) ||
     !Number.isInteger(port) ||
     port < 1024 ||
-    port > 65533 ||
+    port > 65532 ||
     (action === 'reset' && option !== '--confirm-delete-local-data')
   )
     throw new Error(
