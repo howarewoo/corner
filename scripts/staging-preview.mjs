@@ -7,7 +7,13 @@ import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
 import { setTimeout as delay } from 'node:timers/promises';
-import { GitHub, publicChecks, verifyPublic, PublicCheckError } from './release.mjs';
+import {
+  GitHub,
+  publicChecks,
+  publicCheckOptions,
+  verifyPublic,
+  PublicCheckError,
+} from './release.mjs';
 import { loadCiArtifact } from './ci-artifact.mjs';
 import {
   qualifyArtifact,
@@ -35,8 +41,14 @@ export function previewConfiguration(raw, environment = process.env) {
     'Preview configuration must be an object',
   );
   need(
-    Object.keys(value).length === 2 && value.NEON_AUTH_REQUIRE_EMAIL_VERIFICATION === 'false',
-    'Preview requires only canonical origin and disabled email verification',
+    Object.keys(value).every((key) =>
+      ['CORNER_ORIGIN', 'CORNER_LANDING_ORIGIN', 'NEON_AUTH_REQUIRE_EMAIL_VERIFICATION'].includes(
+        key,
+      ),
+    ) &&
+      Object.values(value).every((entry) => typeof entry === 'string') &&
+      value.NEON_AUTH_REQUIRE_EMAIL_VERIFICATION === 'false',
+    'Preview requires only explicit public origins and disabled email verification',
   );
   const origin = new URL(value.CORNER_ORIGIN);
   need(
@@ -46,6 +58,22 @@ export function previewConfiguration(raw, environment = process.env) {
       value.CORNER_ORIGIN === environment.CORNER_STAGING_ORIGIN,
     'Preview requires the exact registered staging-corner HTTPS origin',
   );
+  let landingOrigin;
+  if (value.CORNER_LANDING_ORIGIN !== undefined) {
+    const landing = new URL(value.CORNER_LANDING_ORIGIN);
+    need(
+      landing.protocol === 'https:' &&
+        landing.origin === value.CORNER_LANDING_ORIGIN &&
+        !landing.username &&
+        !landing.password &&
+        !landing.port &&
+        landing.hostname.includes('.') &&
+        landing.hostname !== origin.hostname &&
+        !/(^|\.)workers\.dev$|(^|\.)workers-preview\.com$/.test(landing.hostname),
+      'Preview requires an explicit distinct HTTPS landing hostname protected by staging Access',
+    );
+    landingOrigin = landing.origin;
+  }
   const revision = environment.CORNER_STAGING_BINDINGS_REVISION;
   need(
     /^[A-Za-z0-9._-]{1,100}$/.test(revision ?? ''),
@@ -55,6 +83,7 @@ export function previewConfiguration(raw, environment = process.env) {
     value,
     origin: origin.origin,
     bindingsRevision: revision,
+    landingOrigin,
     digest: hash(JSON.stringify({ vars: value, bindingsRevision: revision })),
   };
 }
@@ -210,6 +239,10 @@ export async function completePreview({
       p.qualification.generation === candidate.generation,
     'Completion requires the unchanged qualified Preview artifact',
   );
+  const access = publicCheckOptions(candidate, config, {
+    'CF-Access-Client-Id': environment.CORNER_STAGING_ACCESS_CLIENT_ID,
+    'CF-Access-Client-Secret': environment.CORNER_STAGING_ACCESS_CLIENT_SECRET,
+  });
   const assertCurrent = async () => {
     need(
       (await github.api('git/ref/heads/staging')).object?.sha === p.sourceSha &&
@@ -236,16 +269,7 @@ export async function completePreview({
   await assertCurrent();
   const production = JSON.stringify(await cf(`workers/scripts/${workerName}/deployments`));
   try {
-    await verifyPublic(
-      p.origin,
-      p.deploymentId,
-      {
-        'CF-Access-Client-Id': environment.CORNER_STAGING_ACCESS_CLIENT_ID,
-        'CF-Access-Client-Secret': environment.CORNER_STAGING_ACCESS_CLIENT_SECRET,
-      },
-      checkPublic,
-      wait,
-    );
+    await verifyPublic(p.origin, p.deploymentId, access, checkPublic, wait);
     await assertCurrent();
     need(
       JSON.stringify(await cf(`workers/scripts/${workerName}/deployments`)) === production,
@@ -302,6 +326,10 @@ export async function deployPreview({
       destination,
     });
   const candidate = await load(reference, join(work, 'candidate'));
+  const publicOptions = publicCheckOptions(candidate, config, {
+    'CF-Access-Client-Id': environment.CORNER_STAGING_ACCESS_CLIENT_ID,
+    'CF-Access-Client-Secret': environment.CORNER_STAGING_ACCESS_CLIENT_SECRET,
+  });
   const toolVersion = createRequire(new URL('../apps/server/package.json', import.meta.url))(
     'wrangler/package.json',
   ).version;
@@ -487,7 +515,7 @@ export async function deployPreview({
   const bindings = live.env ?? {};
   need(
     !Object.values(bindings).some((binding) => binding.type === 'service') &&
-      bindings.CORNER_ORIGIN?.text === config.origin &&
+      Object.entries(config.value).every(([name, value]) => bindings[name]?.text === value) &&
       secretNames.every((name) => bindings[name]?.type === 'secret_text'),
     'Preview has unexpected runtime bindings',
   );
@@ -506,11 +534,7 @@ export async function deployPreview({
       JSON.stringify(await cf(`workers/scripts/${workerName}/deployments`)) === production,
       'Production Worker deployment changed during Preview update; reconcile before accepting',
     );
-    const access = {
-      'CF-Access-Client-Id': environment.CORNER_STAGING_ACCESS_CLIENT_ID,
-      'CF-Access-Client-Secret': environment.CORNER_STAGING_ACCESS_CLIENT_SECRET,
-    };
-    await verifyPublic(config.origin, output.deployment_id, access, checkPublic, wait);
+    await verifyPublic(config.origin, output.deployment_id, publicOptions, checkPublic, wait);
     await current();
     await reverify();
     need(
