@@ -3,10 +3,12 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { mkdtemp, readFile, rm, access, writeFile } from 'node:fs/promises';
+import { request as httpRequest } from 'node:http';
 import { createRequire } from 'node:module';
 import { connect } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
+import { Readable } from 'node:stream';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { startSmokeServices } from './smoke-services.mjs';
 import { publicChecks, maintenanceChecks, validateCutoverCandidate } from './release.mjs';
@@ -51,6 +53,7 @@ const previousMigrator = options['--previous-migration-entry']
 const candidateArtifact = options['--config']
   ? await verifyArtifact(dirname(options['--config']))
   : undefined;
+const hasLanding = !candidateArtifact || candidateArtifact.assetLayout === 'dual-origin';
 const previousArtifact = options['--previous-config']
   ? await verifyArtifact(dirname(options['--previous-config']))
   : undefined;
@@ -66,6 +69,7 @@ if (options['--preserving'] && !preserving)
   );
 const directory = await mkdtemp(join(tmpdir(), 'corner-workers-smoke-'));
 const origin = 'https://corner.example.test';
+const landingOrigin = 'https://example.test';
 const cleanup = new AsyncDisposableStack();
 cleanup.defer(() => rm(directory, { recursive: true, force: true }));
 try {
@@ -110,6 +114,7 @@ try {
   cleanup.defer(() => worker?.dispose());
   const bindings = {
     CORNER_ORIGIN: origin,
+    CORNER_LANDING_ORIGIN: landingOrigin,
     DATABASE_URL: backend.databaseUrl,
     NEON_AUTH_BASE_URL: backend.authUrl,
     NEON_AUTH_REQUIRE_EMAIL_VERIFICATION: 'false',
@@ -260,7 +265,48 @@ try {
     );
     return {
       ready: runtime.ready,
-      fetch: (...args) => runtime.dispatchFetch(...args),
+      fetch: async (input, init) => {
+        const incoming = new Request(input, init);
+        const url = new URL(incoming.url);
+        const target = new URL(await runtime.ready);
+        target.pathname = url.pathname;
+        target.search = url.search;
+        const headers = new Headers(incoming.headers);
+        if (!headers.has('Host')) headers.set('Host', url.host);
+        // Use Miniflare's existing URL metadata without replacing the caller's HTTP Host.
+        headers.set('MF-Original-URL', incoming.url);
+        headers.set('MF-Disable-Pretty-Error', 'true');
+        return new Promise((resolve, reject) => {
+          const outgoing = httpRequest(
+            target,
+            {
+              method: incoming.method,
+              headers: Object.fromEntries(headers),
+              signal: incoming.signal,
+            },
+            (response) => {
+              const responseHeaders = new Headers();
+              for (let index = 0; index < response.rawHeaders.length; index += 2)
+                responseHeaders.append(response.rawHeaders[index], response.rawHeaders[index + 1]);
+              const status = response.statusCode ?? 500;
+              const noBody = incoming.method === 'HEAD' || [204, 205, 304].includes(status);
+              if (noBody) response.resume();
+              resolve(
+                new Response(noBody ? null : Readable.toWeb(response), {
+                  status,
+                  headers: responseHeaders,
+                }),
+              );
+            },
+          );
+          outgoing.once('error', reject);
+          if (incoming.body)
+            Readable.fromWeb(incoming.body)
+              .once('error', (error) => outgoing.destroy(error))
+              .pipe(outgoing);
+          else outgoing.end();
+        });
+      },
       dispose: async () => {
         if (disposed) return;
         try {
@@ -363,7 +409,12 @@ try {
       assert.equal(maintHealth.status, 503);
       const maintVersion = maintHealth.headers.get('X-Corner-Version');
       assert.match(maintVersion ?? '', /^[a-f0-9-]{36}$/i);
-      await maintenanceChecks(origin, maintVersion, (url, init) => worker.fetch(url, init));
+      await maintenanceChecks(
+        origin,
+        maintVersion,
+        (url, init) => worker.fetch(url, init),
+        hasLanding ? { landingOrigin } : {},
+      );
       assert.equal(
         (await worker.fetch(new URL('https://wrong.example.test/api/health'))).status,
         400,
@@ -414,6 +465,31 @@ try {
     } else {
       await candidateMigrator.migrate(backend.database);
     }
+  }
+  if (hasLanding) {
+    worker = await startWorker(
+      options['--config'] ?? join(root, 'apps/server/wrangler.jsonc'),
+      true,
+      {
+        mainOverride:
+          candidateArtifact?.manifest.maintenanceWorkerEntry ?? 'dist/worker/maintenance-worker.js',
+        forbidOutbound: true,
+      },
+    );
+    await worker.ready;
+    const maintenance = await worker.fetch(`${origin}/api/health`);
+    assert.equal(maintenance.status, 503, await maintenance.clone().text());
+    await maintenanceChecks(
+      origin,
+      maintenance.headers.get('X-Corner-Version'),
+      (url, init) => worker.fetch(url, init),
+      { landingOrigin },
+    );
+    assert.equal((await worker.fetch(`${landingOrigin}/mcp`)).status, 404);
+    const open = await worker.fetch(`${landingOrigin}/open-app`, { redirect: 'manual' });
+    assert.equal(open.status, 302);
+    assert.equal(open.headers.get('Location'), origin);
+    await worker.dispose();
   }
   worker = await startWorker(options['--config'] ?? join(root, 'apps/server/wrangler.jsonc'));
   await worker.ready;
@@ -467,11 +543,77 @@ try {
   if (workerConfig.version_metadata?.binding === 'CF_VERSION_METADATA') {
     assert.match(version ?? '', /^[a-f0-9-]{36}$/i);
   }
-  await publicChecks(origin, version, (url, options) => worker.fetch(url, options));
+  await publicChecks(
+    origin,
+    version,
+    (url, options) => worker.fetch(url, options),
+    hasLanding ? { landingOrigin } : {},
+  );
   assert.equal((await call('https://wrong.example.test/api/health')).status, 400);
   assert.equal((await call('/', { method: 'POST' })).status, 405);
   const page = await call('/account/reset-password');
-  assert.match(await page.text(), /<div id="root"><\/div>/);
+  const appHtml = await page.text();
+  assert.match(appHtml, /<div id="root"><\/div>/);
+  if (hasLanding) {
+    const landing = await call(landingOrigin);
+    assert.equal(landing.status, 200);
+    assert.equal(landing.headers.get('Set-Cookie'), null);
+    const landingHtml = await landing.text();
+    const landingAsset = landingHtml.match(/href="([^"]+\.css)"/)?.[1];
+    assert(landingAsset);
+    const landingAssetResponse = await call(new URL(landingAsset, landingOrigin));
+    assert.equal(landingAssetResponse.status, 200);
+    const etag = landingAssetResponse.headers.get('ETag');
+    assert(etag, 'The real asset binding must supply its cache validator.');
+    const conditionalAsset = await call(new URL(landingAsset, landingOrigin), {
+      headers: { 'If-None-Match': etag },
+    });
+    assert.equal(
+      conditionalAsset.status,
+      304,
+      `Conditional asset validator ${etag} must reach ASSETS.`,
+    );
+    assert.equal(await conditionalAsset.text(), '');
+    assert.equal((await call(landingAsset)).status, 404);
+    const appAsset = appHtml.match(/src="([^"]+\.js)"/)?.[1];
+    assert(appAsset);
+    assert.equal((await call(appAsset)).status, 200);
+    assert.equal((await call(new URL(appAsset, landingOrigin))).status, 404);
+    const head = await call(landingOrigin, { method: 'HEAD' });
+    assert.equal(head.status, 200);
+    assert.equal(await head.text(), '');
+    for (const path of [
+      '/api/health',
+      '/api/auth/get-session',
+      '/mcp',
+      '/oauth/authorize',
+      '/.well-known/oauth-authorization-server',
+      '/sw.js',
+      '/manifest.webmanifest',
+      '/workouts',
+      '/app/index.html',
+    ]) {
+      const denied = await call(new URL(path, landingOrigin));
+      assert.equal(denied.status, 404, path);
+      assert.equal(denied.headers.get('Set-Cookie'), null);
+    }
+    assert.equal(
+      (await call(`${landingOrigin}/bad%escape`)).status,
+      400,
+      'Malformed landing paths must be rejected without an internal server error.',
+    );
+    for (const method of ['GET', 'HEAD']) {
+      const redirect = await call(`${landingOrigin}/open-app?returnTo=https://evil.test`, {
+        method,
+        redirect: 'manual',
+      });
+      assert.equal(redirect.status, 302);
+      assert.equal(redirect.headers.get('Location'), origin);
+      assert.equal(await redirect.text(), '');
+    }
+    assert.equal((await call('/', { headers: { Host: 'unknown.test' } })).status, 400);
+    assert.equal((await rpc('account/policy', undefined, { Origin: landingOrigin })).status, 403);
+  }
 
   async function signup(name) {
     const response = await post('/api/auth/sign-up/email', {
@@ -724,18 +866,32 @@ try {
   assert.equal(delegatedRead.headers.get('Set-Cookie'), null);
   const oversizedReadId = await delegatedCall(
     '/mcp',
-    { jsonrpc: '2.0', id: 'x'.repeat(257), method: 'tools/call',
-      params: { name: 'list_food_logs', arguments: foodInput } },
+    {
+      jsonrpc: '2.0',
+      id: 'x'.repeat(257),
+      method: 'tools/call',
+      params: { name: 'list_food_logs', arguments: foodInput },
+    },
     { bearer: delegatedTokens.data.access_token, browser: false },
   );
   assert.equal(oversizedReadId.status, 400);
   const batchedRead = await delegatedCall(
     '/mcp',
-    [{ jsonrpc: '2.0', id: 'x'.repeat(20 * 1024), method: 'tools/call',
-      params: { name: 'list_food_logs', arguments: { ...foodInput, maxBytes: 16 * 1024 } } }],
+    [
+      {
+        jsonrpc: '2.0',
+        id: 'x'.repeat(20 * 1024),
+        method: 'tools/call',
+        params: { name: 'list_food_logs', arguments: { ...foodInput, maxBytes: 16 * 1024 } },
+      },
+    ],
     { bearer: delegatedTokens.data.access_token, browser: false },
   );
-  assert.equal(batchedRead.status, 400, 'Singleton arrays must not bypass the ID or one-call bounds');
+  assert.equal(
+    batchedRead.status,
+    400,
+    'Singleton arrays must not bypass the ID or one-call bounds',
+  );
   const delegatedVisible = await delegatedCall(
     '/mcp',
     { jsonrpc: '2.0', id: 2, method: 'tools/list' },
@@ -1032,65 +1188,124 @@ try {
 
   // Import-only grants add actual history without read/update authority.
   const workoutImporter = await nutritionToken(['workouts:import']);
-  const importCatalog = await delegatedCall('/mcp',
+  const importCatalog = await delegatedCall(
+    '/mcp',
     { jsonrpc: '2.0', id: 7, method: 'tools/list' },
-    { bearer: workoutImporter, browser: false });
-  assert.deepEqual(importCatalog.data.result.tools.map((tool) => tool.name).sort(),
-    ['get_workspace_revision', 'import_workouts']);
+    { bearer: workoutImporter, browser: false },
+  );
+  assert.deepEqual(importCatalog.data.result.tools.map((tool) => tool.name).sort(), [
+    'get_workspace_revision',
+    'import_workouts',
+  ]);
   const importRevision = (await nutritionCall(workoutImporter, 'get_workspace_revision', {}))
     .structuredContent.revision;
   const importInput = {
-    operationId: 'worker-import-history', expectedRevision: importRevision,
+    operationId: 'worker-import-history',
+    expectedRevision: importRevision,
     sourceNamespace: 'worker-history-archive',
-    records: [{ sourceRecordId: 'walk-source', workout: {
-      id: 'worker-imported-walk', date: '2026-10-28', name: 'Imported actual walk',
-      kind: 'conditioning', status: 'completed', unit: 'kg', exercises: [],
-      plannedMinutes: null, durationMinutes: 28, rounds: null, sessionRpe: null,
-      readiness: null, notes: '', changeReason: '',
-    } }],
+    records: [
+      {
+        sourceRecordId: 'walk-source',
+        workout: {
+          id: 'worker-imported-walk',
+          date: '2026-10-28',
+          name: 'Imported actual walk',
+          kind: 'conditioning',
+          status: 'completed',
+          unit: 'kg',
+          exercises: [],
+          plannedMinutes: null,
+          durationMinutes: 28,
+          rounds: null,
+          sessionRpe: null,
+          readiness: null,
+          notes: '',
+          changeReason: '',
+        },
+      },
+    ],
   };
   const importCreated = await nutritionCall(workoutImporter, 'import_workouts', importInput);
   assert.deepEqual(importCreated.structuredContent, {
     revision: importRevision + 1,
-    outcomes: [{ sourceRecordId: 'walk-source', destinationId: 'worker-imported-walk', outcome: 'created' }],
+    outcomes: [
+      { sourceRecordId: 'walk-source', destinationId: 'worker-imported-walk', outcome: 'created' },
+    ],
   });
   const importedHistory = (await snapshot(alice)).state.training.sessions.find(
-    (session) => session.id === 'worker-imported-walk');
+    (session) => session.id === 'worker-imported-walk',
+  );
   assert.equal(importedHistory.plannedMinutes, null);
   assert.equal(importedHistory.durationMinutes, 28);
   await client(alice).workspace.mutate({
     requestId: 'worker-correct-import',
-    mutation: { type: 'training.session.save', data: {
-      session: { ...importedHistory, notes: 'Owner correction retained' },
-      expectedUpdatedAt: importedHistory.updatedAt,
-    } },
+    mutation: {
+      type: 'training.session.save',
+      data: {
+        session: { ...importedHistory, notes: 'Owner correction retained' },
+        expectedUpdatedAt: importedHistory.updatedAt,
+      },
+    },
   });
-  assert.deepEqual((await nutritionCall(workoutImporter, 'import_workouts', importInput)).structuredContent,
-    importCreated.structuredContent);
+  assert.deepEqual(
+    (await nutritionCall(workoutImporter, 'import_workouts', importInput)).structuredContent,
+    importCreated.structuredContent,
+  );
   const reconnectedImporter = await nutritionToken(['workouts:import']);
   const importSkipped = await nutritionCall(reconnectedImporter, 'import_workouts', {
-    ...importInput, operationId: 'worker-reconnect-import', expectedRevision: importRevision + 2,
+    ...importInput,
+    operationId: 'worker-reconnect-import',
+    expectedRevision: importRevision + 2,
   });
   assert.equal(importSkipped.structuredContent.outcomes[0].outcome, 'skipped');
   const afterImport = await snapshot(alice);
-  assert.equal(afterImport.state.training.sessions.find(
-    (session) => session.id === 'worker-imported-walk').notes, 'Owner correction retained');
-  assert.equal(afterImport.state.importSources.find(
-    (source) => source.sourceNamespace === importInput.sourceNamespace).sourceRecordId, 'walk-source');
-  assert.equal((await nutritionCall(workoutImporter, 'get_workouts', { ids: ['worker-imported-walk'] })).isError, true);
+  assert.equal(
+    afterImport.state.training.sessions.find((session) => session.id === 'worker-imported-walk')
+      .notes,
+    'Owner correction retained',
+  );
+  assert.equal(
+    afterImport.state.importSources.find(
+      (source) => source.sourceNamespace === importInput.sourceNamespace,
+    ).sourceRecordId,
+    'walk-source',
+  );
+  assert.equal(
+    (await nutritionCall(workoutImporter, 'get_workouts', { ids: ['worker-imported-walk'] }))
+      .isError,
+    true,
+  );
   const importConflict = await nutritionCall(workoutImporter, 'import_workouts', {
-    ...importInput, operationId: 'worker-source-conflict', expectedRevision: afterImport.revision,
-    records: [{ ...importInput.records[0], workout: { ...importInput.records[0].workout, durationMinutes: 29 } }],
+    ...importInput,
+    operationId: 'worker-source-conflict',
+    expectedRevision: afterImport.revision,
+    records: [
+      {
+        ...importInput.records[0],
+        workout: { ...importInput.records[0].workout, durationMinutes: 29 },
+      },
+    ],
   });
   assert.equal(importConflict.structuredContent.code, 'SOURCE_CONFLICT');
   assert.deepEqual(await snapshot(alice), afterImport);
-  const nativeDomains = ['workouts', 'routines', 'recipes', 'meal-plans', 'food-logs', 'check-ins', 'scheduled-dates', 'grocery-checks'];
+  const nativeDomains = [
+    'workouts',
+    'routines',
+    'recipes',
+    'meal-plans',
+    'food-logs',
+    'check-ins',
+    'scheduled-dates',
+    'grocery-checks',
+  ];
   const nativeImporter = await nutritionToken(nativeDomains.map((domain) => `${domain}:import`));
   const nativeBefore = await snapshot(alice);
   let nativeRevision = nativeBefore.revision;
   const importNative = async (tool, key, record) => {
     const result = await nutritionCall(nativeImporter, tool, {
-      operationId: `worker-${tool}`, expectedRevision: nativeRevision, sourceNamespace: 'worker-native-archive',
+      operationId: `worker-${tool}`,
+      expectedRevision: nativeRevision,
+      sourceNamespace: 'worker-native-archive',
       records: [{ sourceRecordId: tool, [key]: record }],
     });
     assert.equal(result.isError, undefined, JSON.stringify(result));
@@ -1098,51 +1313,121 @@ try {
     nativeRevision = result.structuredContent.revision;
   };
   await importNative('import_routines', 'routine', {
-    id: 'worker-native-routine', name: 'Native recovery', kind: 'recovery', description: '',
-    durationMinutes: 0, exercises: [],
+    id: 'worker-native-routine',
+    name: 'Native recovery',
+    kind: 'recovery',
+    description: '',
+    durationMinutes: 0,
+    exercises: [],
   });
   await importNative('import_recipes', 'recipe', {
-    id: 'worker-native-recipe', name: 'Native soup', description: '', category: 'main',
-    prepMinutes: 0, cookMinutes: 0, nutrition: { calories: 0, protein: 0, carbs: 0, fat: 0 },
+    id: 'worker-native-recipe',
+    name: 'Native soup',
+    description: '',
+    category: 'main',
+    prepMinutes: 0,
+    cookMinutes: 0,
+    nutrition: { calories: 0, protein: 0, carbs: 0, fat: 0 },
     ingredients: [{ name: 'Water', quantity: 0, unit: 'ml', aisle: 'Other', optional: false }],
-    steps: ['Serve'], storage: '', variation: '', tags: [], color: '#112233',
-    source: 'manual', favorite: false, pdf: '/recipes/worker-soup.pdf',
+    steps: ['Serve'],
+    storage: '',
+    variation: '',
+    tags: [],
+    color: '#112233',
+    source: 'manual',
+    favorite: false,
+    pdf: '/recipes/worker-soup.pdf',
   });
   await importNative('import_meal_plans', 'mealPlan', {
-    id: 'worker-native-plan', date: '2010-01-01', slot: 'lunch', recipeId: 'worker-native-recipe', servings: 2,
+    id: 'worker-native-plan',
+    date: '2010-01-01',
+    slot: 'lunch',
+    recipeId: 'worker-native-recipe',
+    servings: 2,
   });
   await importNative('import_food_logs', 'foodLog', {
-    id: 'worker-native-food', date: '2001-01-01', slot: 'dinner', name: 'Historical snapshot',
-    recipeId: 'deleted-recipe', planEntryId: 'deleted-plan', servings: 3,
+    id: 'worker-native-food',
+    date: '2001-01-01',
+    slot: 'dinner',
+    name: 'Historical snapshot',
+    recipeId: 'deleted-recipe',
+    planEntryId: 'deleted-plan',
+    servings: 3,
     nutrition: { calories: 100, protein: 0, carbs: 20, fat: 0 },
   });
   await importNative('import_check_ins', 'checkIn', {
-    id: 'worker-native-check-in', date: '2000-01-01', bodyWeight: null, waist: null,
-    sleepHours: 0, energy: null, soreness: null, boxingQuality: null, notes: '',
+    id: 'worker-native-check-in',
+    date: '2000-01-01',
+    bodyWeight: null,
+    waist: null,
+    sleepHours: 0,
+    energy: null,
+    soreness: null,
+    boxingQuality: null,
+    notes: '',
   });
   await importNative('import_scheduled_dates', 'scheduledDate', { date: '1999-12-31' });
   const nativeGroceryKey = ' Épicerie | 豆腐 '.padEnd(500, ' ');
-  await importNative('import_grocery_checks', 'groceryCheck', { key: nativeGroceryKey, checked: false });
+  await importNative('import_grocery_checks', 'groceryCheck', {
+    key: nativeGroceryKey,
+    checked: false,
+  });
   await importNative('import_workouts', 'workout', {
-    id: 'worker-native-workout-plan', date: '1998-01-01', name: 'Explicit native plan', kind: 'recovery',
-    status: 'planned', unit: 'lb', exercises: [], plannedMinutes: 0, durationMinutes: null,
-    rounds: null, sessionRpe: null, readiness: null, notes: '', changeReason: '',
+    id: 'worker-native-workout-plan',
+    date: '1998-01-01',
+    name: 'Explicit native plan',
+    kind: 'recovery',
+    status: 'planned',
+    unit: 'lb',
+    exercises: [],
+    plannedMinutes: 0,
+    durationMinutes: null,
+    rounds: null,
+    sessionRpe: null,
+    readiness: null,
+    notes: '',
+    changeReason: '',
   });
   const nativeAfter = await snapshot(alice);
   assert.equal(nativeAfter.revision, nativeRevision);
   assert.deepEqual(nativeAfter.state.settings, nativeBefore.state.settings);
-  assert.deepEqual(nativeAfter.state.training.scheduledDates, [...nativeBefore.state.training.scheduledDates, '1999-12-31']);
-  assert.equal(nativeAfter.state.training.templates.find((row) => row.id === 'worker-native-routine').durationMinutes, 0);
-  assert.equal(nativeAfter.state.recipes.find((row) => row.id === 'worker-native-recipe').favorite, false);
-  assert.equal(nativeAfter.state.plan.find((row) => row.id === 'worker-native-plan').recipeId, 'worker-native-recipe');
+  assert.deepEqual(nativeAfter.state.training.scheduledDates, [
+    ...nativeBefore.state.training.scheduledDates,
+    '1999-12-31',
+  ]);
+  assert.equal(
+    nativeAfter.state.training.templates.find((row) => row.id === 'worker-native-routine')
+      .durationMinutes,
+    0,
+  );
+  assert.equal(
+    nativeAfter.state.recipes.find((row) => row.id === 'worker-native-recipe').favorite,
+    false,
+  );
+  assert.equal(
+    nativeAfter.state.plan.find((row) => row.id === 'worker-native-plan').recipeId,
+    'worker-native-recipe',
+  );
   const nativeFood = nativeAfter.state.logs.find((row) => row.id === 'worker-native-food');
   assert.equal(nativeFood.nutrition.calories * nativeFood.servings, 300);
   assert.equal(nativeFood.recipeId, 'deleted-recipe');
   assert.equal(nativeFood.planEntryId, 'deleted-plan');
-  assert.equal(nativeAfter.state.training.checkIns.find((row) => row.id === 'worker-native-check-in').sleepHours, 0);
+  assert.equal(
+    nativeAfter.state.training.checkIns.find((row) => row.id === 'worker-native-check-in')
+      .sleepHours,
+    0,
+  );
   assert.equal(nativeAfter.state.groceryChecks[nativeGroceryKey], false);
-  assert.equal(nativeAfter.state.training.sessions.find((row) => row.id === 'worker-native-workout-plan').status, 'planned');
-  const importedFoodWindow = await client(alice).workspace.foodWindow({ from: '2001-01-01', through: '2001-01-01', limit: 50 });
+  assert.equal(
+    nativeAfter.state.training.sessions.find((row) => row.id === 'worker-native-workout-plan')
+      .status,
+    'planned',
+  );
+  const importedFoodWindow = await client(alice).workspace.foodWindow({
+    from: '2001-01-01',
+    through: '2001-01-01',
+    limit: 50,
+  });
   assert.equal(importedFoodWindow.totals.calories, 300);
   assert.equal(importedFoodWindow.totals.protein, 0);
   assert.equal(importedFoodWindow.entries[0].name, 'Historical snapshot');

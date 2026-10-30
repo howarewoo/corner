@@ -14,6 +14,7 @@ import { startSmokeServices } from './smoke-services.mjs';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const origin = 'http://127.0.0.1:43139';
 const apiPort = 43140;
+const landingOrigin = 'http://localhost:43142';
 const password = 'synthetic-development-smoke-password-not-used-elsewhere';
 const compilerTasks = [
   '@packages/nutrition',
@@ -21,7 +22,7 @@ const compilerTasks = [
   '@packages/workspace',
   '@packages/api',
 ];
-const tasks = [...compilerTasks, 'server', 'web'];
+const tasks = [...compilerTasks, 'server', 'web', 'landing'];
 const seenTasks = new Set();
 const compiledTasks = new Set();
 const interrupted = new AbortController();
@@ -49,7 +50,7 @@ for (const name of ['.env', '.env.local', '.env.development', '.env.development.
     );
 }
 await Promise.all(
-  [43139, apiPort].map(
+  [43139, apiPort, 43142].map(
     (port) =>
       new Promise((resolve, reject) => {
         const probe = createServer((socket) => socket.destroy());
@@ -84,6 +85,7 @@ Object.assign(environment, {
   DO_NOT_TRACK: '1',
   CORNER_DEPLOYMENT: 'local',
   CORNER_ORIGIN: origin,
+  CORNER_LANDING_ORIGIN: landingOrigin,
   CORNER_DEV_API_PORT: String(apiPort),
   CORNER_DATA_DIR: join(temporary, 'data'),
   DATABASE_URL: backend.databaseUrl,
@@ -108,7 +110,7 @@ function capture(chunk) {
 function call(path, options = {}) {
   return new Promise((resolve, reject) => {
     const request = httpRequest(
-      new URL(path, origin),
+      new URL(path, options.origin ?? origin),
       {
         method: options.method ?? 'GET',
         agent: false,
@@ -176,10 +178,16 @@ async function ready() {
       compiledTasks.size === compilerTasks.length
     ) {
       try {
-        const response = await call('/api/health', {
-          timeout: Math.max(1, Math.min(1000, deadline - Date.now())),
-        });
-        if (response.status === 200 && json(response, 'Development health').ok === true) {
+        const timeout = Math.max(1, Math.min(1000, deadline - Date.now()));
+        const [response, landing] = await Promise.all([
+          call('/api/health', { timeout }),
+          call('/', { origin: landingOrigin, timeout }),
+        ]);
+        if (
+          response.status === 200 &&
+          json(response, 'Development health').ok === true &&
+          landing.status === 200
+        ) {
           healthySince ||= Date.now();
           if (Date.now() - healthySince >= 1000) return;
         } else healthySince = 0;
@@ -282,6 +290,19 @@ try {
     page.body.includes('<div id="root"></div>'),
     'The web HTML must include the app mount point.',
   );
+  const landing = await call('/', { origin: landingOrigin });
+  assert.equal(landing.status, 200);
+  const open = await call('/open-app?returnTo=https://evil.test', { origin: landingOrigin });
+  assert.equal(open.status, 302);
+  assert.equal(open.headers.get('Location'), origin);
+  assert.equal((await call('/api/health', { origin: landingOrigin })).status, 404);
+  assert.equal((await call('/sw.js', { origin: landingOrigin })).status, 404);
+  assert.equal(
+    (await call(filesystemPath('apps/web/src/main.tsx'), { origin: landingOrigin })).status,
+    403,
+    'Landing development must not expose the product source through Vite.',
+  );
+  assert.equal((await call('/', { headers: { Host: 'localhost:43139' } })).status, 400);
   const entry = await call('/src/main.tsx');
   assert.equal(entry.status, 200, 'Vite must transform the web entry module.');
   assert.ok(

@@ -1,6 +1,6 @@
 # Deploy Corner
 
-Corner supports Cloudflare Workers for manual tracking and a single-server Docker/Caddy deployment. Both use Neon Postgres and managed Neon Auth and serve web/API on one HTTPS origin. Model connections and inference are retired on both platforms.
+Corner supports Cloudflare Workers and one-process Docker/Caddy hosting. Both serve the static landing at an explicit root origin and the existing React product, Auth/API/OAuth/MCP at its explicit app origin. Model connections and inference are retired on both platforms.
 
 This guide does not create a cloud account, register a domain, configure SMTP, or authorize live model access. Preserve the database and matching application secrets across releases.
 
@@ -15,7 +15,7 @@ Production and staging share one full-stack runtime and immutable payload:
 | Production  | Worker `corner`                         | `main`     | `https://corner.adam-nathaniel-woo.workers.dev`         |
 | Staging     | Native Preview `staging` under `corner` | `staging`  | `https://staging-corner.adam-nathaniel-woo.workers.dev` |
 
-Both serve assets and `/api/*` through `apps/server/src/worker.ts`; retired `/auth/callback` returns no-store 404 rather than SPA HTML. There is no frontend Worker or service binding. Production supports an exact HTTPS custom domain. Keep `preview_urls: true`; enable `workers_dev` only for production's exact stable `https://corner.<account-subdomain>.workers.dev` origin. Deployment/Preview URLs cannot be production canonical origins. Keep DB/Auth and retained keys isolated.
+Both sites dispatch through `apps/server/src/worker.ts` using exact configured origins. Landing has no Auth/API/OAuth/MCP handlers, account cookies, service worker or product SPA fallback. GET/HEAD `/open-app` redirects only to configured app origin, without a visitor-controlled destination. Keep one `corner` Worker, `preview_urls: true`, no frontend Worker/service binding, and isolated DB/Auth/retained keys. The table records incumbent app origins, not an invented dual-origin production configuration: choose and register the exact root/app-subdomain pair before releasing this integration. Deployment URLs do not become canonical app origins.
 
 Native oRPC `/api/rpc` shares `@packages/api` with the browser; managed Auth `/api/auth` and `GET /api/health` retain separate protocols. Old application REST URLs and unpublished REST artifacts are unsupported. Live administration/cutover remains separately authorized operator work.
 
@@ -27,7 +27,7 @@ Apply additive migration `0002_delegated_access.sql` through the existing migrat
 
 Nutrition and training writes reuse existing workspace transactions and mutation receipts; no additional migration, binding, secret or storage is required. Preserve receipts in installation backups. Retention remains 1,000 operations per owner, shared with manual writes. Review every selected permission and revoke unwanted connections in Settings; refreshing an existing read grant does not add write/delete access. Recipe deletion is blocked while a meal plan uses it and never cascades to historical food logs. Workout planning cannot modify started/recorded activity, and separately granted history corrections retain lifecycle status and record-version checks; no delegated history deletion or workout start/completion exists.
 
-Prerequisites: a Cloudflare account (a domain only for optional custom-domain hosting), the existing Neon project with production and schema-only staging branches, independent staging Auth/configuration, Node 24, and pinned pnpm dependencies. No new paid binding or Neon upgrade is assumed. Confirm schema-only branch quota before provisioning.
+Prerequisites for new dual-origin releases: a Cloudflare account, an operator-owned domain with an approved HTTPS root/app-subdomain pair, the existing Neon project with production and schema-only staging branches, independent staging Auth/configuration, Node 24, and pinned pnpm dependencies. Historical single-site artifact recovery retains its recorded origin/configuration contract. No new paid binding or Neon upgrade is assumed. Confirm schema-only branch quota before provisioning.
 
 ### Cloudflare dashboard setup
 
@@ -36,6 +36,10 @@ Disable independent Cloudflare Git Builds and automatic branch Preview triggers.
 Configure/verify **preview-only Access** for the exact stable staging hostname and native Preview deployment URLs before exposure. Admit only approved testers and a narrowly scoped automated service token across assets, APIs, callbacks, and reset paths. Keep production outside Access. Test anonymous denial, approved-tester access, and unrelated-identity denial; Corner session checks still apply.
 
 Native [Cloudflare Previews](https://developers.cloudflare.com/workers/previews/) require an existing parent Worker. An operator-provisioned `corner` can host staging before its first production application release; enable only Preview URLs while preserving production routing. If no parent exists, create it through protected bootstrap first. Native Previews are not aliased Version URLs, which reuse a version's resources. Explicit Preview configuration supplies isolation; [service bindings target production resources](https://developers.cloudflare.com/workers/previews/resources/) and are not used. Keep top-level `preview_urls` enabled.
+
+For the additional staging landing origin, propose a dedicated **`previews.<operator-owned-root>`** Preview-only custom domain, producing **`staging.previews.<operator-owned-root>`**, while retaining the existing staging app alias above. These are hostname shapes, not configured values. [Cloudflare Preview custom domains](https://developers.cloudflare.com/workers/previews/custom-domains/) use `custom_domain: true`, `previews_enabled: true`, `enabled: false` on the parent Worker and create wildcard DNS/certificates; using the production root would conflict with its app subdomain. Confirm certificate coverage for the chosen depth. Do not substitute an ordinary route, which targets production, or create another Worker.
+
+Protect both exact stable staging origins and their native deployment URLs with Access before exposure. Scope each automated Access credential to its explicitly approved probe origin and never follow a redirect with credentials to another origin. A deployment URL can identify a version while still failing the runtime's canonical Host check; do not broaden Auth/API origin authorization to make arbitrary deployment URLs work. Canonical stable origins remain the account/security qualification surface.
 
 The same-account design assumes trusted repository writers and environment administrators. Workers edit tokens may authorize an account rather than one named Worker: fixed script targets are an accident guard, **not provider-enforced isolation from malicious CI**. Keep staging and production tokens in their separate GitHub environments, not repository-wide secrets. A stronger hostile-writer boundary requires a separately approved account/security design.
 
@@ -63,7 +67,7 @@ References: [schema-only branches](https://neon.com/docs/guides/branching-schema
 
 ### Configure the origin and secrets
 
-Production uses `CORNER_PRODUCTION_ORIGIN`, `CORNER_PRODUCTION_CONFIG_JSON`, and `CORNER_PRODUCTION_BINDINGS_REVISION`; staging retains corresponding `CORNER_STAGING_*` names. Origins are exact registered HTTPS origins without trailing slashes. Configuration JSON contains only `CORNER_ORIGIN` and `NEON_AUTH_REQUIRE_EMAIL_VERIFICATION`: production requires `"true"` (with OTP verification and production SMTP in Neon Auth), while Access-gated synthetic staging requires `"false"` in both `CORNER_STAGING_CONFIG_JSON` and its independent managed Auth branch (with no fake delivery expectations). Use the expected origins above or an approved production custom domain. When provided, `CORNER_PRODUCTION_ORIGIN` must equal the configured origin exactly. Advance the nonsecret bindings revision (`CORNER_STAGING_BINDINGS_REVISION` or `CORNER_PRODUCTION_BINDINGS_REVISION`) for Auth/secrets/routing changes; it does not detect unreported edits. For an existing staging installation, aligning `CORNER_STAGING_CONFIG_JSON` (`"false"`), the isolated staging Neon Auth branch email-verification policy, and bumping `CORNER_STAGING_BINDINGS_REVISION` while preserving existing accounts, application keys, and database records is separately authorized operator work; source edits alone do not establish a live cutover.
+Production uses `CORNER_PRODUCTION_ORIGIN`, `CORNER_PRODUCTION_CONFIG_JSON`, and `CORNER_PRODUCTION_BINDINGS_REVISION`; staging retains corresponding `CORNER_STAGING_*` settings. Public JSON supplies exact `CORNER_ORIGIN` (app), `CORNER_LANDING_ORIGIN` (landing), and `NEON_AUTH_REQUIRE_EMAIL_VERIFICATION`, without trailing slashes or credentials. Production's app must be `app.<chosen-root>` over HTTPS; staging preserves the exact registered app alias and requires an additional explicitly approved landing-preview origin. Production verification remains `"true"` with OTP/custom SMTP; Access-gated synthetic staging remains `"false"` in both runtime and its independent Neon Auth policy. Register only the app origin with managed Auth; never widen app CORS or cookie Domain to the root. Advance the nonsecret bindings revision for routing/Auth/secrets changes while preserving all existing accounts, keys, records and retained source payloads. Exact hostnames, DNS/TLS, Preview-only domain registration, Access and Auth settings remain separately authorized operator prerequisites, not effects of source changes.
 
 Put public configuration variables where the plan job can read them. Configure `CLOUDFLARE_ACCOUNT_ID` for the appropriate environment. Each effectful environment holds its own `CLOUDFLARE_API_TOKEN` and direct `DATABASE_URL_UNPOOLED`. All production releases use main-only `production` without reviewer or wait-timer rules, including explicit bootstrap/recovery/configuration releases. Keep the existing production credentials there, including bootstrap's pooled `DATABASE_URL` and `CORNER_WORKER_SECRETS_JSON`, without rotating keys. Staging additionally holds `CORNER_STAGING_ACCESS_CLIENT_ID` and `CORNER_STAGING_ACCESS_CLIENT_SECRET`; these never belong in browser code or artifacts.
 
@@ -78,6 +82,14 @@ Keep credentials out of Wrangler `vars`, CLI arguments, logs, repository variabl
 Full CI uses disposable PostgreSQL and local HTTPS Auth fixtures. Successful persistent-branch pushes package the already-built **single full-stack Worker**, assets, complete Drizzle SQL/journal/snapshots, standalone migrator/data validator, canonical configuration, digests, and qualification report. Retain `corner-release-<full-source-SHA>` for 90 days and preserve active/recovery references longer. CI does not deploy.
 
 Artifact format **4** uses `configurationEntry: "wrangler.json"`, `workerEntry: "worker/worker.js"`, `workerName: "corner"`, and `migrationEntry: "migration/dist/migrate.mjs"`, with source/lockfile/Node/Wrangler/configuration identity and complete file inventories. Active migrations are listed in Kit journal order as `{name, sha256, when, journalSha256, snapshotSha256}`; each complete journal entry and snapshot is bound into the required migration prefix, and every SQL, journal, and snapshot file is hashed. Packaged configuration retains `workers_dev: false`, `preview_urls: true`, `ASSETS`, and `CF_VERSION_METADATA`. Qualification reports remain format 1; production and Preview journals use format 4. Older formats are not upgrade/recovery targets. Verification rejects missing/unlisted files, symlinks, traversal, metadata lineage errors, digest/configuration drift, and mismatched pinned Wrangler without importing artifact code. Production and Preview consume identical bytes without rebuilding; apply environment-specific origin/secrets/routing separately.
+
+New dual-origin artifacts contain `assets/app/index.html` and `assets/landing/index.html` with disjoint private trees. Worker rewrites public site-relative paths internally; neither site's assets or SPA fallback are exposed on the other origin. Historical single-site format-4 artifacts retain their original `assets/index.html`, manifest inventories and digests; do not relabel or mutate them. An origin cutover does not add a database migration.
+
+#### Root/app origin cutover
+
+Before accepting staging or promoting to production, provide the exact approved origin pair, configure its routing/certificates/Access as applicable, register the exact app Auth origin, advance the bindings revision, and qualify both sites with the same immutable artifact. A missing canonical production domain or landing-preview registration is a release/cutover gate. Source checks do not clear existing hosted/MCP HOLDs, prove DNS/TLS/Access/inbox delivery, or authorize live administration.
+
+Moving the app origin changes the browser cookie/storage/service-worker boundary. Existing users may need to sign in again and reinstall their PWA at the app origin; old installed shortcuts do not move automatically. OAuth issuer, `/mcp` audience/resource, registered redirect URLs, clients and grants are bound to the app origin, so clients may need explicit reconnection and renewed owner consent. Preserve existing grants, issuer keys and retained records; do not auto-delete/rebind them, rotate keys, accept old issuer/audience aliases, or weaken validation. Keep matching installation backups and decide the operator cutover/recovery procedure before switching traffic.
 
 #### One-time protected configuration and cutover order
 
@@ -216,13 +228,13 @@ Edit `.env.hosted` on the server and supply the pooled `DATABASE_URL`, direct `D
 
 | Setting                 | Purpose                                                                                   |
 | ----------------------- | ----------------------------------------------------------------------------------------- |
-| `CORNER_DOMAIN`         | Public hostname without a protocol, port, or path                                         |
+| `CORNER_DOMAIN`         | Root landing DNS hostname; the product uses `app.<CORNER_DOMAIN>`                         |
 | `CORNER_PROXY_SECRET`   | Allows the HTTPS edge to attest client identity; never trust arbitrary forwarding headers |
 | `DATABASE_URL`          | Pooled Neon PostgreSQL application connection                                             |
 | `DATABASE_URL_UNPOOLED` | Direct connection for explicit versioned migrations                                       |
 | `NEON_AUTH_BASE_URL`    | Full managed Auth URL, including its database/auth path                                   |
 
-Compose derives `CORNER_ORIGIN` from the hostname and sets `NEON_AUTH_REQUIRE_EMAIL_VERIFICATION=true`. The Neon branch policy must agree. Cookies, redirects, and unsafe browser requests remain restricted to the exact canonical origin.
+Compose derives `CORNER_LANDING_ORIGIN=https://<CORNER_DOMAIN>` and `CORNER_ORIGIN=https://app.<CORNER_DOMAIN>`, and requires email verification. Register only the app origin in Neon Auth. Caddy serves both exact names with the same proxy proof; cookies remain host-only and unsafe browser requests remain app-origin-only.
 
 `.env.hosted` is excluded from Git, source packaging, and Docker build contexts. Make an encrypted backup of it separately from the source package. Do not regenerate its keys during an ordinary upgrade.
 
@@ -235,7 +247,7 @@ docker compose --env-file .env.hosted -f compose.hosted.yaml up -d
 docker compose --env-file .env.hosted -f compose.hosted.yaml ps
 ```
 
-Open `https://corner.your-domain.com` after the containers become healthy and Caddy has issued its certificate. Caddy provisions and renews HTTPS certificates and redirects HTTP once the hostname, network, and persistent certificate storage are configured correctly.
+Open `https://<CORNER_DOMAIN>` for the landing and its **Open Corner** link for `https://app.<CORNER_DOMAIN>`. Caddy must issue certificates for both names and redirect HTTP after their DNS, network and persistent certificate storage are configured.
 
 Only Caddy publishes host ports. Corner listens on the private Compose network and needs outbound HTTPS to managed Auth and PostgreSQL connectivity to Neon. The `corner-data` volume stores private local configuration, not account/workspace records. Caddy certificate data and configuration use separate named volumes.
 
@@ -245,7 +257,7 @@ The health probe uses the canonical Host but does not prove DB/Auth availability
 
 Use your own email address for this first check:
 
-1. Create an account. With verification required, no workspace should open before verification.
+1. On the root origin, verify useful landing HTML, a fixed `/open-app` redirect, no account cookies/service worker, and 404 for API/Auth/MCP/product paths. Continue to the app origin and create an account; verification must precede workspace access.
 2. Enter the verification code from the email, then sign in normally.
 3. Save a small manual plan or recipe and optionally edit the profile in Settings.
 4. Sign out and request a password reset. Open the email, choose a new password, and sign in again.
