@@ -3,7 +3,7 @@ import type { AppState, Settings } from '@packages/workspace/types';
 import { createInitialState } from '@packages/workspace/initial-state';
 import type { Transaction } from './queries.js';
 import * as tables from './schema.js';
-import { foodRecord } from './food-records.js';
+import { foodRecord, writeFoodRecord } from './food-records.js';
 import {
   planRecord,
   recipeRecord,
@@ -49,19 +49,7 @@ export async function importRelational(
   for (const plan of state.plan) await savePlan(connection, userId, plan, position());
   // Import is the historical serialization boundary, not a new live-source command.
   for (const entry of state.logs)
-    await connection.insert(tables.foodEntries).values({
-      user_id: userId,
-      id: entry.id,
-      position: position(),
-      date: entry.date,
-      slot: entry.slot,
-      name: entry.name,
-      ...entry.nutrition,
-      servings: entry.servings,
-      recipe_id: entry.recipeId ?? null,
-      plan_entry_id: entry.planEntryId ?? null,
-      created_at: entry.createdAt,
-    });
+    await writeFoodRecord(connection, userId, entry, position());
   for (const key of Object.keys(state.groceryChecks))
     await connection
       .insert(tables.groceryChecks)
