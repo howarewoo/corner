@@ -1,6 +1,7 @@
 // Real PostgreSQL plus a local HTTPS Better Auth fixture; never uses Neon credentials.
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
+import { once } from 'node:events';
 import { createServer } from 'node:https';
 import { readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
@@ -85,10 +86,18 @@ export async function startSmokeServices(directory, origin, initialize, database
         }
       },
     );
-    await new Promise((resolve, reject) => {
-      server.once('error', reject);
-      server.listen(0, '127.0.0.1', resolve);
-    });
+    const applicationUrl = new URL(origin);
+    const applicationPort = Number(
+      applicationUrl.port || (applicationUrl.protocol === 'https:' ? 443 : 80),
+    );
+    for (;;) {
+      const listening = once(server, 'listening');
+      server.listen(0, '127.0.0.1');
+      await listening;
+      if (server.address().port !== applicationPort) break;
+      // Port zero can claim the application's fixed port before its process starts.
+      await new Promise((resolve) => server.close(resolve));
+    }
     const baseUrl = `https://127.0.0.1:${server.address().port}/neondb/auth`;
     const options = {
       database,
