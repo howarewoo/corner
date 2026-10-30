@@ -16,6 +16,10 @@ export const DELEGATED_PERMISSIONS = [
     scope: 'workout-history:write',
     label: 'Correct existing recorded workout history without changing its status',
   },
+  { scope: 'check-ins:read', label: 'Read body and recovery check-ins' },
+  { scope: 'scheduled-dates:read', label: 'Read scheduled training dates' },
+  { scope: 'grocery-checks:read', label: 'Read grocery check marks' },
+  { scope: 'settings:read', label: 'Read profile, goals, targets, timezone, preferences and weekly schedule' },
 ] as const;
 
 export type DelegatedScope = (typeof DELEGATED_PERMISSIONS)[number]['scope'];
