@@ -4,6 +4,7 @@ import { mkdtemp, rm, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { createServer } from 'node:http';
 import {
   verifyRun,
   validateConfiguration,
@@ -18,6 +19,7 @@ import {
   complete,
   deploy,
   publicChecks,
+  publicCheckOptions,
   verifyPublic,
   PublicCheckError,
   maintenanceChecks,
@@ -1465,6 +1467,137 @@ test('production permits only the exact stable corner Worker hostname and binds 
     if (before === undefined) delete process.env.CORNER_PRODUCTION_ORIGIN;
     else process.env.CORNER_PRODUCTION_ORIGIN = before;
   }
+});
+
+test('dual-origin configuration requires an exact HTTPS root/app pair without changing historical digests', async () => {
+  const settings = {
+    CORNER_ORIGIN: 'https://app.example.com',
+    CORNER_LANDING_ORIGIN: 'https://example.com',
+    NEON_AUTH_REQUIRE_EMAIL_VERIFICATION: 'true',
+  };
+  const configured = validateConfiguration(JSON.stringify(settings));
+  assert.equal(configured.landingOrigin, settings.CORNER_LANDING_ORIGIN);
+  for (const landing of [
+    'https://app.example.com',
+    'http://example.com',
+    'https://example.com:444',
+    'https://other.example.com',
+    'https://example.com/',
+    'https://user@example.com',
+    'https://corner.account.workers.dev',
+  ])
+    assert.throws(() =>
+      validateConfiguration(JSON.stringify({ ...settings, CORNER_LANDING_ORIGIN: landing })),
+    );
+  const f = fixture();
+  const artifact = f.github.artifact;
+  f.github.artifact = async (...args) => {
+    const candidate = await artifact(...args);
+    return {
+      ...candidate,
+      manifest: { ...candidate.manifest, files: { 'assets/landing/index.html': 'a'.repeat(64) } },
+    };
+  };
+  await assert.rejects(promote(f.options), /requires CORNER_LANDING_ORIGIN/);
+  assert.deepEqual(f.effects, []);
+  assert.deepEqual(publicCheckOptions({ manifest }, config), {});
+});
+
+test('dual-origin public and maintenance probes exercise fixed redirects and root isolation over HTTP', async (t) => {
+  let maintenance = false;
+  let defect;
+  let appOrigin;
+  const requests = [];
+  const server = createServer((request, response) => {
+    const url = new URL(request.url, `http://${request.headers.host}`);
+    requests.push({ origin: url.origin, path: url.pathname, headers: request.headers });
+    response.setHeader('X-Corner-Version', versionId);
+    response.setHeader('Content-Security-Policy', "frame-ancestors 'none'");
+    response.setHeader('Cache-Control', 'no-store');
+    const send = (status, body = '') => {
+      response.statusCode = status;
+      response.end(typeof body === 'string' ? body : JSON.stringify(body));
+    };
+    if (url.hostname === 'localhost') {
+      if (defect === 'cookie') response.setHeader('Set-Cookie', 'session=unexpected');
+      if (url.pathname === '/') {
+        const asset =
+          defect === 'external-asset'
+            ? 'https://external.invalid/_astro/landing.css'
+            : '/_astro/landing.css';
+        return send(200, `<a href="/open-app">Open</a><link href="${asset}" rel="stylesheet">`);
+      }
+      if (url.pathname === '/_astro/landing.css') {
+        response.setHeader('Cache-Control', 'public, immutable');
+        return send(200, 'body{}');
+      }
+      if (url.pathname === '/open-app') {
+        response.setHeader(
+          'Location',
+          defect === 'redirect' ? 'https://external.invalid' : appOrigin,
+        );
+        return send(302);
+      }
+      return send(defect === 'root-api' && url.pathname === '/api/health' ? 200 : 404);
+    }
+    if (maintenance) {
+      response.setHeader('Retry-After', '60');
+      return send(
+        503,
+        url.pathname.startsWith('/api/rpc/')
+          ? {
+              json: {
+                defined: true,
+                code: 'SERVICE_UNAVAILABLE',
+                status: 503,
+                data: { code: 'MAINTENANCE_ACTIVE' },
+              },
+            }
+          : { ok: false, maintenance: true, code: 'MAINTENANCE_ACTIVE' },
+      );
+    }
+    if (url.pathname === '/api/health') return send(200, { ok: true });
+    if (url.pathname === '/api/auth/sign-up/email')
+      return send(403, { code: 'ORIGIN_NOT_ALLOWED' });
+    if (url.pathname === '/api/rpc/workspace/get')
+      return send(401, { json: { defined: true, code: 'SIGN_IN_REQUIRED', status: 401 } });
+    if (url.pathname === '/assets/app.js') {
+      response.setHeader('Cache-Control', 'public, immutable');
+      return send(200, 'export {};');
+    }
+    if (['/', '/account/reset-password'].includes(url.pathname))
+      return send(200, '<script src="/assets/app.js"></script>');
+    return send(404);
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const { port } = server.address();
+  appOrigin = `http://127.0.0.1:${port}`;
+  const options = {
+    landingOrigin: `http://localhost:${port}`,
+    'CF-Access-Client-Id': 'synthetic-id',
+    'CF-Access-Client-Secret': 'synthetic-secret',
+  };
+  await publicChecks(appOrigin, versionId, fetch, options);
+  assert.equal(requests.filter((r) => r.origin === appOrigin && r.path === '/').length, 1);
+  assert.equal(requests.filter((r) => r.path === '/open-app').length, 2);
+  for (const request of requests) {
+    assert([appOrigin, options.landingOrigin].includes(request.origin));
+    assert.equal(request.headers['cf-access-client-id'], options['CF-Access-Client-Id']);
+    assert.equal(request.headers['cf-access-client-secret'], options['CF-Access-Client-Secret']);
+  }
+  for (const [failure, expected] of [
+    ['external-asset', /remain same-origin/],
+    ['redirect', /configured app origin/],
+    ['cookie', /must not set application cookies/],
+    ['root-api', /dynamic\/private path boundary/],
+  ]) {
+    defect = failure;
+    await assert.rejects(publicChecks(appOrigin, versionId, fetch, options), expected);
+  }
+  defect = undefined;
+  maintenance = true;
+  await maintenanceChecks(appOrigin, versionId, fetch, options);
 });
 
 test('public probes never forward Access credentials to an external page asset', async () => {

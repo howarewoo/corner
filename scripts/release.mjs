@@ -72,7 +72,11 @@ export function validateConfiguration(
     value && typeof value === 'object' && !Array.isArray(value),
     'Production configuration must be an object',
   );
-  const allowed = new Set(['CORNER_ORIGIN', 'NEON_AUTH_REQUIRE_EMAIL_VERIFICATION']);
+  const allowed = new Set([
+    'CORNER_ORIGIN',
+    'CORNER_LANDING_ORIGIN',
+    'NEON_AUTH_REQUIRE_EMAIL_VERIFICATION',
+  ]);
   need(
     Object.keys(value).every((key) => allowed.has(key) && typeof value[key] === 'string'),
     'Only public runtime settings are accepted',
@@ -89,6 +93,23 @@ export function validateConfiguration(
       value.NEON_AUTH_REQUIRE_EMAIL_VERIFICATION === 'true',
     'Release requires a canonical HTTPS custom-domain or stable corner workers.dev origin and email verification',
   );
+  let landingOrigin;
+  if (value.CORNER_LANDING_ORIGIN !== undefined) {
+    const landing = new URL(value.CORNER_LANDING_ORIGIN);
+    need(
+      landing.protocol === 'https:' &&
+        landing.origin === value.CORNER_LANDING_ORIGIN &&
+        !landing.username &&
+        !landing.password &&
+        !landing.port &&
+        !origin.port &&
+        !/(^|\.)workers\.dev$|(^|\.)workers-preview\.com$/.test(landing.hostname) &&
+        landing.hostname.includes('.') &&
+        origin.hostname === `app.${landing.hostname}`,
+      'Release requires an explicit HTTPS root landing and app.<root> origin pair',
+    );
+    landingOrigin = landing.origin;
+  }
   need(
     /^[A-Za-z0-9._-]{1,100}$/.test(revision ?? ''),
     'Explicit production bindings revision required',
@@ -104,9 +125,16 @@ export function validateConfiguration(
     value,
     origin: origin.origin,
     workersDev,
+    landingOrigin,
     bindingsRevision: revision,
     digest: hash(canonical),
   };
+}
+
+export function publicCheckOptions(candidate, config, access = {}) {
+  if (!candidate.manifest.files?.['assets/landing/index.html']) return access;
+  need(config.landingOrigin, 'Dual-origin artifact requires CORNER_LANDING_ORIGIN before release');
+  return { ...access, landingOrigin: config.landingOrigin };
 }
 export function validateReceipt(receipt) {
   need(
@@ -444,6 +472,7 @@ export async function plan({
     need(target.payload.phase === 'complete', 'Rollback target lacks completed qualification');
     reference = target.payload;
     candidate = await github.artifact(reference, join(work, 'candidate'));
+    publicCheckOptions(candidate, config);
     const current = await github.artifact(schemaReference, join(work, 'current'));
     need(
       candidate.generation === 'relational-v1' && current.generation === 'relational-v1',
@@ -489,6 +518,7 @@ export async function plan({
     need(matches.length === 1, 'Expected exactly one retained release artifact');
     reference = { runId: String(runId), artifactId: String(matches[0].id), sourceSha };
     candidate = await github.artifact(reference, join(work, 'candidate'));
+    publicCheckOptions(candidate, config);
     const previous = baseline
       ? await github.artifact(baseline.payload, join(work, 'previous'))
       : null;
@@ -600,14 +630,16 @@ export async function verifyPublic(
     }
   }
 }
-export async function publicChecks(origin, versionId, fetcher = fetch, access = {}) {
-  const accessHeaders = {};
+
+function publicAccessHeaders(access) {
   const clientId = access['CF-Access-Client-Id'];
   const clientSecret = access['CF-Access-Client-Secret'];
-  if (clientId && clientSecret) {
-    accessHeaders['CF-Access-Client-Id'] = clientId;
-    accessHeaders['CF-Access-Client-Secret'] = clientSecret;
-  }
+  return clientId && clientSecret
+    ? { 'CF-Access-Client-Id': clientId, 'CF-Access-Client-Secret': clientSecret }
+    : {};
+}
+export async function publicChecks(origin, versionId, fetcher = fetch, access = {}) {
+  const accessHeaders = publicAccessHeaders(access);
   const call = (path) =>
     fetcher(new URL(path, origin), {
       redirect: 'manual',
@@ -700,19 +732,79 @@ export async function publicChecks(origin, versionId, fetcher = fetch, access = 
         'Public immutable asset check failed',
       );
     }
+    if (access.landingOrigin) await landingChecks(origin, versionId, fetcher, access);
   } catch (error) {
     if (error instanceof PublicCheckError) throw error;
     throw new PublicCheckError('Public request or response failed (private output withheld)');
   }
 }
-export async function maintenanceChecks(origin, versionId, fetcher = fetch, access = {}) {
-  const accessHeaders = {};
-  const clientId = access['CF-Access-Client-Id'];
-  const clientSecret = access['CF-Access-Client-Secret'];
-  if (clientId && clientSecret) {
-    accessHeaders['CF-Access-Client-Id'] = clientId;
-    accessHeaders['CF-Access-Client-Secret'] = clientSecret;
+
+async function landingChecks(origin, versionId, fetcher, access) {
+  const landing = new URL(access.landingOrigin);
+  const check = (value, message) => {
+    if (!value) throw new PublicCheckError(message);
+  };
+  check(
+    landing.origin === access.landingOrigin &&
+      landing.hostname !== new URL(origin).hostname &&
+      !landing.username &&
+      !landing.password,
+    'Public landing origin differs from the explicit distinct-host origin',
+  );
+  const headers = { ...publicAccessHeaders(access), 'Cache-Control': 'no-cache' };
+  const call = async (path, method = 'GET') => {
+    const url = new URL(path, landing);
+    check(url.origin === landing.origin, 'Public landing asset must remain same-origin');
+    const response = await fetcher(url, {
+      method,
+      redirect: 'manual',
+      signal: AbortSignal.timeout(30000),
+      headers,
+    });
+    check(!response.headers.has('Set-Cookie'), 'Public landing must not set application cookies');
+    return response;
+  };
+  const page = await call('/');
+  check(
+    page.status === 200 &&
+      page.headers.get('X-Corner-Version') === versionId &&
+      /frame-ancestors 'none'/.test(page.headers.get('Content-Security-Policy') ?? ''),
+    'Public landing page or version/security boundary failed',
+  );
+  const html = await page.text();
+  check(/href="\/open-app"/.test(html), 'Public landing lacks the fixed app link');
+  const asset = html.match(/(?:src|href)="([^" ]*\/_astro\/[^" ]+)"/)?.[1];
+  check(asset, 'Public landing lacks a built asset');
+  const built = await call(asset);
+  check(
+    built.status === 200 && /immutable/.test(built.headers.get('Cache-Control') ?? ''),
+    'Public landing immutable asset check failed',
+  );
+  for (const method of ['GET', 'HEAD']) {
+    const redirect = await call('/open-app?returnTo=https://cross-origin.invalid', method);
+    check(
+      redirect.status === 302 && redirect.headers.get('Location') === origin,
+      'Public landing app redirect must use only the configured app origin',
+    );
   }
+  for (const path of [
+    '/api/health',
+    '/api/auth/get-session',
+    '/api/rpc/workspace/get',
+    '/auth/callback',
+    '/oauth/authorize',
+    '/.well-known/oauth-authorization-server',
+    '/mcp',
+    '/sw.js',
+    '/manifest.webmanifest',
+    '/unknown',
+    '/app/index.html',
+    '/landing/index.html',
+  ])
+    check((await call(path)).status === 404, 'Public landing dynamic/private path boundary failed');
+}
+export async function maintenanceChecks(origin, versionId, fetcher = fetch, access = {}) {
+  const accessHeaders = publicAccessHeaders(access);
   const call = (path, init = {}) =>
     fetcher(new URL(path, origin), {
       redirect: 'manual',
@@ -776,6 +868,7 @@ export async function maintenanceChecks(origin, versionId, fetcher = fetch, acce
       }),
       'rpc',
     );
+    if (access.landingOrigin) await landingChecks(origin, versionId, fetcher, access);
   } catch (error) {
     if (error instanceof PublicCheckError) throw error;
     throw new PublicCheckError('Maintenance gate check failed (private output withheld)', true);
@@ -1010,7 +1103,12 @@ async function executePreservingCutover({
       );
       await deployExactVersion(maintenanceVersionId, maintenanceCommon, [originalVersionId]);
     }
-    await checkMaintenance(p.origin, maintenanceVersionId);
+    await checkMaintenance(
+      p.origin,
+      maintenanceVersionId,
+      undefined,
+      publicCheckOptions(candidate, config),
+    );
     if (currentPhase === 'maintenance-uploaded') {
       await github.record({ ...baseMaintenancePayload(), phase: 'maintenance-active' }, 'success');
       currentPhase = 'maintenance-active';
@@ -1126,7 +1224,7 @@ async function executePreservingCutover({
         [candidateVersionId],
         'Cloudflare traffic does not match approved Worker',
       );
-      await checkPublic(p.origin, candidateVersionId);
+      await checkPublic(p.origin, candidateVersionId, publicCheckOptions(candidate, config));
       publicVerified = true;
       if (currentPhase !== 'maintenance-complete') {
         await github.record(
@@ -1153,7 +1251,7 @@ async function executePreservingCutover({
           [candidateVersionId],
           'Cloudflare traffic does not match approved Worker',
         );
-        await checkPublic(p.origin, candidateVersionId);
+        await checkPublic(p.origin, candidateVersionId, publicCheckOptions(candidate, config));
         publicVerified = true;
         const completed = await recordCompletion(github, receipt);
         if (currentPhase !== 'maintenance-complete') {
@@ -1173,7 +1271,12 @@ async function executePreservingCutover({
           candidateVersionId,
           maintenanceVersionId,
         ]);
-        await checkMaintenance(p.origin, maintenanceVersionId);
+        await checkMaintenance(
+          p.origin,
+          maintenanceVersionId,
+          undefined,
+          publicCheckOptions(candidate, config),
+        );
         await github.record({ ...baseMaintenancePayload(), phase: 'cutover-validated' }, 'success');
       } catch (restoreError) {
         throw new AggregateError(
@@ -1364,6 +1467,7 @@ export async function promote({
       candidate.manifest.configurationSha256 === p.configurationSha256,
     'Approved candidate changed',
   );
+  publicCheckOptions(candidate, config);
   if (!p.rollback) {
     const serving = baseline
       ? await github.artifact(baseline.payload, join(work, 'serving-generation'))
@@ -1578,7 +1682,7 @@ export async function promote({
           deployments.deployments[0].versions[0].percentage === 100,
         'Cloudflare traffic does not match approved Worker',
       );
-      await checkPublic(p.origin, versionId);
+      await checkPublic(p.origin, versionId, publicCheckOptions(candidate, config));
       return recordCompletion(github, receipt);
     },
     'inactive',
@@ -1626,6 +1730,7 @@ export async function complete({
       candidate.manifest.configurationSha256 === p.configurationSha256,
     'Deployed artifact changed',
   );
+  publicCheckOptions(candidate, config);
   const assertLive = async () => {
     const live = await cf(`workers/scripts/${releaseTarget().workerName}/deployments`);
     need(
@@ -1640,7 +1745,7 @@ export async function complete({
     current,
     async () => {
       await assertLive();
-      await checkPublic(p.origin, p.versionId);
+      await checkPublic(p.origin, p.versionId, publicCheckOptions(candidate, config));
       assertBaseline(current.id, (await github.baseline())?.id);
       assertBaseline(schema?.id, (await github.schema())?.id);
       await assertLive();
@@ -1741,6 +1846,7 @@ export async function resume({
       candidate.manifest.configurationSha256 === p.configurationSha256,
     'Approved candidate changed',
   );
+  publicCheckOptions(candidate, config);
   const serving = await github.artifact(originalBaseline.payload, join(work, 'serving-generation'));
   assertQualificationGeneration(p.qualification, candidate, serving, true);
   const toolVersion = createRequire(new URL('../apps/server/package.json', import.meta.url))(
@@ -1820,7 +1926,7 @@ export async function resume({
         after.deployments[0].versions[0].percentage === 100,
       'Cloudflare traffic does not match the restored original Worker version',
     );
-    await checkPublic(p.origin, originalVersionId);
+    await checkPublic(p.origin, originalVersionId, publicCheckOptions(serving, config));
     assertBaseline(originalBaseline.id, (await github.baseline())?.id);
     return github.record(
       {
