@@ -290,8 +290,10 @@ try {
     page.body.includes('<div id="root"></div>'),
     'The web HTML must include the app mount point.',
   );
-  const landing = await call('/', { origin: landingOrigin });
-  assert.equal(landing.status, 200);
+  const landingUrl = captured.match(/landing:dev:[^\r\n]*\bLocal\s+(http:\/\/\S+)/)?.[1];
+  assert(landingUrl, 'Astro must advertise a local landing URL.');
+  const landing = await call(landingUrl);
+  assert.equal(landing.status, 200, 'The advertised landing URL must serve the page.');
   const open = await call('/open-app?returnTo=https://evil.test', { origin: landingOrigin });
   assert.equal(open.status, 302);
   assert.equal(open.headers.get('Location'), origin);
