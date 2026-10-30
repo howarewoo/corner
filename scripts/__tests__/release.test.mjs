@@ -1503,6 +1503,51 @@ test('dual-origin configuration requires an exact HTTPS root/app pair without ch
   assert.deepEqual(publicCheckOptions({ manifest }, config), {});
 });
 
+test('single-site artifacts cannot qualify dual-origin release plans', async () => {
+  const f = fixture({
+    configuration: JSON.stringify({
+      CORNER_ORIGIN: 'https://app.example.com',
+      CORNER_LANDING_ORIGIN: 'https://example.com',
+      NEON_AUTH_REQUIRE_EMAIL_VERIFICATION: 'true',
+    }),
+  });
+  let qualifications = 0;
+  await assert.rejects(
+    plan({
+      ...f.options,
+      runId: '1',
+      sourceSha: source,
+      qualify: async () => {
+        qualifications++;
+        return report;
+      },
+    }),
+  );
+  assert.equal(qualifications, 0);
+  assert.deepEqual(f.effects, []);
+});
+
+test('same-generation single-site to dual-origin plans remain supported', async () => {
+  const f = fixture({
+    configuration: JSON.stringify({
+      CORNER_ORIGIN: 'https://app.example.com',
+      CORNER_LANDING_ORIGIN: 'https://example.com',
+      NEON_AUTH_REQUIRE_EMAIL_VERIFICATION: 'true',
+    }),
+    qualify: async () => report,
+  });
+  const artifact = f.github.artifact;
+  f.github.artifact = async (reference) => {
+    const result = await artifact(reference);
+    if (reference.sourceSha === source)
+      result.manifest.files = { 'assets/landing/index.html': 'a'.repeat(64) };
+    return result;
+  };
+  await plan({ ...f.options, runId: '1', sourceSha: source });
+  assert.deepEqual(f.effects, ['planned']);
+  assert.equal(f.records[0].qualification.recovery, 'compatible');
+});
+
 test('dual-origin public and maintenance probes exercise fixed redirects and root isolation over HTTP', async (t) => {
   let maintenance = false;
   let defect;
@@ -1824,6 +1869,36 @@ export async function inspectDocumentCutover(pool, opId) {
   };
 }
 
+test('preserving plan and promotion require serving code that supports the requested origin topology', async () => {
+  const configuration = JSON.stringify({
+    CORNER_ORIGIN: 'https://app.example.com',
+    CORNER_LANDING_ORIGIN: 'https://example.com',
+    NEON_AUTH_REQUIRE_EMAIL_VERIFICATION: 'true',
+  });
+  const configured = validateConfiguration(configuration);
+  const f = cutoverFixture({ overrides: { configuration } });
+  f.payload.origin = configured.origin;
+  f.payload.runtimeConfigurationDigest = configured.digest;
+  const artifact = f.github.artifact;
+  f.github.artifact = async (reference) => {
+    const result = await artifact(reference);
+    if (reference.sourceSha === source)
+      result.manifest.files['assets/landing/index.html'] = 'a'.repeat(64);
+    return result;
+  };
+  await assert.rejects(
+    plan({
+      ...f.options,
+      runId: '1',
+      sourceSha: source,
+      preservingCutover: true,
+      operationId: f.operationId,
+    }),
+  );
+  await assert.rejects(promote(f.options));
+  assert.deepEqual(f.effects, []);
+});
+
 test('automatic release never invokes preserving cutover or maintenance implicitly', async () => {
   const f = cutoverFixture();
   await assert.rejects(
@@ -2106,6 +2181,42 @@ test('pre-cutover abort restores original live Worker only when DB cutover state
   assert.equal(aborted.payload.phase, 'maintenance-aborted');
   assert.equal(f.getLiveVersion(), oldVersion);
   assert.equal((await f.github.baseline()).payload.versionId, oldVersion);
+});
+
+test('pre-cutover abort cannot restore a single-site artifact into dual-origin configuration', async () => {
+  const configuration = JSON.stringify({
+    CORNER_ORIGIN: 'https://app.example.com',
+    CORNER_LANDING_ORIGIN: 'https://example.com',
+    NEON_AUTH_REQUIRE_EMAIL_VERIFICATION: 'true',
+  });
+  const configured = validateConfiguration(configuration);
+  const f = cutoverFixture({ overrides: { configuration } });
+  f.payload.origin = configured.origin;
+  f.payload.runtimeConfigurationDigest = configured.digest;
+  const artifact = f.github.artifact;
+  f.github.artifact = async (reference) => {
+    const result = await artifact(reference);
+    if (reference.sourceSha === source)
+      result.manifest.files['assets/landing/index.html'] = 'a'.repeat(64);
+    return result;
+  };
+  await f.setupMigratorFile();
+  // A retained journal admitted before the topology guard must not restore incompatible code.
+  await f.github.record({
+    ...f.payload,
+    phase: 'maintenance-active',
+    planId: '11',
+    originalVersionId: oldVersion,
+    maintenanceVersionId,
+    candidateVersionId: versionId,
+  });
+  f.setLiveVersion(maintenanceVersionId);
+  f.effects.length = 0;
+  await assert.rejects(
+    resume({ ...f.options, planId: '11', operationId: f.operationId, abort: true }),
+  );
+  assert.deepEqual(f.effects, []);
+  assert.equal(f.getLiveVersion(), maintenanceVersionId);
 });
 
 test('completion lost-response recovery converges without redeploying maintenance when recordCompletion or maintenance-complete fails partway', async () => {

@@ -235,6 +235,22 @@ test('dual-origin Preview refuses missing landing configuration before schema ef
     );
 });
 
+test('single-site Preview cannot qualify an explicit dual-origin configuration', async (t) => {
+  const f = await scenario(t);
+  const value = JSON.parse(f.options.environment.CORNER_STAGING_CONFIG_JSON);
+  value.CORNER_LANDING_ORIGIN = 'https://staging.previews.example.com';
+  f.options.environment.CORNER_STAGING_CONFIG_JSON = JSON.stringify(value);
+  let qualifications = 0;
+  const qualify = f.options.qualify;
+  f.options.qualify = async (...args) => {
+    qualifications++;
+    return qualify(...args);
+  };
+  await assert.rejects(deployPreview(f.options));
+  assert.equal(qualifications, 0);
+  assert.deepEqual(f.effects, []);
+});
+
 test('machine output for another Worker cannot become the staging serving baseline', async (t) => {
   const f = await uploadingScenario(t, 'another-worker');
   await assert.rejects(deployPreview(f.options), /Native Preview identity or stable URL differs/);
