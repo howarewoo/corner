@@ -18,7 +18,8 @@ import {
 import { json, mockHttp } from './http';
 import { LiveToday } from '../features/today/today';
 import RecipePicker from '../features/meal-planner/recipe-picker';
-import TrainingPanel from '../components/training-panel';
+import TrainingPanel, { SessionEditor } from '../components/training-panel';
+import { WorkoutSessionSchema } from '@packages/training/workouts';
 import type { WorkoutSession } from '@packages/training/types';
 import Settings from '../features/settings/settings';
 import ImportWorkspace from '../import-workspace';
@@ -766,61 +767,177 @@ const historicalSession: WorkoutSession = {
   ],
 };
 
-test('workout prefill uses the bounded historical context without recording displayed suggestions', async () => {
-  const mutate = vi.fn(async () => true);
-  mockHttp((call) => {
-    if (call.path === '/api/rpc/workspace/page')
-      return json({
-        json: {
-          resource: 'sessions',
-          revision: 7,
-          items: [plannedSession],
-          loggedPlanIds: [],
-          nextCursor: null,
-        },
-      });
-    if (call.path === '/api/rpc/workspace/prefill')
-      return json({ json: { revision: 7, sessions: [historicalSession] } });
+test('workout prefill waits for a valid custom exercise draft and resumes history suggestions', async () => {
+  const calls = mockHttp((call) => {
+    if (call.path !== '/api/rpc/workspace/prefill') return;
+    const input = call.body?.json as { session: WorkoutSession };
+    if (!WorkoutSessionSchema.safeParse(input.session).success)
+      return json({ json: { message: 'Invalid workout draft' } }, 400);
+    return json({ json: { revision: 7, sessions: [historicalSession] } });
   });
+  const draft: WorkoutSession = {
+    ...plannedSession,
+    exercises: [{ ...plannedSession.exercises[0]!, name: '' }],
+  };
   render(
     <QueryClientProvider client={runtime.queryClient}>
-      <TrainingPanel
-        settings={bootstrap(7).settings}
-        selectedDate={plannedSession.date}
-        onDateChange={() => {}}
-        mutate={mutate}
+      <SessionEditor
+        editor={{ session: draft, expectedUpdatedAt: null }}
         busy={false}
-        notify={() => {}}
+        onClose={() => {}}
+        onSave={async () => true}
+        onSaveTemplate={async () => true}
       />
     </QueryClientProvider>,
   );
   const user = userEvent.setup();
-  await user.click(await screen.findByRole('button', { name: 'Start workout' }));
+  const name = screen.getByLabelText('Exercise name', { exact: true });
+  await user.type(name, '   ');
+  expect(calls).toHaveLength(0);
+  expect(screen.queryByText('Invalid workout draft')).not.toBeInTheDocument();
+  await user.clear(name);
+  await user.type(name, 'Synthetic squat');
   await waitFor(() =>
     expect(screen.getByLabelText('Synthetic squat set 1 weight kg', { exact: true })).toHaveValue(
       45.359,
     ),
   );
+  expect(name).toHaveFocus();
   expect(screen.getByLabelText('Synthetic squat set 1 reps', { exact: true })).toHaveValue(9);
   expect(
     screen.getByLabelText('Synthetic squat set 1 completed', { exact: true }),
   ).not.toBeChecked();
-  await user.click(screen.getByRole('button', { name: 'Save workout' }));
-  expect(mutate).toHaveBeenCalledWith(
-    {
-      type: 'training.session.save',
-      data: {
-        session: expect.objectContaining({
-          id: plannedSession.id,
-          status: 'in_progress',
-          exercises: plannedSession.exercises,
-        }),
-        expectedUpdatedAt: plannedSession.updatedAt,
-      },
-    },
-    'Workout saved',
-  );
+  expect(calls.length).toBeGreaterThan(0);
+  for (const call of calls) {
+    const input = call.body?.json as { session: WorkoutSession };
+    expect(WorkoutSessionSchema.safeParse(input.session).success).toBe(true);
+  }
 });
+
+test.each([false, true])(
+  'workout prefill preserves bounded history suggestions (catalog: %s)',
+  async (catalog) => {
+    const session = structuredClone(plannedSession);
+    const previous = structuredClone(historicalSession);
+    if (catalog) {
+      session.exercises[0]!.catalogId = 'catalog-squat';
+      previous.exercises[0]!.catalogId = 'catalog-squat';
+      previous.exercises[0]!.name = 'Previous catalog display name';
+    }
+    const mutate = vi.fn(async () => true);
+    mockHttp((call) => {
+      if (call.path === '/api/rpc/workspace/page')
+        return json({
+          json: {
+            resource: 'sessions',
+            revision: 7,
+            items: [session],
+            loggedPlanIds: [],
+            nextCursor: null,
+          },
+        });
+      if (call.path === '/api/rpc/workspace/prefill')
+        return json({ json: { revision: 7, sessions: [previous] } });
+    });
+    render(
+      <QueryClientProvider client={runtime.queryClient}>
+        <TrainingPanel
+          settings={bootstrap(7).settings}
+          selectedDate={session.date}
+          onDateChange={() => {}}
+          mutate={mutate}
+          busy={false}
+          notify={() => {}}
+        />
+      </QueryClientProvider>,
+    );
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('button', { name: 'Start workout' }));
+    await waitFor(() =>
+      expect(screen.getByLabelText('Synthetic squat set 1 weight kg', { exact: true })).toHaveValue(
+        45.359,
+      ),
+    );
+    expect(screen.getByLabelText('Synthetic squat set 1 reps', { exact: true })).toHaveValue(9);
+    expect(
+      screen.getByLabelText('Synthetic squat set 1 completed', { exact: true }),
+    ).not.toBeChecked();
+    await user.click(screen.getByRole('button', { name: 'Save workout' }));
+    expect(mutate).toHaveBeenCalledWith(
+      {
+        type: 'training.session.save',
+        data: {
+          session: expect.objectContaining({
+            id: session.id,
+            status: 'in_progress',
+            exercises: session.exercises,
+          }),
+          expectedUpdatedAt: session.updatedAt,
+        },
+      },
+      'Workout saved',
+    );
+  },
+);
+
+test.each([
+  [2.8017666666666665, '2.8'],
+  [20, '20'],
+  [null, null],
+] as const)(
+  'completed duration %s is readable without changing saved timing',
+  async (duration, label) => {
+    const recorded: WorkoutSession = {
+      ...historicalSession,
+      date: plannedSession.date,
+      durationMinutes: duration,
+      ...(duration === null
+        ? {}
+        : {
+            timing: {
+              startedAt: plannedSession.createdAt,
+              endedAt: new Date(
+                Date.parse(plannedSession.createdAt) + duration * 60000,
+              ).toISOString(),
+              rests: [],
+            },
+          }),
+    };
+    const state = createInitialState();
+    state.training.sessions = [recorded];
+    const mutate = vi.fn(async (..._args: unknown[]) => true);
+    render(
+      <QueryClientProvider client={runtime.queryClient}>
+        <TrainingPanel
+          state={state}
+          settings={state.settings}
+          selectedDate={recorded.date}
+          onDateChange={() => {}}
+          mutate={mutate}
+          busy={false}
+          notify={() => {}}
+        />
+      </QueryClientProvider>,
+    );
+    expect(
+      await screen.findByText(label === null ? 'Time not logged' : `${label} min logged`),
+    ).toBeVisible();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('tab', { name: 'Progress' }));
+    const row = screen.getByRole('button', { name: /Synthetic strength session/ });
+    expect(row).toHaveTextContent(label === null ? 'Time not logged' : `${label} min`);
+    if (duration !== null && duration !== Number(label))
+      expect(row).not.toHaveTextContent(String(duration));
+    await user.click(row);
+    expect(screen.getByLabelText('Actual minutes', { exact: true })).toHaveValue(duration);
+    await user.click(screen.getByRole('button', { name: 'Save workout' }));
+    await waitFor(() => expect(mutate).toHaveBeenCalledTimes(1));
+    expect(mutate.mock.calls[0]?.[0]).toMatchObject({
+      type: 'training.session.save',
+      data: { session: { durationMinutes: duration } },
+    });
+  },
+);
 
 test('an actual-only completed workout shows no invented plan and saves its actuals with plan fields still unknown', async () => {
   const recorded: WorkoutSession = {
@@ -863,20 +980,18 @@ test('an actual-only completed workout shows no invented plan and saves its actu
   await user.type(screen.getByLabelText('Session notes'), 'Recorded elsewhere');
   await user.click(screen.getByRole('button', { name: 'Save workout' }));
   await waitFor(() => expect(mutate).toHaveBeenCalledTimes(1));
-  expect(mutate.mock.calls[0]?.[0]).toEqual(
-    {
-      type: 'training.session.save',
-      data: {
-        expectedUpdatedAt: recorded.updatedAt,
-        session: expect.objectContaining({
-          status: 'completed',
-          plannedMinutes: null,
-          notes: 'Recorded elsewhere',
-          exercises: recorded.exercises,
-        }),
-      },
+  expect(mutate.mock.calls[0]?.[0]).toEqual({
+    type: 'training.session.save',
+    data: {
+      expectedUpdatedAt: recorded.updatedAt,
+      session: expect.objectContaining({
+        status: 'completed',
+        plannedMinutes: null,
+        notes: 'Recorded elsewhere',
+        exercises: recorded.exercises,
+      }),
     },
-  );
+  });
 });
 
 test('Complete validates native inputs against completed intent while ordinary Save still requires a plan', async () => {

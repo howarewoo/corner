@@ -18,6 +18,8 @@ export async function readResponse(response: Response): Promise<any> {
 }
 
 export const neonTestConfig = {
+  landingOrigin: 'http://localhost:3003',
+  docsOrigin: 'http://localhost:3004',
   databaseUrl: 'postgresql://unused.invalid/test',
   neonAuthBaseUrl: 'https://managed-auth.example.test/neondb/auth',
   neonAuthRequireEmailVerification: false,

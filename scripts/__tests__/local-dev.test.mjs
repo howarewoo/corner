@@ -188,7 +188,12 @@ test(
       }
       response.setHeader('Content-Type', 'application/json');
       response.end(
-        JSON.stringify({ instance: reportedInstance, origin: 'http://127.0.0.1:45400' }),
+        JSON.stringify({
+          instance: reportedInstance,
+          origin: 'http://127.0.0.1:45400',
+          landingOrigin: 'http://localhost:45403',
+          docsOrigin: 'http://localhost:45404',
+        }),
       );
     });
     try {

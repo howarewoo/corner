@@ -1,0 +1,43 @@
+---
+title: Understand connection permissions
+description: Reads, edits, deletions, imports, and configuration access are separate choices.
+---
+
+## Choose the smallest useful access
+
+The consent screen shows the permissions requested by the client. A connection has only the selected permissions; granting one category does not grant all other categories.
+
+| Permission family                                             | What it allows                                                                                                                      |
+| ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| Read workout, routine, recipe, meal-plan, or food-log records | Read records in the selected category. It does not grant edits or deletion.                                                         |
+| Read check-ins, scheduled dates, or grocery checks            | Read each separately granted tracking category. These are not implied by other reads.                                               |
+| Read settings                                                 | Read the selected workspace's profile, goals, targets, time zone, preferences, and weekly schedule. It does not edit configuration. |
+| Create/edit recipes or food logs                              | Make those changes directly. Existing-record read and delete permissions remain separate.                                           |
+| Delete recipes or food logs                                   | Delete those records, independently of create/edit consent.                                                                         |
+| Create/edit routines or plan workouts                         | Change routines or unstarted plans. Planning does not grant workout-history correction.                                             |
+| Correct workout history                                       | Correct existing recorded history without creating history or changing its lifecycle status.                                        |
+| Import tracking records                                       | Add supported native records in each specifically granted category without overwriting existing ones.                               |
+
+No permission grants another person's workspace. Connection permissions do not expose account passwords or client credentials, and there is no client permission for automatic workout start/completion, plan/history deletion, or configuration writes in the current product.
+
+## Read results are records, not advice
+
+A permitted client can read complete stored records within response limits and follow pages over a date range. A large analysis may need multiple requests. Corner rejects stale mixed-revision reads rather than silently presenting them as a consistent snapshot.
+
+A client's interpretation remains separate from your records. Check dates, servings, workout units, and planned versus recorded values before acting on its conclusions.
+
+## Understand import permissions
+
+Imports are independently consented for workouts, routines, recipes, dated meal plans, food logs, check-ins, scheduled dates, and grocery checks. They do not imply read access, permission to correct or delete existing records, or permission to edit settings.
+
+Supported native imports add to an existing workspace without overwriting records. Stable source identities prevent unchanged previously imported records from being duplicated or resurrected after you manually edit or delete them. Changed source content or occupied destination identities may be refused; a client should not silently replace your manual changes.
+
+An active meal plan needs a recipe already in your workspace. Historical food logs retain their recorded nutrition and serving snapshots. Imports must preserve meaningful units, unknown values, and actual facts rather than inventing missing workout targets.
+
+The browser's [workspace JSON import](/your-data/import-workspace) remains a separate empty-workspace, preview-and-confirm flow.
+
+## Review effects and revoke when needed
+
+Read the consent screen before approving. Review changed records in Corner after a client writes or imports data. If access is no longer wanted, revoke it in **Settings → Connected clients**; signing out alone is not enough.
+
+A refused or conflicting operation should be reviewed against the current workspace before the client resubmits. Do not ask a client to bypass a conflict by overwriting records or inventing values.

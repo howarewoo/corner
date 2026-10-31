@@ -1,4 +1,4 @@
-{$CORNER_DOMAIN} {
+{$CORNER_DOMAIN}, app.{$CORNER_DOMAIN}, docs.{$CORNER_DOMAIN} {
   header Strict-Transport-Security "max-age=31536000"
   reverse_proxy corner:3000 {
     header_up -X-Corner-Client-IP

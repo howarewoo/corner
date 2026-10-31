@@ -100,7 +100,23 @@ Storybook 10.6.3 supplies the catalog's native manager, replacing the custom Rea
 
 Catalog submission examples compose pinned TanStack Form `useForm`, direct `form.Field` bindings, and focused `form.Subscribe` with existing shared controls. Editable submission values belong to the form, including Select and Questionnaire choices; reset/cancel resets those values. Native browser constraints, labels, and existing feedback remain intact. UI wrappers remain library-independent; standalone control-state examples do not require forms. This describes catalog examples, not a completed product-wide migration.
 
-The shared utility entrypoint explicitly registers both app source trees with Tailwind. Product utility generation must not depend on a matching class appearing in a catalog specimen or on the development server's working directory.
+The shared utility entrypoint explicitly registers the product, catalog, and landing source trees with Tailwind. Product utility generation must not depend on a matching class appearing in a catalog specimen or on the development server's working directory.
+
+## Static landing page
+
+[`apps/landing/src/pages/index.astro`](apps/landing/src/pages/index.astro) owns the public-facing composition, not account entry or the product shell. It inherits the light forest/sage tokens, system font, rounded shared controls, and restrained shell shadow. Its larger editorial headings belong to this landing surface; they do not replace the product's type scale.
+
+The page moves from a synthetic Today preview to planned-versus-recorded workout results, meal planning, progress, a plan–record–review sequence, and a closing action. Static examples are visibly labeled illustrative and use no retained records. The shared Button renders **Open Corner** as an actual `/open-app` anchor with link semantics; the workout example uses the shared Badge and Table. Shared CSS/tokens are imported directly, without app-local primitive implementations or client hydration.
+
+[`styles.css`](apps/landing/src/styles.css) owns only landing layout and domain-preview presentation. Wide screens pair copy with previews; smaller screens stack them, keep section navigation visible, and retain native document scrolling and browser zoom. A skip link, visible focus, semantic sections, table headers, synthetic-data captions, and reduced-motion rules remain present without JavaScript. Local Chromium inspection covered 1440px desktop, 390px phone, 320px reflow, keyboard navigation, native 200% page zoom, and JavaScript-disabled links. This is not real-iPhone validation or an accessibility certification.
+
+## Product-user guide
+
+[`apps/docs`](apps/docs/) uses the official Fumadocs Astro/React shell for sidebar, mobile navigation, table of contents and search, with Corner's shared light tokens and reviewed MDX content. Preserve the admitted reader layout; hosting integration does not introduce another renderer, theme controller or navigation framework.
+
+Landing's **Guide** is a native `/open-docs` link. The guide's **Open Corner** uses the existing shared Button as a native `/open-app` anchor inside Fumadocs' custom-link slot, including its mobile sidebar; the no-JavaScript section menu also exposes a native app link. Article navigation remains full-document links. Only the host resolves these fixed cross-origin destinations, never content-embedded environment URLs.
+
+Astro's generated script hashes remain authoritative. The docs-only style inline allowance is required for native Fumadocs grid and Radix scroll-lock behavior, not permission for inline/evaluated scripts or a weaker app/landing policy. Desktop/phone browser evidence belongs in the dated changelog; emulated WebKit or local Chromium does not establish real-iPhone usability or accessibility certification.
 
 ## Do's and Don'ts
 

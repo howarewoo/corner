@@ -1,0 +1,35 @@
+---
+title: Optional MCP connections
+description: Let a separately chosen client use only the Corner permissions you explicitly approve.
+---
+
+You do not need an MCP client to use Corner's manual tools. A connection is optional delegated access for a compatible external client; it is not an in-app model connection or a way for Corner to read your chats or memories.
+
+## Start from a client you trust
+
+Use the Corner application address and connection instructions supplied for your instance. A compatible client uses Corner's MCP endpoint at the application's **/mcp** path. This public guide is not that endpoint.
+
+Client support and deployment readiness can vary. This guide does not establish hosted MCP qualification or promise that a particular cloud client can connect. If your instance or client does not support the flow, keep using the manual product and ask its operator for the supported setup.
+
+## Review consent carefully
+
+1. Start the connection in the external client.
+2. Sign in to Corner when asked.
+3. Check the client name, the actual Corner account, and every requested permission.
+4. Select only the permissions you intend to grant, then approve or decline.
+
+If you are signed into the wrong account, stop and restart the connection with the right account. Consent belongs to that signed-in session and client request, not to whichever account you meant to use.
+
+Granted create, edit, delete, or import permissions let the client make the permitted changes **without asking for approval inside Corner each time**. Approve only clients you trust with those changes. See [what permissions mean](/connections/permissions).
+
+## End ongoing access
+
+Open **Settings → Connected clients** to review each connection and its permissions. Choose **Revoke access** for the client you want to disconnect and wait for confirmation.
+
+Browser sign-out does **not** revoke the connection. A client can continue within its granted permissions until its grant expires or you revoke it. Grants and refresh access have a maximum lifetime of 30 days; access tokens last five minutes. Revocation denies subsequent requests, but an operation already authenticated may finish.
+
+Revocation does not undo edits already made or retrieve copies the client already received. Reconnecting creates a new grant and requires a fresh consent decision.
+
+## What Corner does not receive
+
+Corner does not receive the external client's conversations, memories, or model credentials through the connection. It receives actual MCP tool arguments. Do not place secrets in a tool request or assume an external client's own handling of your records is controlled by Corner.

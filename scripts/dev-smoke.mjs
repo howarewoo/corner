@@ -4,16 +4,13 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { access, mkdtemp, rm } from 'node:fs/promises';
 import { request as httpRequest } from 'node:http';
-import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
-import { startSmokeServices } from './smoke-services.mjs';
+import { findSmokePorts, startSmokeServices } from './smoke-services.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const origin = 'http://127.0.0.1:43139';
-const apiPort = 43140;
 const password = 'synthetic-development-smoke-password-not-used-elsewhere';
 const compilerTasks = [
   '@packages/nutrition',
@@ -21,7 +18,7 @@ const compilerTasks = [
   '@packages/workspace',
   '@packages/api',
 ];
-const tasks = [...compilerTasks, 'server', 'web'];
+const tasks = [...compilerTasks, 'server', 'web', 'landing', 'docs'];
 const seenTasks = new Set();
 const compiledTasks = new Set();
 const interrupted = new AbortController();
@@ -48,22 +45,10 @@ for (const name of ['.env', '.env.local', '.env.development', '.env.development.
       'Run the development smoke check in a clean checkout without local Node or Vite environment files.',
     );
 }
-await Promise.all(
-  [43139, apiPort].map(
-    (port) =>
-      new Promise((resolve, reject) => {
-        const probe = createServer((socket) => socket.destroy());
-        probe.once('error', (error) =>
-          reject(
-            new Error(
-              `Development smoke port ${port} is unavailable (${error.code ?? 'listen failed'}).`,
-            ),
-          ),
-        );
-        probe.listen(port, '127.0.0.1', () => probe.close(resolve));
-      }),
-  ),
-);
+const [appPort, apiPort, landingPort, docsPort] = await findSmokePorts(4);
+const origin = `http://127.0.0.1:${appPort}`;
+const landingOrigin = `http://localhost:${landingPort}`;
+const docsOrigin = `http://localhost:${docsPort}`;
 
 const temporary = await mkdtemp(join(tmpdir(), 'corner-development-smoke-'));
 const testDatabaseUrl = process.env.CORNER_TEST_DATABASE_URL;
@@ -84,6 +69,8 @@ Object.assign(environment, {
   DO_NOT_TRACK: '1',
   CORNER_DEPLOYMENT: 'local',
   CORNER_ORIGIN: origin,
+  CORNER_LANDING_ORIGIN: landingOrigin,
+  CORNER_DOCS_ORIGIN: docsOrigin,
   CORNER_DEV_API_PORT: String(apiPort),
   CORNER_DATA_DIR: join(temporary, 'data'),
   DATABASE_URL: backend.databaseUrl,
@@ -108,7 +95,7 @@ function capture(chunk) {
 function call(path, options = {}) {
   return new Promise((resolve, reject) => {
     const request = httpRequest(
-      new URL(path, origin),
+      new URL(path, options.origin ?? origin),
       {
         method: options.method ?? 'GET',
         agent: false,
@@ -176,10 +163,18 @@ async function ready() {
       compiledTasks.size === compilerTasks.length
     ) {
       try {
-        const response = await call('/api/health', {
-          timeout: Math.max(1, Math.min(1000, deadline - Date.now())),
-        });
-        if (response.status === 200 && json(response, 'Development health').ok === true) {
+        const timeout = Math.max(1, Math.min(1000, deadline - Date.now()));
+        const [response, landing, docs] = await Promise.all([
+          call('/api/health', { timeout }),
+          call('/', { origin: landingOrigin, timeout }),
+          call('/nutrition/food-log', { origin: docsOrigin, timeout }),
+        ]);
+        if (
+          response.status === 200 &&
+          json(response, 'Development health').ok === true &&
+          landing.status === 200 &&
+          docs.status === 200
+        ) {
           healthySince ||= Date.now();
           if (Date.now() - healthySince >= 1000) return;
         } else healthySince = 0;
@@ -282,6 +277,51 @@ try {
     page.body.includes('<div id="root"></div>'),
     'The web HTML must include the app mount point.',
   );
+  const landingUrl = captured.match(/landing:dev:[^\r\n]*\bLocal\s+(http:\/\/\S+)/)?.[1];
+  assert(landingUrl, 'Astro must advertise a local landing URL.');
+  const landing = await call(landingUrl);
+  assert.equal(landing.status, 200, 'The advertised landing URL must serve the page.');
+  const open = await call('/open-app?returnTo=https://evil.test', { origin: landingOrigin });
+  assert.equal(open.status, 302);
+  assert.equal(open.headers.get('Location'), origin);
+  assert.equal((await call('/api/health', { origin: landingOrigin })).status, 404);
+  assert.equal((await call('/sw.js', { origin: landingOrigin })).status, 404);
+  assert.equal(
+    (await call(filesystemPath('apps/web/src/main.tsx'), { origin: landingOrigin })).status,
+    403,
+    'Landing development must not expose the product source through Vite.',
+  );
+  const docsUrl = captured.match(/docs:dev:[^\r\n]*\bLocal\s+(http:\/\/\S+)/)?.[1];
+  assert(docsUrl, 'Astro must advertise the owned guide URL.');
+  assert.equal(new URL(docsUrl).origin, docsOrigin);
+  assert.equal((await call('/nutrition/food-log', { origin: docsUrl })).status, 200);
+  const guideHop = await call('/open-docs?returnTo=https://evil.test', { origin: landingOrigin });
+  assert.equal(guideHop.status, 302);
+  assert.equal(guideHop.headers.get('Location'), docsOrigin);
+  const appHop = await call('/open-app?returnTo=https://evil.test', { origin: docsOrigin });
+  assert.equal(appHop.status, 302);
+  assert.equal(appHop.headers.get('Location'), origin);
+  const search = await call('/search-index.json', { origin: docsOrigin });
+  assert.equal(search.status, 200);
+  assert.match(search.headers.get('Content-Type'), /application\/json/);
+  JSON.parse(search.body);
+  for (const path of [
+    '/api/search',
+    '/api/health',
+    '/api/auth/get-session',
+    '/mcp',
+    '/sw.js',
+    '/workouts',
+    '/unknown',
+  ]) {
+    assert.equal((await call(path, { origin: docsOrigin })).status, 404, path);
+  }
+  assert.equal(
+    (await call(filesystemPath('apps/web/src/main.tsx'), { origin: docsOrigin })).status,
+    403,
+    'Docs development must not expose the product source through Vite.',
+  );
+  assert.equal((await call('/', { headers: { Host: `localhost:${appPort}` } })).status, 400);
   const entry = await call('/src/main.tsx');
   assert.equal(entry.status, 200, 'Vite must transform the web entry module.');
   assert.ok(

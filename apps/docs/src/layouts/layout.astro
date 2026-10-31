@@ -1,0 +1,42 @@
+---
+import '../styles.css';
+
+interface Props {
+  title: string;
+  description?: string;
+}
+
+const { title, description } = Astro.props;
+---
+
+<!doctype html>
+<html lang="en" data-corner-theme="light">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content={description} />
+    <meta name="referrer" content="no-referrer" />
+    <title>{title} · Corner Guide</title>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <noscript>
+      <nav class="no-script-navigation" aria-label="Guide sections">
+        <details>
+          <summary>Browse the Corner guide</summary>
+          <a href="/">Guide home</a>
+          <a href="/getting-started">Getting started & accounts</a>
+          <a href="/nutrition">Nutrition</a>
+          <a href="/training">Training</a>
+          <a href="/profile-progress">Profile & progress</a>
+          <a href="/your-data">Your data</a>
+          <a href="/connections">Optional MCP connections</a>
+          <a href="/mobile-troubleshooting">Mobile & troubleshooting</a>
+          <a href="/open-app">Open Corner</a>
+        </details>
+        <p>Search needs JavaScript. Every article and link works without it.</p>
+      </nav>
+    </noscript>
+    <slot />
+  </body>
+</html>

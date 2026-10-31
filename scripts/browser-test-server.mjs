@@ -34,6 +34,8 @@ try {
     NODE_ENV: 'production',
     CORNER_DEPLOYMENT: 'local',
     CORNER_ORIGIN: origin,
+    CORNER_LANDING_ORIGIN: 'http://localhost:43141',
+    CORNER_DOCS_ORIGIN: 'http://docs.localhost:43141',
     CORNER_HOST: '127.0.0.1',
     CORNER_PORT: '43141',
     CORNER_DATA_DIR: temporary,

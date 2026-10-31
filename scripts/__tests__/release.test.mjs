@@ -4,6 +4,8 @@ import { mkdtemp, rm, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { createServer } from 'node:http';
+import { createRequire } from 'node:module';
 import {
   verifyRun,
   validateConfiguration,
@@ -18,6 +20,7 @@ import {
   complete,
   deploy,
   publicChecks,
+  publicCheckOptions,
   verifyPublic,
   PublicCheckError,
   maintenanceChecks,
@@ -522,6 +525,37 @@ test('successful current main CI deploys backend changes without a second human 
   f.effects.length = 0;
   await deploy(options);
   assert.deepEqual(f.effects, ['public']);
+});
+
+test('same-source automatic reruns reject a legacy serving artifact under docs configuration before release effects', async () => {
+  const configuration = JSON.stringify({
+    CORNER_ORIGIN: 'https://app.example.com',
+    CORNER_LANDING_ORIGIN: 'https://example.com',
+    CORNER_DOCS_ORIGIN: 'https://docs.example.com',
+    NEON_AUTH_REQUIRE_EMAIL_VERIFICATION: 'true',
+  });
+  const configured = validateConfiguration(configuration);
+  const f = fixture({ configuration });
+  f.github.baseline = async () => ({
+    id: 10,
+    payload: {
+      ...receipt,
+      sourceSha: source,
+      candidateDigest,
+      origin: configured.origin,
+      runtimeConfigurationDigest: configured.digest,
+      versionId,
+    },
+  });
+  const artifact = f.github.artifact;
+  f.github.artifact = async (...args) => {
+    const candidate = await artifact(...args);
+    candidate.manifest.files = { 'assets/landing/index.html': 'f'.repeat(64) };
+    return candidate;
+  };
+  await assert.rejects(deploy({ ...f.options, runId: '1', sourceSha: source }));
+  assert.deepEqual(f.effects, []);
+  assert.deepEqual(f.records, []);
 });
 
 test('automatic production independently downloads and verifies real archives for planning and promotion', async (t) => {
@@ -1492,6 +1526,480 @@ test('production permits only the exact stable corner Worker hostname and binds 
   }
 });
 
+test('dual-origin configuration requires an exact HTTPS root/app pair without changing historical digests', async () => {
+  const settings = {
+    CORNER_ORIGIN: 'https://app.example.com',
+    CORNER_LANDING_ORIGIN: 'https://example.com',
+    NEON_AUTH_REQUIRE_EMAIL_VERIFICATION: 'true',
+  };
+  const configured = validateConfiguration(JSON.stringify(settings));
+  assert.equal(configured.landingOrigin, settings.CORNER_LANDING_ORIGIN);
+  for (const landing of [
+    'https://app.example.com',
+    'http://example.com',
+    'https://example.com:444',
+    'https://other.example.com',
+    'https://example.com/',
+    'https://user@example.com',
+    'https://corner.account.workers.dev',
+  ])
+    assert.throws(() =>
+      validateConfiguration(JSON.stringify({ ...settings, CORNER_LANDING_ORIGIN: landing })),
+    );
+  const f = fixture();
+  const artifact = f.github.artifact;
+  f.github.artifact = async (...args) => {
+    const candidate = await artifact(...args);
+    return {
+      ...candidate,
+      manifest: { ...candidate.manifest, files: { 'assets/landing/index.html': 'a'.repeat(64) } },
+    };
+  };
+  await assert.rejects(promote(f.options), /requires CORNER_LANDING_ORIGIN/);
+  assert.deepEqual(f.effects, []);
+  assert.deepEqual(publicCheckOptions({ manifest }, config), {});
+});
+
+test('single-site artifacts cannot qualify dual-origin release plans', async () => {
+  const f = fixture({
+    configuration: JSON.stringify({
+      CORNER_ORIGIN: 'https://app.example.com',
+      CORNER_LANDING_ORIGIN: 'https://example.com',
+      NEON_AUTH_REQUIRE_EMAIL_VERIFICATION: 'true',
+    }),
+  });
+  let qualifications = 0;
+  await assert.rejects(
+    plan({
+      ...f.options,
+      runId: '1',
+      sourceSha: source,
+      qualify: async () => {
+        qualifications++;
+        return report;
+      },
+    }),
+  );
+  assert.equal(qualifications, 0);
+  assert.deepEqual(f.effects, []);
+});
+
+test('docs inventories and explicit configuration must agree before qualification or promotion effects', async () => {
+  const settings = {
+    CORNER_ORIGIN: 'https://app.example.com',
+    CORNER_LANDING_ORIGIN: 'https://example.com',
+    CORNER_DOCS_ORIGIN: 'https://docs.example.com',
+    NEON_AUTH_REQUIRE_EMAIL_VERIFICATION: 'true',
+  };
+  for (const invalid of [
+    'http://docs.example.com',
+    'https://docs.example.com/',
+    'https://app.example.com',
+    'https://example.com',
+    'https://guide.example.com',
+    'https://user@docs.example.com',
+    'https://docs.example.com:444',
+  ])
+    assert.throws(() =>
+      validateConfiguration(JSON.stringify({ ...settings, CORNER_DOCS_ORIGIN: invalid })),
+    );
+  for (const [configuredDocs, artifactDocs] of [
+    [true, false],
+    [false, true],
+  ]) {
+    const value = { ...settings };
+    if (!configuredDocs) delete value.CORNER_DOCS_ORIGIN;
+    const f = fixture({ configuration: JSON.stringify(value) });
+    const artifact = f.github.artifact;
+    f.github.artifact = async (...args) => {
+      const candidate = await artifact(...args);
+      candidate.manifest.files = {
+        'assets/landing/index.html': 'f'.repeat(64),
+        ...(artifactDocs
+          ? {
+              'assets/docs/index.html': 'f'.repeat(64),
+              'assets/docs/search-index.json': 'f'.repeat(64),
+            }
+          : {}),
+      };
+      return candidate;
+    };
+    let qualified = false;
+    await assert.rejects(
+      plan({
+        ...f.options,
+        runId: '1',
+        sourceSha: source,
+        qualify: async () => {
+          qualified = true;
+          return report;
+        },
+      }),
+    );
+    assert.equal(qualified, false);
+    assert.deepEqual(f.effects, []);
+  }
+});
+
+test('same-generation single-site to dual-origin plans remain supported', async () => {
+  const f = fixture({
+    configuration: JSON.stringify({
+      CORNER_ORIGIN: 'https://app.example.com',
+      CORNER_LANDING_ORIGIN: 'https://example.com',
+      NEON_AUTH_REQUIRE_EMAIL_VERIFICATION: 'true',
+    }),
+    qualify: async () => report,
+  });
+  const artifact = f.github.artifact;
+  f.github.artifact = async (reference) => {
+    const result = await artifact(reference);
+    if (reference.sourceSha === source)
+      result.manifest.files = { 'assets/landing/index.html': 'a'.repeat(64) };
+    return result;
+  };
+  await plan({ ...f.options, runId: '1', sourceSha: source });
+  assert.deepEqual(f.effects, ['planned']);
+  assert.equal(f.records[0].qualification.recovery, 'compatible');
+});
+
+test('multi-origin public and maintenance probes reject missing docs, broken search, policy and private-path leaks over HTTP', async (t) => {
+  const { createSearchAPI } = await import(
+    createRequire(new URL('../../apps/docs/package.json', import.meta.url)).resolve(
+      'fumadocs-core/search/server',
+    )
+  );
+  const nativeSearchIndex = await (
+    await createSearchAPI('advanced', {
+      indexes: [
+        {
+          id: '/',
+          title: 'Guide',
+          url: '/',
+          structuredData: {
+            headings: [],
+            contents: [{ content: 'Record servings in the food log' }],
+          },
+        },
+      ],
+    }).staticGET()
+  ).json();
+  let maintenance = false;
+  let defect;
+  let appOrigin;
+  let landingVersion = versionId;
+  let landingCookies = [];
+  const independentLandingVersion = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+  let docsVersion = versionId;
+  let docsCookies = [];
+  const independentDocsVersion = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+  let docsPort;
+  const requests = [];
+  const handle = (request, response) => {
+    const url = new URL(request.url, `http://${request.headers.host}`);
+    requests.push({ origin: url.origin, path: url.pathname, headers: request.headers });
+    response.setHeader('X-Corner-Version', versionId);
+    response.setHeader('Content-Security-Policy', "frame-ancestors 'none'");
+    response.setHeader('Cache-Control', 'no-store');
+    const send = (status, body = '') => {
+      response.statusCode = status;
+      response.end(typeof body === 'string' ? body : JSON.stringify(body));
+    };
+    if (url.port === String(docsPort)) {
+      response.setHeader('X-Corner-Version', docsVersion);
+      if (docsCookies.length) response.setHeader('Set-Cookie', docsCookies);
+      if (defect === 'docs-missing') return send(404);
+      if (['/', '/nutrition/food-log'].includes(url.pathname)) {
+        if (defect === 'docs-page-redirect') {
+          response.setHeader('Location', 'https://external.invalid');
+          return send(302);
+        }
+        if (defect === 'docs-http-csp')
+          response.setHeader(
+            'Content-Security-Policy',
+            "default-src 'self'; frame-ancestors 'none'",
+          );
+        const scripts = defect === 'docs-inline' ? "'unsafe-inline'" : "'sha256-YQ=='";
+        return send(
+          200,
+          `<meta http-equiv="content-security-policy" content="script-src 'self' ${scripts}; style-src 'self' 'unsafe-inline'"><a href="/open-app">Open</a><link href="/_astro/docs.css">`,
+        );
+      }
+      if (url.pathname === '/_astro/docs.css') {
+        response.setHeader('Cache-Control', 'public, immutable');
+        response.setHeader('X-Content-Type-Options', 'nosniff');
+        return send(200, 'body{}');
+      }
+      if (url.pathname === '/search-index.json') {
+        response.setHeader('Content-Type', 'application/json');
+        if (defect === 'docs-search-json') return send(200, '{"docs":');
+        const brokenSearch = {
+          'docs-search-null': null,
+          'docs-search-array': [],
+          'docs-search-empty': {},
+          'docs-search-no-docs': { ...nativeSearchIndex, docs: undefined },
+          'docs-search-no-index': { ...nativeSearchIndex, index: undefined },
+        };
+        return send(
+          defect === 'docs-search' ? 404 : 200,
+          Object.hasOwn(brokenSearch, defect) ? brokenSearch[defect] : nativeSearchIndex,
+        );
+      }
+      if (url.pathname === '/open-app') {
+        response.setHeader(
+          'Location',
+          defect === 'docs-redirect' ? 'https://external.invalid' : appOrigin,
+        );
+        return send(302);
+      }
+      return send(defect === 'docs-api' && url.pathname === '/api/health' ? 200 : 404);
+    }
+    if (url.hostname === 'localhost') {
+      response.setHeader('X-Corner-Version', landingVersion);
+      if (landingCookies.length) response.setHeader('Set-Cookie', landingCookies);
+      if (defect === 'cookie') response.setHeader('Set-Cookie', 'session=unexpected');
+      if (url.pathname === '/') {
+        if (defect === 'unavailable') return send(503);
+        if (defect === 'page-redirect') {
+          response.setHeader('Location', 'https://external.invalid');
+          return send(302);
+        }
+        if (defect === 'csp') response.removeHeader('Content-Security-Policy');
+        const asset =
+          defect === 'external-asset'
+            ? 'https://external.invalid/_astro/landing.css'
+            : '/_astro/landing.css';
+        return send(
+          200,
+          `<a href="/open-app">Open</a><a href="/open-docs">Guide</a><link href="${asset}" rel="stylesheet">`,
+        );
+      }
+      if (url.pathname === '/_astro/landing.css') {
+        response.setHeader('Cache-Control', 'public, immutable');
+        return send(200, 'body{}');
+      }
+      if (url.pathname === '/open-app') {
+        response.setHeader(
+          'Location',
+          defect === 'redirect' ? 'https://external.invalid' : appOrigin,
+        );
+        return send(302);
+      }
+      if (url.pathname === '/open-docs') {
+        response.setHeader('Location', `http://localhost:${docsPort}`);
+        return send(302);
+      }
+      return send(defect === 'root-api' && url.pathname === '/api/health' ? 200 : 404);
+    }
+    if (maintenance) {
+      response.setHeader('Retry-After', '60');
+      return send(
+        503,
+        url.pathname.startsWith('/api/rpc/')
+          ? {
+              json: {
+                defined: true,
+                code: 'SERVICE_UNAVAILABLE',
+                status: 503,
+                data: { code: 'MAINTENANCE_ACTIVE' },
+              },
+            }
+          : { ok: false, maintenance: true, code: 'MAINTENANCE_ACTIVE' },
+      );
+    }
+    if (url.pathname === '/api/health') return send(200, { ok: true });
+    if (url.pathname === '/api/auth/sign-up/email')
+      return send(403, { code: 'ORIGIN_NOT_ALLOWED' });
+    if (url.pathname === '/api/rpc/workspace/get')
+      return send(401, { json: { defined: true, code: 'SIGN_IN_REQUIRED', status: 401 } });
+    if (url.pathname === '/assets/app.js') {
+      response.setHeader('Cache-Control', 'public, immutable');
+      return send(200, 'export {};');
+    }
+    if (['/', '/account/reset-password'].includes(url.pathname))
+      return send(200, '<script src="/assets/app.js"></script>');
+    return send(404);
+  };
+  const server = createServer(handle);
+  const docsServer = createServer(handle);
+  await new Promise((resolve) => docsServer.listen(0, '127.0.0.1', resolve));
+  docsPort = docsServer.address().port;
+  t.after(() => new Promise((resolve) => docsServer.close(resolve)));
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const { port } = server.address();
+  appOrigin = `http://127.0.0.1:${port}`;
+  const options = {
+    landingOrigin: `http://localhost:${port}`,
+    'CF-Access-Client-Id': 'synthetic-id',
+    'CF-Access-Client-Secret': 'synthetic-secret',
+  };
+  await publicChecks(appOrigin, versionId, fetch, options);
+  options.docsOrigin = `http://localhost:${docsPort}`;
+  await publicChecks(appOrigin, versionId, fetch, options);
+  for (const request of requests) {
+    assert([appOrigin, options.landingOrigin, options.docsOrigin].includes(request.origin));
+    assert.equal(request.headers['cf-access-client-id'], options['CF-Access-Client-Id']);
+    assert.equal(request.headers['cf-access-client-secret'], options['CF-Access-Client-Secret']);
+  }
+  const accessCookie = 'CF_Authorization=synthetic-access-session; Path=/; Secure; HttpOnly';
+  landingCookies = [accessCookie];
+  await publicChecks(appOrigin, versionId, fetch, options);
+  const cookieRejected = (error) => error instanceof PublicCheckError && !error.retryable;
+  for (const credentials of [
+    {},
+    { 'CF-Access-Client-Id': options['CF-Access-Client-Id'] },
+    { 'CF-Access-Client-Secret': options['CF-Access-Client-Secret'] },
+  ])
+    await assert.rejects(
+      publicChecks(appOrigin, versionId, fetch, {
+        landingOrigin: options.landingOrigin,
+        ...credentials,
+      }),
+      cookieRejected,
+    );
+  landingCookies = [accessCookie, 'session=unexpected; Path=/; Secure; HttpOnly'];
+  await assert.rejects(publicChecks(appOrigin, versionId, fetch, options), cookieRejected);
+  landingCookies = [];
+  const checkDocsCookies = async (probe) => {
+    docsCookies = [accessCookie];
+    await probe(appOrigin, versionId, fetch, options);
+    const withoutCredentials = { ...options };
+    delete withoutCredentials['CF-Access-Client-Id'];
+    delete withoutCredentials['CF-Access-Client-Secret'];
+    const rejectCookies = (access) =>
+      assert.rejects(
+        verifyPublic(appOrigin, versionId, access, probe, async () => {
+          assert.fail('Public docs cookie failures must not retry');
+        }),
+        cookieRejected,
+      );
+    for (const credentials of [
+      {},
+      { 'CF-Access-Client-Id': options['CF-Access-Client-Id'] },
+      { 'CF-Access-Client-Secret': options['CF-Access-Client-Secret'] },
+    ])
+      await rejectCookies({ ...withoutCredentials, ...credentials });
+    for (const cookies of [
+      ['session=unexpected; Path=/; Secure; HttpOnly'],
+      [accessCookie, 'session=unexpected; Path=/; Secure; HttpOnly'],
+      ['CF_Authorization_extra=unexpected; Path=/; Secure; HttpOnly'],
+    ]) {
+      docsCookies = cookies;
+      await rejectCookies(options);
+    }
+    docsCookies = [];
+  };
+  await checkDocsCookies(publicChecks);
+  landingVersion = independentLandingVersion;
+  const retryableIdentity = (error) => error instanceof PublicCheckError && error.retryable;
+  // Without an override, production must still require the app's identity on the landing page.
+  await assert.rejects(publicChecks(appOrigin, versionId, fetch, options), retryableIdentity);
+  options.landingVersionId = independentLandingVersion;
+  await publicChecks(appOrigin, versionId, fetch, options);
+  landingVersion = versionId;
+  await assert.rejects(publicChecks(appOrigin, versionId, fetch, options), retryableIdentity);
+  const check = (origin, version, fetcher, access) => publicChecks(origin, version, fetch, access);
+  let waits = 0;
+  await verifyPublic(appOrigin, versionId, options, check, async (milliseconds) => {
+    assert.equal(milliseconds, 5000);
+    waits++;
+    landingVersion = independentLandingVersion;
+  });
+  assert.equal(waits, 1);
+  defect = 'unavailable';
+  await verifyPublic(appOrigin, versionId, options, check, async () => {
+    waits++;
+    defect = undefined;
+  });
+  assert.equal(waits, 2);
+  landingVersion = versionId;
+  await assert.rejects(
+    verifyPublic(appOrigin, versionId, options, check, async () => {
+      waits++;
+    }),
+    retryableIdentity,
+  );
+  assert.equal(waits, 13);
+  landingVersion = independentLandingVersion;
+  docsVersion = independentDocsVersion;
+  await assert.rejects(publicChecks(appOrigin, versionId, fetch, options), retryableIdentity);
+  options.docsVersionId = independentDocsVersion;
+  await publicChecks(appOrigin, versionId, fetch, options);
+  docsVersion = versionId;
+  await assert.rejects(publicChecks(appOrigin, versionId, fetch, options), retryableIdentity);
+  const beforeDocsReadiness = waits;
+  await verifyPublic(appOrigin, versionId, options, check, async () => {
+    waits++;
+    docsVersion = independentDocsVersion;
+  });
+  assert.equal(waits - beforeDocsReadiness, 1);
+  defect = 'docs-missing';
+  await verifyPublic(appOrigin, versionId, options, check, async () => {
+    waits++;
+    defect = undefined;
+  });
+  assert.equal(waits - beforeDocsReadiness, 2);
+  docsVersion = versionId;
+  const beforeStaleDocs = waits;
+  await assert.rejects(
+    verifyPublic(appOrigin, versionId, options, check, async () => {
+      waits++;
+    }),
+    retryableIdentity,
+  );
+  assert.equal(waits - beforeStaleDocs, 11);
+  docsVersion = independentDocsVersion;
+  for (const [failure, expected] of [
+    ['external-asset', /remain same-origin/],
+    ['redirect', /configured app origin/],
+    ['cookie', /must not set application cookies/],
+    ['root-api', /dynamic\/private path boundary/],
+    ['csp', /security boundary/],
+    ['page-redirect', /page unavailable/],
+    ['docs-page-redirect', /page unavailable/],
+    ['docs-http-csp', /native-CSP composition/],
+    ['docs-inline', /native hashed scripts/],
+    ['docs-search', /static search index/],
+    ['docs-search-json', /static search index/],
+    ['docs-search-null', /static search index/],
+    ['docs-search-array', /static search index/],
+    ['docs-search-empty', /static search index/],
+    ['docs-search-no-docs', /static search index/],
+    ['docs-search-no-index', /static search index/],
+    ['docs-redirect', /configured app origin/],
+    ['docs-api', /dynamic\/private path boundary/],
+  ]) {
+    defect = failure;
+    const before = waits;
+    await assert.rejects(
+      verifyPublic(appOrigin, versionId, options, check, async () => {
+        waits++;
+      }),
+      (error) =>
+        error instanceof PublicCheckError && !error.retryable && expected.test(error.message),
+    );
+    assert.equal(waits, before);
+  }
+  defect = undefined;
+  maintenance = true;
+  await checkDocsCookies(maintenanceChecks);
+  landingCookies = [accessCookie];
+  await maintenanceChecks(appOrigin, versionId, fetch, options);
+  landingVersion = versionId;
+  await assert.rejects(maintenanceChecks(appOrigin, versionId, fetch, options), retryableIdentity);
+  delete options.landingVersionId;
+  await maintenanceChecks(appOrigin, versionId, fetch, options);
+  docsVersion = versionId;
+  await assert.rejects(maintenanceChecks(appOrigin, versionId, fetch, options), retryableIdentity);
+  delete options.docsVersionId;
+  await maintenanceChecks(appOrigin, versionId, fetch, options);
+  defect = 'docs-search-json';
+  await assert.rejects(
+    maintenanceChecks(appOrigin, versionId, fetch, options),
+    (error) => error instanceof PublicCheckError && !error.retryable,
+  );
+});
+
 test('public probes never forward Access credentials to an external page asset', async () => {
   const access = {
     'CF-Access-Client-Id': 'synthetic-id',
@@ -1714,6 +2222,43 @@ export async function inspectDocumentCutover(pool, opId) {
       );
     },
   };
+}
+
+for (const docs of [false, true]) {
+  test(`preserving plan and promotion reject serving code without the ${docs ? 'docs' : 'landing'} capability before effects`, async () => {
+    const configuration = JSON.stringify({
+      CORNER_ORIGIN: 'https://app.example.com',
+      CORNER_LANDING_ORIGIN: 'https://example.com',
+      ...(docs ? { CORNER_DOCS_ORIGIN: 'https://docs.example.com' } : {}),
+      NEON_AUTH_REQUIRE_EMAIL_VERIFICATION: 'true',
+    });
+    const configured = validateConfiguration(configuration);
+    const f = cutoverFixture({ overrides: { configuration } });
+    f.payload.origin = configured.origin;
+    f.payload.runtimeConfigurationDigest = configured.digest;
+    const artifact = f.github.artifact;
+    f.github.artifact = async (reference) => {
+      const result = await artifact(reference);
+      if (docs || reference.sourceSha === source)
+        result.manifest.files['assets/landing/index.html'] = 'a'.repeat(64);
+      if (docs && reference.sourceSha === source) {
+        result.manifest.files['assets/docs/index.html'] = 'a'.repeat(64);
+        result.manifest.files['assets/docs/search-index.json'] = 'a'.repeat(64);
+      }
+      return result;
+    };
+    await assert.rejects(
+      plan({
+        ...f.options,
+        runId: '1',
+        sourceSha: source,
+        preservingCutover: true,
+        operationId: f.operationId,
+      }),
+    );
+    await assert.rejects(promote(f.options));
+    assert.deepEqual(f.effects, []);
+  });
 }
 
 test('automatic release never invokes preserving cutover or maintenance implicitly', async () => {
@@ -1999,6 +2544,54 @@ test('pre-cutover abort restores original live Worker only when DB cutover state
   assert.equal(f.getLiveVersion(), oldVersion);
   assert.equal((await f.github.baseline()).payload.versionId, oldVersion);
 });
+
+for (const docs of [false, true]) {
+  test(`pre-cutover abort cannot restore code missing the configured ${docs ? 'docs' : 'landing'} role`, async () => {
+    const configuration = JSON.stringify({
+      CORNER_ORIGIN: 'https://app.example.com',
+      CORNER_LANDING_ORIGIN: 'https://example.com',
+      ...(docs ? { CORNER_DOCS_ORIGIN: 'https://docs.example.com' } : {}),
+      NEON_AUTH_REQUIRE_EMAIL_VERIFICATION: 'true',
+    });
+    const configured = validateConfiguration(configuration);
+    const f = cutoverFixture({ overrides: { configuration } });
+    f.payload.origin = configured.origin;
+    f.payload.runtimeConfigurationDigest = configured.digest;
+    const artifact = f.github.artifact;
+    f.github.artifact = async (reference) => {
+      const result = await artifact(reference);
+      if (docs || reference.sourceSha === source)
+        result.manifest.files['assets/landing/index.html'] = 'a'.repeat(64);
+      if (docs && reference.sourceSha === source) {
+        result.manifest.files['assets/docs/index.html'] = 'a'.repeat(64);
+        result.manifest.files['assets/docs/search-index.json'] = 'a'.repeat(64);
+      }
+      return result;
+    };
+    await f.setupMigratorFile();
+    // A retained pre-guard journal must not restore code under an incompatible profile.
+    await f.github.record({
+      ...f.payload,
+      phase: 'maintenance-active',
+      planId: '11',
+      originalVersionId: oldVersion,
+      maintenanceVersionId,
+      candidateVersionId: versionId,
+    });
+    f.setLiveVersion(maintenanceVersionId);
+    f.effects.length = 0;
+    await assert.rejects(
+      resume({
+        ...f.options,
+        planId: '11',
+        operationId: f.operationId,
+        abort: true,
+      }),
+    );
+    assert.deepEqual(f.effects, []);
+    assert.equal(f.getLiveVersion(), maintenanceVersionId);
+  });
+}
 
 test('completion lost-response recovery converges without redeploying maintenance when recordCompletion or maintenance-complete fails partway', async () => {
   // Case 1: publicChecks pass and complete receipt is recorded, but maintenance-complete journal write fails.

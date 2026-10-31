@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { WorkoutSessionSchema } from '@packages/training/workouts';
 import type { TrainingCheckIn, WorkoutSession } from '@packages/training/types';
 import { test, expect, signIn } from '../../__tests__/browser';
 
@@ -7,6 +8,11 @@ for (const status of ['planned', 'completed'] as const) {
     page,
     account,
   }) => {
+    const prefillDrafts: WorkoutSession[] = [];
+    page.on('request', (request) => {
+      if (new URL(request.url()).pathname === '/api/rpc/workspace/prefill')
+        prefillDrafts.push(request.postDataJSON().json.session);
+    });
     await signIn(page, account, '/workouts');
     await page.getByRole('button', { name: 'Add workout', exact: true }).click();
     await page.getByRole('button', { name: 'Blank workout', exact: true }).click();
@@ -42,7 +48,10 @@ for (const status of ['planned', 'completed'] as const) {
         exact: true,
       })
       .click();
-    const reopened = page.getByRole('dialog', { name: /^(Your workout|Workout details)$/ });
+    const reopened = page.getByRole('dialog', {
+      name: status === 'planned' ? 'Synthetic custom workout' : 'Workout details',
+      exact: true,
+    });
     const savedToggle = reopened.getByRole('button', {
       name: 'Edit exercise or targets',
       exact: true,
@@ -54,6 +63,9 @@ for (const status of ['planned', 'completed'] as const) {
     );
     const saved = (await account.api.workspace.export()).state.training.sessions;
     expect(saved[0]?.exercises[0]?.name).toBe('Saved custom row');
+    if (status === 'planned') expect(prefillDrafts.length).toBeGreaterThan(0);
+    for (const draft of prefillDrafts)
+      expect(WorkoutSessionSchema.safeParse(draft).success).toBe(true);
   });
 }
 
@@ -291,10 +303,17 @@ test('workout completion persists recorded results and leaves unrecorded sets in
   await page.getByLabel('Synthetic squat set 1 weight kg', { exact: true }).fill('42.5');
   await page.getByLabel('Synthetic squat set 1 reps', { exact: true }).fill('9');
   await page.getByLabel('Synthetic squat set 1 completed', { exact: true }).check();
-  await page.getByRole('button', { name: 'Complete workout', exact: true }).click();
-  await expect(
-    page.getByRole('button', { name: 'Complete workout', exact: true }),
-  ).not.toBeVisible();
+  await page.getByRole('button', { name: 'Finish workout', exact: true }).click();
+  expect(
+    await page.locator('.active-workout-overlay form :invalid').evaluateAll((fields) =>
+      fields.map((field) => ({
+        label: field.getAttribute('aria-label') ?? field.closest('label')?.textContent,
+        value: (field as HTMLInputElement).value,
+        error: (field as HTMLInputElement).validationMessage,
+      })),
+    ),
+  ).toEqual([]);
+  await expect(page.getByRole('button', { name: 'Finish workout', exact: true })).not.toBeVisible();
   await page.reload();
   await page.getByRole('button', { name: 'View / edit', exact: true }).click();
   await expect(page.getByLabel('Synthetic squat set 1 weight kg', { exact: true })).toHaveValue(
@@ -327,4 +346,229 @@ test('retired agent navigation redirects home and settings keeps manual account 
   ).toHaveCount(0);
   await page.reload();
   await expect(page.getByRole('button', { name: 'Export workspace', exact: true })).toBeVisible();
+});
+
+test.describe('active workout recovery', () => {
+  // Network fault injection must reach the page instead of its service worker.
+  test.use({ serviceWorkers: 'block' });
+  test('active workout collapses, navigates, restores unsaved edits, tracks rest and ends only after a successful save', async ({
+    page,
+    account,
+  }) => {
+    const timestamp = new Date().toISOString();
+    const session: WorkoutSession = {
+      id: randomUUID(),
+      date: timestamp.slice(0, 10),
+      name: 'Morning strength',
+      kind: 'strength',
+      status: 'planned',
+      unit: 'kg',
+      plannedMinutes: 45,
+      durationMinutes: null,
+      rounds: null,
+      sessionRpe: null,
+      readiness: null,
+      notes: '',
+      changeReason: '',
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      exercises: [
+        {
+          id: randomUUID(),
+          name: 'Dumbbell split squat with a deliberately long exercise name',
+          loadType: 'per_hand',
+          targetSets: 3,
+          repMin: 8,
+          repMax: 10,
+          targetRir: 2,
+          restSeconds: 90,
+          notes: '',
+          targetLoad: { weight: 16, unit: 'kg' },
+          sets: [1, 2, 3].map(() => ({
+            id: randomUUID(),
+            weight: null,
+            reps: null,
+            rir: null,
+            completed: false,
+            kind: 'working',
+          })),
+        },
+      ],
+    };
+    const second = { ...session, id: randomUUID(), name: 'Another workout' };
+    for (const item of [session, second])
+      await account.api.workspace.mutate({
+        requestId: randomUUID(),
+        mutation: {
+          type: 'training.session.save',
+          data: { session: item, expectedUpdatedAt: null },
+        },
+      });
+    await signIn(page, account, '/workouts');
+    await page.getByRole('button', { name: 'Start workout', exact: true }).first().click();
+    const activeName = await page.locator('.active-workout-title').innerText();
+    const active = [session, second].find((item) => item.name === activeName)!;
+    const sheet = page.getByRole('dialog', { name: activeName, exact: true });
+    const dock = page.getByRole('button', { name: `Resume ${activeName}`, exact: true });
+    await expect(sheet).toBeVisible();
+    if (page.viewportSize()!.width <= 760) await page.setViewportSize({ width: 360, height: 844 });
+    const originalViewport = page.viewportSize()!;
+    const expectSurface = async () => {
+      const mobile = page.viewportSize()!.width <= 760;
+      await expect(sheet).toHaveAttribute('data-slot', mobile ? 'drawer-popup' : 'dialog-content');
+      await expect(page.locator('[data-slot="drawer-swipe-handle"]')).toHaveCount(mobile ? 1 : 0);
+      const box = (await sheet.boundingBox())!;
+      const { width, height } = page.viewportSize()!;
+      if (mobile) {
+        expect(Math.abs(box.y + box.height - height)).toBeLessThanOrEqual(1);
+      } else {
+        expect(Math.abs(box.x + box.width / 2 - width / 2)).toBeLessThanOrEqual(1);
+        expect(Math.abs(box.y + box.height / 2 - height / 2)).toBeLessThanOrEqual(1);
+        expect(box.y).toBeGreaterThanOrEqual(31);
+      }
+    };
+    await expectSurface();
+    // Both responsive primitives must collapse without losing the workout,
+    // return focus to Resume, and contain keyboard focus after reopening.
+    await sheet.getByRole('button', { name: 'Collapse workout', exact: true }).click();
+    await expect(sheet).not.toBeVisible();
+    await expect(dock).toBeFocused();
+    await dock.click();
+    await expect(sheet).toBeVisible();
+    await sheet.getByRole('button', { name: 'Collapse workout', exact: true }).focus();
+    await page.keyboard.press('Shift+Tab');
+    await expect
+      .poll(() => sheet.evaluate((element) => element.contains(document.activeElement)))
+      .toBe(true);
+    await sheet.getByRole('button', { name: 'Save workout', exact: true }).focus();
+    await page.keyboard.press('Tab');
+    await expect
+      .poll(() => sheet.evaluate((element) => element.contains(document.activeElement)))
+      .toBe(true);
+    expect(
+      await sheet.evaluate((element) => {
+        const body = element.querySelector('.active-workout-body')!;
+        const clock = element.querySelector('.workout-clock')!;
+        const exercise = element.querySelector('h3')!;
+        return {
+          fits:
+            element.getBoundingClientRect().width <= innerWidth &&
+            body.scrollWidth <= body.clientWidth + 1,
+          compactTimer:
+            parseFloat(getComputedStyle(clock).fontSize) <
+            parseFloat(getComputedStyle(exercise).fontSize),
+        };
+      }),
+    ).toEqual({ fits: true, compactTimer: true });
+    const startedAt = (await account.api.workspace.details({ sessionIds: [active.id] })).sessions[0]
+      .timing?.startedAt;
+    expect(startedAt).toBeTruthy();
+    await expect(sheet.getByRole('button', { name: /Cancel|Close/, exact: true })).toHaveCount(0);
+    const label = active.exercises[0].name;
+    await sheet.getByLabel(`${label} set 1 weight kg per hand`, { exact: true }).fill('18');
+    await sheet.getByLabel(`${label} set 1 reps`, { exact: true }).fill('9');
+    await sheet.getByLabel(`${label} set 1 completed`, { exact: true }).check();
+    await expect(sheet.getByRole('button', { name: 'Start next set', exact: true })).toBeVisible();
+    await sheet
+      .getByRole('button', { name: 'Extend rest target by 15 seconds', exact: true })
+      .click();
+    // Crossing the breakpoint while resting preserves checked sets and the rest interval.
+    await page.setViewportSize({ width: originalViewport.width <= 760 ? 1024 : 360, height: 844 });
+    await expectSurface();
+    await expect(sheet.getByLabel(`${label} set 1 completed`, { exact: true })).toBeChecked();
+    await expect(
+      sheet.getByLabel(`${label} set 1 weight kg per hand`, { exact: true }),
+    ).toHaveValue('18');
+    await expect(sheet.getByRole('button', { name: 'Start next set', exact: true })).toBeVisible();
+    await page.setViewportSize(originalViewport);
+    await expectSurface();
+    await page.keyboard.press('Escape');
+    await expect(sheet).not.toBeVisible();
+    await expect(dock).toBeVisible();
+    await expect(dock).toContainText('Rest');
+    await expect(dock).toBeFocused();
+    if (page.viewportSize()!.width <= 760) {
+      const bottom = await page.locator('[data-slot="bottom-navigation"]').boundingBox();
+      const dockBox = await dock.boundingBox();
+      expect(dockBox!.y + dockBox!.height).toBeLessThanOrEqual(bottom!.y);
+    }
+    // Client navigation retains the mounted editor; full reload restores the persisted clock.
+    await page.locator('a[href="/"]').filter({ visible: true }).first().click();
+    await expect(page).toHaveURL(/\/$/);
+    await expect(dock).toBeVisible();
+    await dock.click();
+    await expect(
+      sheet.getByLabel(`${label} set 1 weight kg per hand`, { exact: true }),
+    ).toHaveValue('18');
+    await sheet.getByRole('button', { name: 'Start next set', exact: true }).click();
+    await expect(sheet.getByRole('button', { name: 'Start next set', exact: true })).toHaveCount(0);
+    await expect
+      .poll(
+        async () =>
+          (await account.api.workspace.details({ sessionIds: [active.id] })).sessions[0].timing
+            ?.rests[0]?.endedAt,
+      )
+      .toBeTruthy();
+    // A failed autosave leaves a browser-local recovery draft, without erasing the saved workout.
+    await page.route('**/api/rpc/workspace/mutate', (route) => route.abort());
+    await sheet.getByLabel(`${label} set 2 weight kg per hand`, { exact: true }).fill('19');
+    await expect(sheet.getByRole('status')).toContainText('Your draft is kept');
+    // A failed autosave must survive both sides of the exact mobile boundary.
+    for (const width of [760, 761]) {
+      await page.setViewportSize({ width, height: 844 });
+      await expectSurface();
+      await expect(
+        sheet.getByLabel(`${label} set 2 weight kg per hand`, { exact: true }),
+      ).toHaveValue('19');
+    }
+    await page.setViewportSize(originalViewport);
+    await expectSurface();
+    await page.reload();
+    await expect(dock).toBeVisible();
+    await dock.click();
+    await expect(
+      sheet.getByLabel(`${label} set 2 weight kg per hand`, { exact: true }),
+    ).toHaveValue('19');
+    await expect(sheet.getByLabel(`${label} set 1 completed`, { exact: true })).toBeChecked();
+    await expect(sheet.getByRole('status')).toContainText('Your draft is kept');
+    await sheet.getByRole('button', { name: 'Finish workout', exact: true }).click();
+    await expect(sheet).toBeVisible();
+    await expect(sheet.getByRole('button', { name: 'Finish workout', exact: true })).toBeEnabled();
+    await page.unroute('**/api/rpc/workspace/mutate');
+    // The server commits, but its response is lost. Read back before declaring failure.
+    let lostFinish = false;
+    await page.route('**/api/rpc/workspace/mutate', async (route) => {
+      const mutation = route.request().postDataJSON().json.mutation;
+      if (
+        !lostFinish &&
+        mutation.type === 'training.session.save' &&
+        mutation.data.session.status === 'completed'
+      ) {
+        await route.fetch();
+        lostFinish = true;
+        await route.abort();
+      } else await route.continue();
+    });
+    await sheet.getByRole('button', { name: 'Finish workout', exact: true }).click();
+    await expect(sheet).not.toBeVisible();
+    await expect(dock).toHaveCount(0);
+    expect(lostFinish).toBe(true);
+    const saved = (await account.api.workspace.details({ sessionIds: [active.id] })).sessions[0];
+    expect(saved.status).toBe('completed');
+    expect(saved.timing?.endedAt).toBeTruthy();
+    expect(saved.timing?.startedAt).toBe(startedAt);
+    expect(saved.durationMinutes).toBeGreaterThan(0);
+    expect(saved.timing?.rests[0]).toMatchObject({ targetSeconds: 105 });
+    expect(saved.timing?.rests[0].endedAt).toBeTruthy();
+    expect(saved.exercises[0].sets[1].weight).toBe(19);
+    // Measured durations need not land on half-minute steps when history is edited.
+    await page.goto('/workouts');
+    await page.getByRole('button', { name: 'View / edit', exact: true }).click();
+    const history = page.getByRole('dialog', { name: 'Workout details', exact: true });
+    await expect(history.getByLabel('Actual minutes', { exact: true })).toHaveValue(
+      String(saved.durationMinutes),
+    );
+    await history.getByRole('button', { name: 'Save workout', exact: true }).click();
+    await expect(history).not.toBeVisible();
+  });
 });

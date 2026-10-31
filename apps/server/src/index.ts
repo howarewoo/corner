@@ -28,9 +28,19 @@ const app = createApp({
   delegation,
 });
 const server = createServer();
+const appHost = new URL(config.origin).host;
+const landingHost = new URL(config.landingOrigin).host;
+const docsHost = new URL(config.docsOrigin).host;
 const dist = join(REPOSITORY_ROOT, 'apps', 'web', 'dist');
-if (!development && !existsSync(join(dist, 'index.html')))
-  throw new Error('Build the interface first with npm run build, then run npm start.');
+const landingDist = join(REPOSITORY_ROOT, 'apps', 'landing', 'dist');
+const docsDist = join(REPOSITORY_ROOT, 'apps', 'docs', 'dist');
+if (
+  !development &&
+  (!existsSync(join(dist, 'index.html')) ||
+    !existsSync(join(landingDist, 'index.html')) ||
+    !existsSync(join(docsDist, 'index.html')))
+)
+  throw new Error('Build all three interfaces first with pnpm run build, then run pnpm start.');
 
 const activeRequests = new Set<Promise<void>>();
 server.on('request', (req, res) => {
@@ -44,6 +54,10 @@ server.on('request', (req, res) => {
 
 async function handleRequest(req: IncomingMessage, res: ServerResponse) {
   try {
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('Referrer-Policy', 'no-referrer');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
     if (closing) {
       res.writeHead(503, {
         'Content-Type': 'text/plain',
@@ -53,9 +67,12 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse) {
       res.end('Corner is restarting. Please try again shortly.');
       return;
     }
-    // Explicit host validation prevents DNS rebinding against a local account service.
+    const landing = req.headers.host === landingHost;
+    const docs = req.headers.host === docsHost;
+    const origin = docs ? config.docsOrigin : landing ? config.landingOrigin : config.origin;
+    // Exact host matching precedes every account, OAuth, MCP, and asset handler.
     if (
-      req.headers.host !== new URL(config.origin).host ||
+      req.headers.host !== (docs ? docsHost : landing ? landingHost : appHost) ||
       !req.url?.startsWith('/') ||
       req.url.startsWith('//')
     ) {
@@ -63,9 +80,9 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse) {
       res.end('Open Corner using its configured origin.');
       return;
     }
-    const requestURL = new URL(req.url, config.origin);
-    if (requestURL.origin !== config.origin) {
-      res.writeHead(400);
+    const requestURL = new URL(req.url, origin);
+    if (requestURL.origin !== origin) {
+      res.writeHead(400, { 'Cache-Control': 'no-store' });
       res.end('Open Corner using its configured origin.');
       return;
     }
@@ -81,6 +98,22 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse) {
     ) {
       res.writeHead(403, { 'Content-Type': 'text/plain', 'Cache-Control': 'no-store' });
       res.end('Use the configured HTTPS address to open Corner.');
+      return;
+    }
+    if (landing || docs) {
+      if (!['GET', 'HEAD'].includes(req.method ?? 'GET')) {
+        res.writeHead(405, { 'Cache-Control': 'no-store' });
+        res.end();
+      } else if (path === '/open-app') {
+        res.writeHead(302, {
+          Location: config.origin,
+          'Cache-Control': 'no-store',
+        });
+        res.end();
+      } else if (landing && path === '/open-docs') {
+        res.writeHead(302, { Location: config.docsOrigin, 'Cache-Control': 'no-store' });
+        res.end();
+      } else await serveStatic(req, res, path, docs ? docsDist : landingDist, false, docs);
       return;
     }
     if (isDelegationNativePath(path)) {
@@ -197,26 +230,53 @@ const mime: Record<string, string> = {
   '.txt': 'text/plain; charset=utf-8',
   '.md': 'text/plain; charset=utf-8',
 };
-async function serveStatic(req: IncomingMessage, res: ServerResponse, path: string) {
-  const decoded = decodeURIComponent(path);
-  if (decoded.includes('\0') || decoded.split('/').some((part) => part.startsWith('.'))) {
+async function serveStatic(
+  req: IncomingMessage,
+  res: ServerResponse,
+  path: string,
+  directory = dist,
+  spa = true,
+  docs = false,
+) {
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(path);
+  } catch {
+    res.writeHead(400);
+    res.end();
+    return;
+  }
+  if (
+    decoded.includes('\0') ||
+    decoded.includes('\\') ||
+    decoded.split('/').some((part) => part.startsWith('.')) ||
+    /^\/(?:app|landing|docs)(?:\/|$)/.test(decoded) ||
+    (!spa &&
+      /^\/(?:api(?:\/|$)|auth(?:\/|$)|account(?:\/|$)|oauth(?:\/|$)|mcp(?:\/|$)|sw\.js$|manifest\.webmanifest$)/.test(
+        decoded,
+      ))
+  ) {
     res.writeHead(404);
     res.end();
     return;
   }
-  let file = resolve(dist, `.${decoded}`);
-  if (!file.startsWith(dist + sep) && file !== dist) {
+  let file = resolve(directory, `.${decoded}`);
+  if (!file.startsWith(directory + sep) && file !== directory) {
     res.writeHead(404);
     res.end();
     return;
   }
-  if (file === dist || !existsSync(file) || !statSync(file).isFile()) {
-    if (extname(decoded)) {
+  if (docs && !extname(decoded)) {
+    const nested = join(file, 'index.html');
+    if (existsSync(nested) && statSync(nested).isFile()) file = nested;
+  }
+  if (file === directory || !existsSync(file) || !statSync(file).isFile()) {
+    if ((!spa && decoded !== '/') || extname(decoded)) {
       res.writeHead(404);
       res.end();
       return;
     }
-    file = join(dist, 'index.html');
+    file = join(directory, 'index.html');
   }
   const content = await readFile(file);
   res.writeHead(200, {
@@ -224,11 +284,14 @@ async function serveStatic(req: IncomingMessage, res: ServerResponse, path: stri
     'Content-Length': content.length,
     'Cache-Control': path.startsWith('/oauth/')
       ? 'private, no-store, max-age=0'
-      : file.includes(`${sep}assets${sep}`)
+      : file.includes(`${sep}assets${sep}`) || file.includes(`${sep}_astro${sep}`)
         ? 'public, max-age=31536000, immutable'
         : 'no-cache',
+    // Astro supplies the per-page script hashes in its native meta policy.
     'Content-Security-Policy':
-      "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
+      docs && extname(file) === '.html'
+        ? "base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'none'"
+        : "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
     'Referrer-Policy': 'no-referrer',
     'X-Content-Type-Options': 'nosniff',
     'X-Frame-Options': 'DENY',

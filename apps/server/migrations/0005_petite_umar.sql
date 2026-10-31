@@ -1,0 +1,1 @@
+ALTER TABLE "workspace_workout_sessions" ADD COLUMN "timing" jsonb;

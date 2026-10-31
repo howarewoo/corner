@@ -235,6 +235,10 @@ test('packaging canonicalizes JSONC comments and trailing commas but rejects mal
       'export function currentSchema() { throw new Error("packaging fixture"); } export function migrationHistory() { throw new Error("packaging fixture"); }',
     'apps/server/dist/migration-inventory.js': `export { migrationInventory } from ${JSON.stringify(fileURLToPath(new URL('../../apps/server/src/migration-inventory.ts', import.meta.url)))};`,
     'apps/server/wrangler.jsonc': await readFile(join(candidate, 'wrangler.json')),
+    'apps/landing/dist/index.html': '<html>public landing</html>',
+    'apps/landing/dist/_astro/landing.css': 'body { color: inherit; }',
+    'apps/docs/dist/index.html': '<html>guide</html>',
+    'apps/docs/dist/search-index.json': '{"type":"advanced","data":{}}',
   };
   for (const [name, bytes] of Object.entries(inputs)) {
     await mkdir(join(sourceRoot, name, '..'), { recursive: true });
@@ -268,13 +272,41 @@ test('packaging canonicalizes JSONC comments and trailing commas but rejects mal
   await writeFile(path, `// Wrangler JSONC\n/* format-only change */\n${json.slice(0, -2)},\n}\n`);
   const jsonc = await packageArtifact({ ...options, out: join(directory, 'jsonc') });
   assert.equal(jsonc.digest, plain.digest, 'JSONC formatting must not change the release payload.');
-  assert.equal(plain.manifest.maintenanceWorkerEntry, 'worker/maintenance-worker.js');
-  assert.ok(plain.manifest.files['worker/maintenance-worker.js']);
+  assert.equal(plain.assetLayout, 'three-origin');
   await writeFile(path, '{"name": }');
   await assert.rejects(
     packageArtifact({ ...options, out: join(directory, 'malformed') }),
     /ValueExpected/,
   );
+});
+
+test('asset capability derives from immutable inventory and rejects incomplete or mixed layouts', async (t) => {
+  const { candidate, manifest } = await fixture(t);
+  const before = await readFile(join(candidate, 'manifest.json'));
+  assert.equal((await verifyArtifact(candidate)).assetLayout, 'single-site');
+  assert.deepEqual(await readFile(join(candidate, 'manifest.json')), before);
+  const add = async (name, bytes) => {
+    await mkdir(join(candidate, name, '..'), { recursive: true });
+    await writeFile(join(candidate, name), bytes);
+    manifest.files[name] = hash(bytes);
+    await writeFile(join(candidate, 'manifest.json'), JSON.stringify(manifest));
+  };
+  await add('assets/app/index.html', '<html>app</html>');
+  await assert.rejects(verifyArtifact(candidate), /asset layout/);
+  await add('assets/landing/index.html', '<html>landing</html>');
+  await assert.rejects(verifyArtifact(candidate), /asset layout/);
+  await rm(join(candidate, 'assets/index.html'));
+  delete manifest.files['assets/index.html'];
+  await writeFile(join(candidate, 'manifest.json'), JSON.stringify(manifest));
+  assert.equal((await verifyArtifact(candidate)).assetLayout, 'dual-origin');
+  await add('assets/docs/index.html', '<html>guide</html>');
+  await assert.rejects(verifyArtifact(candidate), /asset layout/);
+  await add('assets/docs/search-index.json', '{"type":"advanced","data":{}}');
+  assert.equal((await verifyArtifact(candidate)).assetLayout, 'three-origin');
+  await rm(join(candidate, 'assets/landing/index.html'));
+  delete manifest.files['assets/landing/index.html'];
+  await writeFile(join(candidate, 'manifest.json'), JSON.stringify(manifest));
+  await assert.rejects(verifyArtifact(candidate), /asset layout/);
 });
 
 test('verification binds exact manifest bytes and all packaged payloads', async (t) => {

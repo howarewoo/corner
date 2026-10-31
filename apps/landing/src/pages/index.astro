@@ -1,0 +1,117 @@
+---
+import { OpenCorner } from '../components/open-corner';
+import { TodayPreview, WorkoutPreview } from '../components/product-previews';
+import { ArrowDown, ArrowUp } from 'lucide-react';
+import '../styles.css';
+---
+
+<!doctype html>
+<html lang="en" data-corner-theme="light">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="Bring your meal plans, food logs, workouts, and progress into one daily tool. Plan your day. Record what happened. Find your rhythm with Corner." />
+    <meta name="theme-color" content="#edf2ef" />
+    <title>Corner — Training and nutrition, together.</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="site-header page-width">
+      <a class="wordmark" href="#" aria-label="Corner home">Corner</a>
+      <nav aria-label="Main navigation">
+        <a href="#capabilities">Inside Corner</a>
+        <a href="#how-it-works">How it works</a>
+        <a href="/open-docs">Guide</a>
+      </nav>
+      <OpenCorner />
+    </header>
+
+    <main id="main" tabindex="-1">
+      <section class="hero page-width" aria-labelledby="hero-title">
+        <div class="hero-copy">
+          <h1 id="hero-title">For the work<br />you put in.</h1>
+          <p class="hero-description">Your training. Your nutrition. One place to bring it together.</p>
+          <p class="hero-detail">Plan your meals and workouts, record what actually happened, and see your progress over time. Make Corner part of your day.</p>
+          <div class="hero-actions">
+            <OpenCorner size="lg" />
+            <a class="text-link" href="#capabilities">Take a look inside <ArrowDown size={15} aria-hidden="true" /></a>
+          </div>
+        </div>
+        <figure class="hero-preview">
+          <TodayPreview />
+          <figcaption>One view of your day. Illustrative workspace with synthetic data.</figcaption>
+        </figure>
+      </section>
+
+      <section class="intro page-width" id="capabilities" aria-labelledby="intro-title">
+        <h2 id="intro-title">The plan and the real life.<br />Room for both.</h2>
+        <p>A meal you planned isn’t a meal you ate. A target isn’t a completed set. Corner keeps the intention and the record distinct, so you can see what really happened.</p>
+      </section>
+
+      <section class="training-section page-width" aria-labelledby="training-title">
+        <div class="feature-copy">
+          <h2 id="training-title">Train with a plan.<br />Keep the full story.</h2>
+          <p>Build your week with workout plans and reusable routines. Set your targets, then record the reps and loads you actually completed.</p>
+          <ul class="feature-list">
+            <li>Plan sessions with an exercise catalog.</li>
+            <li>Keep targets alongside recorded sets.</li>
+            <li>Return to your workout history and notes.</li>
+          </ul>
+        </div>
+        <WorkoutPreview />
+      </section>
+
+      <section class="nutrition-section" aria-labelledby="nutrition-title">
+        <div class="nutrition-layout page-width">
+          <div class="meal-example">
+            <div class="meal-example-heading"><h3>A little planning.<br />One less daily decision.</h3><span>Monday’s meals</span></div>
+            <dl class="meal-list">
+              <div><dt>Breakfast</dt><dd>Overnight oats <span>1 serving</span></dd></div>
+              <div><dt>Lunch</dt><dd>Chicken & rice bowl <span>1 serving</span></dd></div>
+              <div><dt>Dinner</dt><dd>Salmon, potatoes & greens <span>1 serving</span></dd></div>
+            </dl>
+            <p class="sample-caption">Illustrative meal plan · synthetic data</p>
+          </div>
+          <div class="feature-copy">
+            <h2 id="nutrition-title">Feed your day.<br />Not another spreadsheet.</h2>
+            <p>Keep your recipes, meal plan, grocery list, and food log together. Plan ahead when it helps. Log food directly when the day takes a different turn.</p>
+            <ul class="feature-list">
+              <li>Save recipes and plan meals by serving.</li>
+              <li>Turn your meal plan into a grocery list.</li>
+              <li>Use optional training- and rest-day targets.</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <section class="progress-section page-width" aria-labelledby="progress-title">
+        <h2 id="progress-title">More than<br />the last session.</h2>
+        <div class="progress-copy">
+          <p>Look back at your training, nutrition, and check-ins. Keep body measurements, sleep, energy, and recovery notes alongside the work, with progress views to help you review it.</p>
+          <p>Your records stay yours to take with you. Export your workspace as JSON, or download individual recipes as text.</p>
+        </div>
+      </section>
+
+      <section class="workflow-section page-width" id="how-it-works" aria-labelledby="workflow-title">
+        <h2 id="workflow-title">Find your daily rhythm.</h2>
+        <ol class="workflow-list">
+          <li><h3>Plan your day.</h3><p>Choose your meals, line up a workout, and know what’s ahead.</p></li>
+          <li><h3>Record the real thing.</h3><p>Log what you ate and the sets you completed. Leave a note for next time.</p></li>
+          <li><h3>Review and return.</h3><p>Look back at your records, adjust your plan, and come back tomorrow.</p></li>
+        </ol>
+      </section>
+
+      <section class="closing-section page-width" aria-labelledby="closing-title">
+        <div><h2 id="closing-title">Your next day.<br />In your corner.</h2><p>Bring your training and nutrition together.</p></div>
+        <OpenCorner size="lg" />
+      </section>
+    </main>
+
+    <footer class="site-footer page-width">
+      <a class="wordmark" href="#" aria-label="Corner home">Corner</a>
+      <p>Training and nutrition, together.</p>
+      <a class="text-link" href="#main">Back to top <ArrowUp size={15} aria-hidden="true" /></a>
+    </footer>
+  </body>
+</html>

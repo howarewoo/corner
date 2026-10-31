@@ -5,12 +5,36 @@ import { once } from 'node:events';
 import { createServer } from 'node:https';
 import { readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
+import { createServer as createTCPServer } from 'node:net';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
 
 const require = createRequire(new URL('../apps/server/package.json', import.meta.url));
 const { betterAuth } = await import(require.resolve('better-auth'));
 const { getMigrations } = await import(require.resolve('better-auth/db/migration'));
+
+export async function findSmokePorts(count, firstPort = 14339, lastPort = 32767) {
+  const ports = [];
+  // Stay below default Linux/macOS ephemeral ranges; outbound clients must not
+  // consume a selected listener port while the fixture starts.
+  for (let port = firstPort; port <= lastPort && ports.length < count; port++) {
+    try {
+      for (const host of ['127.0.0.1', 'localhost']) {
+        const probe = createTCPServer();
+        await new Promise((resolve, reject) => {
+          probe.once('error', reject);
+          probe.listen(port, host, () => probe.close(resolve));
+        });
+      }
+      ports.push(port);
+    } catch (error) {
+      if (error.code !== 'EADDRINUSE') throw error;
+    }
+  }
+  if (ports.length !== count)
+    throw new Error(`No ${count} smoke ports available between ${firstPort} and ${lastPort}.`);
+  return ports;
+}
 
 export async function startSmokeServices(directory, origin, initialize, databaseFactory) {
   const createDatabase =

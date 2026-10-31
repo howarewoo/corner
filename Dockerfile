@@ -5,6 +5,8 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY apps/server/package.json ./apps/server/package.json
 COPY apps/web/package.json ./apps/web/package.json
 COPY apps/design/package.json ./apps/design/package.json
+COPY apps/landing/package.json ./apps/landing/package.json
+COPY apps/docs/package.json ./apps/docs/package.json
 COPY packages/nutrition/package.json ./packages/nutrition/package.json
 COPY packages/training/package.json ./packages/training/package.json
 COPY packages/workspace/package.json ./packages/workspace/package.json
@@ -26,6 +28,8 @@ WORKDIR /app
 ENV NODE_ENV=production \
     CORNER_DEPLOYMENT=local \
     CORNER_ORIGIN=http://127.0.0.1:3000 \
+    CORNER_LANDING_ORIGIN=http://localhost:3000 \
+    CORNER_DOCS_ORIGIN=http://docs.localhost:3000 \
     CORNER_HOST=0.0.0.0 \
     CORNER_PORT=3000 \
     CORNER_DATA_DIR=/app/data
@@ -36,6 +40,8 @@ COPY --from=production-dependencies --chown=node:node /app/packages ./packages
 COPY --from=build --chown=node:node /app/apps/server/dist ./apps/server/dist
 COPY --from=build --chown=node:node /app/apps/server/migrations ./apps/server/migrations
 COPY --from=build --chown=node:node /app/apps/web/dist ./apps/web/dist
+COPY --from=build --chown=node:node /app/apps/landing/dist ./apps/landing/dist
+COPY --from=build --chown=node:node /app/apps/docs/dist ./apps/docs/dist
 COPY --from=build --chown=node:node /app/packages/nutrition/dist ./packages/nutrition/dist
 COPY --from=build --chown=node:node /app/packages/training/dist ./packages/training/dist
 COPY --from=build --chown=node:node /app/packages/workspace/dist ./packages/workspace/dist

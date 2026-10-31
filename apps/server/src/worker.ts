@@ -1,5 +1,4 @@
 import './worker-node-require.js';
-import { extname } from 'node:path';
 import { createApp } from './app.js';
 import { createAuth } from './auth.js';
 import { loadRuntimeConfig } from './runtime-config.js';
@@ -12,6 +11,7 @@ import {
 } from './delegation.js';
 import { createWorkerDelegationHandler } from './delegation-worker.js';
 import type { DelegationRuntime } from './delegation.js';
+import { fetchSiteAssets, secureResponse as secure } from './worker-assets.js';
 
 let delegationCache:
   | {
@@ -26,26 +26,12 @@ export type WorkerEnvironment = {
   ASSETS: { fetch(request: Request): Promise<Response> };
   CF_VERSION_METADATA?: { id: string; tag?: string; timestamp?: string };
   CORNER_ORIGIN: string;
+  CORNER_LANDING_ORIGIN: string;
+  CORNER_DOCS_ORIGIN: string;
   DATABASE_URL: string;
   NEON_AUTH_BASE_URL: string;
   NEON_AUTH_REQUIRE_EMAIL_VERIFICATION: string;
 };
-
-function secure(response: Response, api: boolean): Response {
-  const result = new Response(response.body, response);
-  result.headers.set('Referrer-Policy', 'no-referrer');
-  result.headers.set('X-Frame-Options', 'DENY');
-  result.headers.set('X-Content-Type-Options', 'nosniff');
-  if (api) result.headers.set('Cache-Control', 'private, no-store');
-  else {
-    result.headers.set(
-      'Content-Security-Policy',
-      "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
-    );
-    result.headers.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
-  }
-  return result;
-}
 
 async function fetchApplication(request: Request, env: WorkerEnvironment): Promise<Response> {
   const url = new URL(request.url);
@@ -63,38 +49,26 @@ async function fetchApplication(request: Request, env: WorkerEnvironment): Promi
       {
         CORNER_DEPLOYMENT: 'hosted',
         CORNER_ORIGIN: env.CORNER_ORIGIN,
+        CORNER_LANDING_ORIGIN: env.CORNER_LANDING_ORIGIN,
+        CORNER_DOCS_ORIGIN: env.CORNER_DOCS_ORIGIN,
         DATABASE_URL: env.DATABASE_URL,
         NEON_AUTH_BASE_URL: env.NEON_AUTH_BASE_URL,
         NEON_AUTH_REQUIRE_EMAIL_VERIFICATION: env.NEON_AUTH_REQUIRE_EMAIL_VERIFICATION,
       },
       { dataDir: '/tmp/corner' },
     );
-    if (url.origin !== config.origin)
+    if (
+      (url.origin !== config.origin &&
+        url.origin !== config.landingOrigin &&
+        url.origin !== config.docsOrigin) ||
+      (request.headers.has('Host') && request.headers.get('Host') !== url.host)
+    )
       return secure(
         new Response('Open Corner using its configured origin.', { status: 400 }),
         true,
       );
-    if (!api) {
-      if (!['GET', 'HEAD'].includes(request.method))
-        return secure(new Response(null, { status: 405 }), false);
-      const decoded = decodeURIComponent(url.pathname);
-      if (decoded.includes('\0') || decoded.split('/').some((part) => part.startsWith('.')))
-        return secure(new Response(null, { status: 404 }), false);
-      let response = await env.ASSETS.fetch(request);
-      if (response.status === 404 && !extname(decoded)) {
-        response = await env.ASSETS.fetch(new Request(new URL('/index.html', url), request));
-      }
-      const result = secure(response, false);
-      result.headers.set(
-        'Cache-Control',
-        url.pathname.startsWith('/oauth/')
-          ? 'private, no-store, max-age=0'
-          : url.pathname.startsWith('/assets/') && result.ok
-            ? 'public, max-age=31536000, immutable'
-            : 'no-cache',
-      );
-      return result;
-    }
+    if (url.origin !== config.origin || !api)
+      return await fetchSiteAssets(request, config, env.ASSETS, env.CF_VERSION_METADATA?.id);
     const headers = new Headers(request.headers);
     for (const name of [
       'x-corner-client-ip',

@@ -19,7 +19,7 @@ pnpm run dev
 pnpm run dev:seed
 ```
 
-Open **http://127.0.0.1:3000**. The local controller builds the server and its dependencies, explicitly migrates its owned PostgreSQL 17 database, starts an HTTPS Better Auth fixture, then launches the existing API, web, design catalog, and domain/API-package watchers. The API uses **3001** and the catalog **3002**. Vite preserves the browser origin when proxying `/api` and `/auth/callback`. No Neon CLI, project, cloud credentials, or environment file is required. This is the local PostgreSQL approach in [Neon's local-development guide](https://neon.com/guides/local-development-with-neon); native `pg` needs no Neon HTTP proxy.
+Open the product at **http://127.0.0.1:3000**, landing at **http://localhost:3003**, or guide at **http://localhost:3004**. The local controller builds the server and its dependencies, explicitly migrates its owned PostgreSQL 17 database, starts an HTTPS Better Auth fixture, then launches API, web, landing, docs, design catalog, and domain/API-package watchers. The API uses **3001** and the catalog **3002**. The app's distinct loopback hostname keeps host-only account cookies off both public sites; ports alone cannot isolate cookies. Vite preserves the app origin when proxying account/API/OAuth/MCP requests. No Neon CLI, project, cloud credentials, or environment file is required. Native `pg` needs no Neon HTTP proxy.
 
 The explicit seed command creates `empty@corner.test` and `demo@corner.test`, both with password **`Corner-local-only-2026!`**. The first account stays empty; the second has synthetic recipes, a current-week meal plan, food logs, workouts, and progress records. These are local-only credentials, never suitable for a public service. Signup and sign-in use the normal account flow; no onboarding is required. Settings owns optional profile editing and workspace import.
 
@@ -27,9 +27,9 @@ The explicit seed command creates `empty@corner.test` and `demo@corner.test`, bo
 
 Existing owned local databases from before Drizzle use the local-only verified baseline path: installation identity, the original schema/catalog, old audit ledger, and absent native history are checked under the migration lock. A retained `workspace_state` row now refuses before baseline commitment because the relational migration supports empty-only cutover, not backfill or deletion. Empty matching databases may advance through ordinary native migrations; Auth, provider records, seed bookkeeping, keys, and old audit metadata remain untouched. Schema drift or unexpected content stops startup rather than resetting data. Hosted migration and staging provisioning do not use this local-only path.
 
-If the default ports are occupied, use `pnpm run dev --port=45100`; the API and catalog use the next two ports. Occupied listeners are never killed. `pnpm run dev:down` stops owned services and retains all records and keys. To delete the entire owned local database, first finish any work using it, then run `pnpm run dev:reset --confirm-delete-local-data`. Reset retains local keys; restart and explicitly seed again. No existing repository `data/` or `.env` file is modified.
+If the default ports are occupied, use `pnpm run dev --port=45100`; the API, catalog, landing, and guide use the next four ports. Occupied listeners are never killed. `pnpm run dev:down` stops owned services and retains all records and keys. To delete the entire owned local database, first finish any work using it, then run `pnpm run dev:reset --confirm-delete-local-data`. Reset retains local keys; restart and explicitly seed again. No existing repository `data/` or `.env` file is modified.
 
-Running `pnpm dev` again reuses the authenticated controller for this checkout and exits successfully, printing its actual URL. It does not restart, stop, or reseed services; `--port` applies only when starting a new stack. Use `dev:down` before changing ports. Unrelated listeners or a controller with a different installation identity are never adopted.
+Startup prints app, landing, and guide URLs. Running `pnpm dev` again reuses the authenticated controller for this checkout and exits successfully, printing all three actual URLs. It does not restart, stop, or reseed services; `--port` applies only when starting a new stack. Use `dev:down` before changing ports. Unrelated listeners or a controller with a different installation identity are never adopted.
 
 Local children ignore root environment files and inherited database/Auth, Compose, PostgreSQL, Node-option, and `VITE_*` configuration. Docker must use a local Unix-socket context. The seed command contacts only the private local controller socket, not a supplied URL. The Auth fixture does not send email or model requests and does not simulate OTP or password-recovery delivery; it is not live Neon Auth qualification. Its TLS certificate is explicitly trusted by the API and renewed before expiry on startup.
 
@@ -50,6 +50,14 @@ Application calls use the shared `@packages/api` contract and native oRPC at `/a
 For production, `DATABASE_URL` is the pooled application connection; `DATABASE_URL_UNPOOLED` is used only by the explicit, versioned migration command. `NEON_AUTH_BASE_URL` is the managed account service. The app verifies cookies against its uncached session endpoint, so it does not need browser JWTs or `NEON_AUTH_JWKS_URL`. `NEON_AUTH_REQUIRE_EMAIL_VERIFICATION` must match the branch's email/password policy, with verification method **OTP**. SMTP and recovery delivery are configured in Neon; no app-owned Resend adapter remains. See `.env.example`.
 
 The runtime neither requires nor generates model encryption/session-binding keys. Preserve existing `data/`, `.corner-local/`, private configuration, backups, and matching original keys; retirement does not delete or rotate them. The local controller still requires independent Auth/password/control secrets and TLS keys. Production `CORNER_ORIGIN` must match the origin registered with Neon Auth.
+
+### Active workout logging
+
+Starting a planned workout saves its start time and opens the shared bottom drawer on mobile (760px and below), or a centered shared dialog on wider screens. Collapse, Escape, mobile swipe, or navigation leaves a persistent workout bar; resume it from any workspace page. Resizing between the drawer and dialog retains the current draft and timing. Only a successful finish removes the bar. Elapsed time and rest status remain secondary to exercise/set entry. Only one workout can be started at a time.
+
+Checking Done starts rest using the exercise target. Adjust the target by 15 seconds, then choose **Start next set** to record the measured rest interval. Countdown expiry shows Ready without inventing a rest end. A later set completion or workout finish leaves an unobserved rest end unknown. Older sessions keep their unknown start time.
+
+Workout timing is saved with the session and survives workspace export/import. Draft set edits autosave when valid and have account-scoped recovery in the current browser tab across reloads; signing out clears that local recovery. Failed saves retain the active workout and offer Retry. Finishing records elapsed minutes automatically; historical details remain editable. Initial set suggestions finish loading before result fields become editable, so a late prefill cannot overwrite selection while typing.
 
 ### Owner-approved MCP connections
 
@@ -159,6 +167,40 @@ The owner-locked batch commits every created record, provenance row, outcome, re
 
 The 1,000-receipt limit does not prune source identities. After receipt pruning or reconnect, discover the current revision and explicitly submit again: unchanged sources skip without duplication, but an expired receipt cannot replay its original outcome/revision. Workspace export/recovery carries `importSources` with original source fingerprints, even after destination corrections or when only an identity tombstone remains. Recovery binds those identities to the receiving owner, never the original account or OAuth grant. Tombstones prevent re-creating previously imported identities; provenance alone makes an account nonempty for recovery. Supported older exports lacking `importSources` receive an empty collection. Provenance is private workspace data, not proof of source authenticity or a transfer of credentials.
 
+### Static landing page
+
+[`apps/landing`](apps/landing/) is the independently buildable Astro 7.4.4 landing page. It uses the official React integration to render shared `@packages/ui` controls into static HTML without client hydration, with synthetic product examples and no account, database, environment-file, analytics, or external-font dependency.
+
+```bash
+pnpm --filter landing dev
+pnpm --filter landing check
+pnpm run build --filter=landing
+pnpm --filter landing preview
+```
+
+Development binds to and advertises the configured landing hostname (**http://localhost:3003** by default), with fixed `/open-app` and `/open-docs` redirects to the configured loopback app and guide origins. Use the advertised hostname; aliases are intentionally rejected to preserve cookie isolation. The owned `pnpm dev` controller starts all three sites and prints their URLs on initial and reused startup. Standalone built Astro preview remains on **http://127.0.0.1:43203** and serves only static files; use the compiled Node runtime below to exercise the real cross-origin redirects. Root Turbo `check` and `build` discover the workspace automatically. Output is `apps/landing/dist/index.html`, root-relative `/_astro/` assets, and `/favicon.svg`; `.astro/` is generated local metadata, not source.
+
+Hosted routing uses the root domain for this page, `app.<root-domain>` for the existing product, and `docs.<root-domain>` for the guide, with product routes unchanged (never `/app/`). No production domain is guessed. **Open Corner** and **Guide** are native links to `/open-app` and `/open-docs`; Node and Worker accept only GET/HEAD there, redirect to exact configured origins, ignore visitor return URLs, and disable caching. `CORNER_LANDING_ORIGIN` is the exact landing origin. Landing requests never enter Auth/API/OAuth/MCP handlers, have no account cookies or service worker, and unknown paths return 404 rather than the product shell. Unknown hosts are rejected.
+
+### Standalone product guide
+
+[`apps/docs`](apps/docs/) is the public product-user guide, built with Astro 7.4.4 and the official Fumadocs Astro integration. Reviewed MDX in `apps/docs/content/docs` covers accounts, nutrition, training, profile/progress, workspace portability, optional MCP connections, and mobile/troubleshooting. It contains synthetic examples, not operator runbooks or personal records.
+
+```bash
+pnpm --filter docs dev
+pnpm --filter docs check
+pnpm run build --filter=docs
+pnpm --filter docs preview
+```
+
+Development binds to and advertises **http://localhost:3004** by default; the owned full-stack `dev` controller starts docs and moves its port with the other apps. Standalone built preview remains **http://127.0.0.1:43204** and does not implement cross-site handoffs. Docs itself needs no database, account service, private configuration, root environment file, or external search service. Root Turbo `check` and `build` discover the workspace automatically. Development accepts only its exact configured loopback Host and supplies the fixed native `/open-app` redirect.
+
+Static output is `apps/docs/dist`: `/index.html`, nested article `index.html` files, `/404.html`, root-relative `/_astro/` assets, and `/search-index.json`. Fumadocs searches that generated index in the browser; no `/api/search` endpoint exists. Article navigation uses normal full-document links, not Astro ClientRouter. Articles and a native section menu remain available without JavaScript; search and interactive menus are enhanced by React islands.
+
+Astro's built-in CSP emits per-page script hashes in a CSP meta element: scripts permit only the same origin and generated hashes, never `unsafe-inline` or `unsafe-eval`. Styles separately permit the same origin and `unsafe-inline` because Fumadocs/Radix use inline layout attributes and viewport-dependent scroll-lock sheets that cannot be covered by build-time hashes. Node and normal/maintenance Worker compose a docs-HTML HTTP policy for base/object/frame/form restrictions without intersecting away native script hashes; non-HTML responses and app/landing retain the existing full policy. No per-request HTML parsing, nonce/hash registry, or custom renderer is involved. The guide keeps Corner's light tokens and disables the optional runtime theme provider.
+
+`CORNER_DOCS_ORIGIN` is the exact guide origin. Its shared **Open Corner** control and no-JavaScript fallback use native `/open-app`; only the host supplies the fixed app destination. Node serves real nested article indexes and static search from `apps/docs/dist`; Worker serves the same bytes from its private docs asset tree. Docs never inherits product fallback, account/API/OAuth/MCP, service-worker or private bundle paths. Do not embed environment-specific origins in content or treat standalone preview as hosted security qualification.
+
 ### Build and run production locally
 
 ```bash
@@ -167,13 +209,13 @@ pnpm run db:migrate
 pnpm start
 ```
 
-The build compiles the nutrition, training, workspace, and API packages in dependency order, then builds `server` and `web` as separate workspace tasks. The compiled server starts on port 3000 and serves `apps/web/dist` alongside its API, preserving the same browser origin. Production runs ordinary JavaScript from `apps/server/dist`; it does not run Vite or require a TypeScript loader.
+The build compiles shared domain/API packages, server, web product, catalog, landing, and guide. One compiled Node process serves app/API at `CORNER_ORIGIN` (default **http://127.0.0.1:3000**), landing at `CORNER_LANDING_ORIGIN` (default **http://localhost:3000**), and docs at `CORNER_DOCS_ORIGIN` (default **http://docs.localhost:3000**) on its configured listener. All three static builds are required. Hosted origins require explicit distinct HTTPS hostnames; local public origins must be loopback and use a different hostname from the app. Production runs ordinary JavaScript from `apps/server/dist`, not Vite or a TypeScript loader.
 
 ### Workspace commands
 
 | Root command                                     | Result                                                                                                                                       |
 | ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `pnpm run dev`                                   | Isolated local PostgreSQL/Auth and development apps; optional `--port=45100` selects three consecutive loopback ports                        |
+| `pnpm run dev`                                   | Isolated local PostgreSQL/Auth and apps; optional `--port=45100` selects app/API/catalog/landing/docs on five consecutive loopback ports     |
 | `pnpm run dev:seed`                              | Explicitly create empty/demo local users; preserve existing fixture edits                                                                    |
 | `pnpm run dev:down`                              | Stop owned local services without deleting data                                                                                              |
 | `pnpm run dev:reset --confirm-delete-local-data` | Delete only the owned local database; retain keys                                                                                            |
@@ -185,8 +227,8 @@ The build compiles the nutrition, training, workspace, and API packages in depen
 | `pnpm test`                                      | Native Node server suite and Vitest web suite, with Turbo shared-build prerequisites                                                         |
 | `pnpm run test:browser`                          | After a full build: Chromium desktop and WebKit phone journeys against disposable PostgreSQL/Auth on port 43141                              |
 | `pnpm run smoke`                                 | Actual compiled-server account, proxy, health, and shutdown checks                                                                           |
-| `pnpm run smoke:dev`                             | Actual two-app development proxy, session, and shared exercise-catalog checks; excludes the design catalog                                   |
-| `pnpm start`                                     | The compiled production server and built web app                                                                                             |
+| `pnpm run smoke:dev`                             | Actual app/API/landing/docs development stack, fixed native hops, static guide search, session, and shared exercise catalog; excludes design |
+| `pnpm start`                                     | One compiled Node server for app/API and both built public sites at exact configured origins                                                 |
 | `pnpm run db:generate`                           | Generate reviewed SQL and snapshots from the server-owned Drizzle schema; no database connection required                                    |
 | `pnpm run db:check`                              | Check Drizzle Kit migration snapshot consistency                                                                                             |
 | `pnpm run db:migrate`                            | Apply checked-in Drizzle migrations through `DATABASE_URL_UNPOOLED`, after a build                                                           |
@@ -313,11 +355,11 @@ The `relational-v1` transition appends `0001_zippy_silver_sable.sql` to native D
 
 ## Hosted deployment preparation
 
-Hosted mode requires an HTTPS origin and the Neon Postgres/Auth URLs, not model encryption/session-binding secrets. Register the public origin as a Neon Auth trusted domain. Configure your own SMTP provider in Neon for production, enable required email verification with method OTP, and set `NEON_AUTH_REQUIRE_EMAIL_VERIFICATION=true`.
+Hosted mode requires explicit HTTPS app, landing and docs origins and Neon Postgres/Auth URLs, not model encryption/session-binding secrets. Register only the app origin (`CORNER_ORIGIN`) as a Neon Auth trusted domain, never either public origin. Configure your own SMTP provider in Neon for production, require email verification with method OTP, and set `NEON_AUTH_REQUIRE_EMAIL_VERIFICATION=true`.
 
 Neon owns password recovery, verification codes, session expiry, and managed service rate limits. Corner retains its code-entry, reset-password, loading, and error screens, and requires a live managed session before every protected request. No real inbox delivery is implied by an enabled policy.
 
-For **Cloudflare Workers**, follow [HOSTING.md → Cloudflare Workers](HOSTING.md#cloudflare-workers). Production is one full-stack Worker named `corner`; staging is native Preview `staging` under that Worker, not another named Worker. Both consume the identical immutable format-4 bundle/assets/Drizzle migrator without rebuilding. Expected origins are `https://corner.adam-nathaniel-woo.workers.dev` and `https://staging-corner.adam-nathaniel-woo.workers.dev`; an exact production HTTPS custom domain is optional. Keep `preview_urls` enabled and Access limited to the exact staging alias and Preview deployment URLs, never production. Staging retains isolated persistent Neon DB/Auth/keys and synthetic records. There is no frontend Worker or service binding. Feature branches are tested locally; no feature app/database previews are provisioned. Disable independent Cloudflare Builds/automatic Preview triggers. `pnpm run build:workers` dry-runs the single Worker without publishing. Production `corner` must exist before creating its Preview; follow the separate [cutover gates](HOSTING.md#one-time-protected-configuration-and-cutover-order). Source implementation is not evidence of live migration.
+For **Cloudflare Workers**, follow [HOSTING.md → Cloudflare Workers](HOSTING.md#cloudflare-workers). Production is one full-stack Worker named `corner`; staging uses native Previews under it: `staging` for landing at `https://staging-corner.adam-nathaniel-woo.workers.dev`, `staging-app` for app at `https://staging-app-corner.adam-nathaniel-woo.workers.dev`, and a distinct docs Preview derived only from explicitly protected matched-account `CORNER_DOCS_ORIGIN`. There is no default or newly invented docs hostname. All three consume identical immutable format-4 Worker, app/landing/docs assets, and Drizzle migrator bytes without rebuilding. Migrate once, upload app/docs/landing in that order, and verify each independent deployment ID; partial uploads remain on HOLD rather than silently retrying. Production requires the chosen root, `app.<root>`, and `docs.<root>` HTTPS origins before release. Keep Preview URLs enabled and Access on all three exact staging sites and native deployment URLs, never production. Preserve isolated staging DB/Auth/keys, synthetic records, and immutable single-site/paired format-4 recovery inputs under their matching contracts. Do not create frontend Workers, service bindings, per-feature infrastructure, or independent Cloudflare builds. `pnpm run build:workers` dry-runs without publishing. Follow the separate [cutover gates](HOSTING.md#rootappdocs-origin-cutover); source checks do not establish live configuration or retained-target upgrade/recovery acceptance.
 
 For a **server you control**, the same guide covers one Corner container behind Caddy. `scripts/init-hosted.mjs` creates a proxy proof without printing or overwriting existing configuration; it does not create a cloud server or configure DNS or SMTP. Keep the existing one-process Node deployment topology.
 
@@ -335,7 +377,7 @@ pnpm run verify -- --full --report /tmp/corner-verification.jsonl
 
 Server tests, browser journeys, and runtime smoke checks require `CORNER_TEST_DATABASE_URL`; they never fall back to the real `DATABASE_URL`. Each fixture owns a random PostgreSQL schema and drops only that schema. Server files run sequentially in separate Node processes; web files run sequentially in isolated Vitest forks. Better Auth is a **test-only** dependency for a local managed-service fixture; no test requires live email delivery, model access, or cloud credentials.
 
-Production smoke starts disposable compiled servers on loopback ports 14337 and 14338, below the default Linux/macOS ephemeral TCP ranges so outbound fixture connections cannot consume a later scenario's listener port. Development smoke starts only the web/API processes and five domain/API-package watchers on 43139 and 43140, excluding the independent design catalog. Task-prefixed streaming logs expose readiness without waiting for persistent tasks to exit. Both use actual PostgreSQL and a private local HTTPS auth fixture, exercise cookie sessions and proxy boundaries, and clean up only their own resources. The shared Auth fixture excludes the application's configured port when accepting an OS-assigned listener port. An unrelated listener on a required port remains a startup failure; smoke never kills it. Run development smoke in a clean checkout without `.env`, `.env.local`, or Vite environment files; never remove a user's configuration just to pass it.
+Production smoke starts disposable compiled servers on loopback ports 14337 and 14338, below the default Linux/macOS ephemeral TCP ranges so outbound fixture connections cannot consume a later scenario's listener port. Development smoke finds four available ports between 14339 and 32767 for app/API/landing/docs, checking both `127.0.0.1` and `localhost` and skipping occupied ports. It starts those four processes plus four domain/API-package watchers, excluding the independent design catalog. Task-prefixed streaming logs expose readiness without waiting for persistent tasks to exit. Both use actual PostgreSQL and a private local HTTPS auth fixture, exercise cookie sessions and proxy boundaries, and clean up only their own resources. The shared Auth fixture excludes the application's configured port when accepting an OS-assigned listener port. Smoke never stops unrelated listeners; an occupied required production port, exhausted development port range, or competing bind after port selection remains a startup failure. Run development smoke in a clean checkout without `.env`, `.env.local`, or Vite environment files; never remove a user's configuration just to pass it.
 
 Worker smoke uses an in-process, fixed-destination WebSocket-to-TCP proxy so the production Neon WebSocket driver exercises the actual PostgreSQL protocol against the disposable schema. It requires no cloud Neon connection or separately installed proxy service. It checks concurrent idempotent writes, owner isolation, transaction rollback after a receipt-write failure, and clean candidate database shutdown. Ordinary `pnpm dev`, Node runtime checks, and explicit migrations continue using native `pg`.
 

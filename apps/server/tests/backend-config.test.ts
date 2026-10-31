@@ -137,6 +137,8 @@ test('hosted startup needs no retired AI secrets and still rejects insecure orig
     CORNER_DATA_DIR: dataDir,
     CORNER_DEPLOYMENT: 'hosted',
     CORNER_ORIGIN: 'https://corner.example',
+    CORNER_LANDING_ORIGIN: 'https://example.test',
+    CORNER_DOCS_ORIGIN: 'https://docs.example.test',
   };
   assert.throws(
     () => loadConfig({ ...neonEnvironment, ...env, CORNER_ORIGIN: 'http://corner.example' }),
@@ -152,6 +154,63 @@ test('hosted startup needs no retired AI secrets and still rejects insecure orig
         CORNER_ORIGIN: 'http://public.example',
       }),
     /loopback/,
+  );
+});
+
+test('landing origin rejects shared cookie hosts, credentials, noncanonical URLs and public local origins', () => {
+  const env = {
+    ...neonEnvironment,
+    CORNER_DEPLOYMENT: 'hosted',
+    CORNER_ORIGIN: 'https://app.example.test',
+    CORNER_LANDING_ORIGIN: 'https://example.test',
+    CORNER_DOCS_ORIGIN: 'https://docs.example.test',
+  };
+  assert.equal(loadConfig(env).landingOrigin, 'https://example.test');
+  for (const landing of [
+    undefined,
+    'http://example.test',
+    'https://app.example.test:444',
+    'https://user:password@example.test',
+    'https://example.test/',
+    'https://example.test/path',
+    'https://example.test?next=https://evil.test',
+  ])
+    assert.throws(
+      () => loadConfig({ ...env, CORNER_LANDING_ORIGIN: landing }),
+      /CORNER_LANDING_ORIGIN/,
+    );
+  assert.throws(
+    () => loadConfig({ ...neonEnvironment, CORNER_LANDING_ORIGIN: 'http://public.example.test' }),
+    /CORNER_LANDING_ORIGIN/,
+  );
+});
+
+test('docs origin stays separate from app cookies and exact hosted sites', () => {
+  const environment = {
+    ...neonEnvironment,
+    CORNER_DEPLOYMENT: 'hosted',
+    CORNER_ORIGIN: 'https://app.example.test',
+    CORNER_LANDING_ORIGIN: 'https://example.test',
+    CORNER_DOCS_ORIGIN: 'https://docs.example.test',
+  };
+  for (const docs of [
+    undefined,
+    'http://docs.example.test',
+    'https://app.example.test:444',
+    'https://example.test',
+    'https://user:secret@docs.example.test',
+    'https://docs.example.test/',
+    'https://docs.example.test/article',
+    'https://docs.example.test?next=https://evil.test',
+  ])
+    assert.throws(
+      () => loadConfig({ ...environment, CORNER_DOCS_ORIGIN: docs }),
+      /CORNER_DOCS_ORIGIN/,
+    );
+  assert.equal(loadConfig(environment).docsOrigin, environment.CORNER_DOCS_ORIGIN);
+  assert.throws(
+    () => loadConfig({ ...neonEnvironment, CORNER_DOCS_ORIGIN: 'http://127.0.0.1:3004' }),
+    /CORNER_DOCS_ORIGIN/,
   );
 });
 

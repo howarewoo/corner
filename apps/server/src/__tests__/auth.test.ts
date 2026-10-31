@@ -6,6 +6,8 @@ import type { Config } from '../config.ts';
 
 const config: Config = {
   origin: 'http://127.0.0.1:3000',
+  landingOrigin: 'http://localhost:3003',
+  docsOrigin: 'http://localhost:3004',
   host: '127.0.0.1',
   port: 3000,
   deployment: 'local',

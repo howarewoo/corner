@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { access, copyFile, lstat, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
+import { access, copyFile, lstat, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { dirname, join, resolve, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -87,13 +87,30 @@ export async function verifyArtifact(directory) {
     )
       throw new Error(`Forbidden payload: ${name}`);
   }
+  const docs = names.some((name) => name.startsWith('assets/docs/'));
+  const dualOrigin = Boolean(files['assets/app/index.html'] && files['assets/landing/index.html']);
+  if (
+    docs
+      ? !dualOrigin ||
+        !files['assets/docs/index.html'] ||
+        !files['assets/docs/search-index.json'] ||
+        names.some(
+          (name) => name.startsWith('assets/') && !/^assets\/(?:app|landing|docs)\//.test(name),
+        )
+      : dualOrigin
+        ? names.some(
+            (name) => name.startsWith('assets/') && !/^assets\/(?:app|landing)\//.test(name),
+          )
+        : !files['assets/index.html'] ||
+          names.some((name) => /^assets\/(?:app|landing|docs)\//.test(name))
+  )
+    throw new Error('Invalid or mixed artifact asset layout.');
   if (
     manifest.configurationEntry !== 'wrangler.json' ||
     manifest.migrationEntry !== 'migration/dist/migrate.mjs' ||
     manifest.workerEntry !== 'worker/worker.js' ||
     !files[manifest.workerEntry] ||
     !files[manifest.migrationEntry] ||
-    !files['assets/index.html'] ||
     files['wrangler.json'] !== manifest.configurationSha256 ||
     (manifest.maintenanceWorkerEntry !== undefined &&
       (manifest.maintenanceWorkerEntry !== 'worker/maintenance-worker.js' ||
@@ -169,6 +186,7 @@ export async function verifyArtifact(directory) {
     manifest,
     digest: hash(bytes),
     generation: relational ? 'relational-v1' : 'document-v1',
+    assetLayout: docs ? 'three-origin' : dualOrigin ? 'dual-origin' : 'single-site',
   };
 }
 
@@ -218,6 +236,18 @@ async function copyTree(source, destination) {
   }
 }
 
+export async function assembleAssets({ root: sourceRoot = root, out }) {
+  sourceRoot = resolve(sourceRoot);
+  out = resolve(out);
+  for (const site of ['web', 'landing', 'docs'])
+    await access(join(sourceRoot, `apps/${site}/dist/index.html`));
+  await access(join(sourceRoot, 'apps/docs/dist/search-index.json'));
+  await mkdir(out);
+  await copyTree(join(sourceRoot, 'apps/web/dist'), join(out, 'app'));
+  await copyTree(join(sourceRoot, 'apps/landing/dist'), join(out, 'landing'));
+  await copyTree(join(sourceRoot, 'apps/docs/dist'), join(out, 'docs'));
+}
+
 export async function packageArtifact({ root: sourceRoot = root, out, sourceSha }) {
   sourceRoot = resolve(sourceRoot);
   out = resolve(out);
@@ -247,7 +277,7 @@ export async function packageArtifact({ root: sourceRoot = root, out, sourceSha 
   await mkdir(dirname(out), { recursive: true });
   await mkdir(out); // Deliberately not recursive: existing outputs are immutable.
   await copyTree(workerSource, join(out, 'worker'));
-  await copyTree(join(sourceRoot, 'apps/web/dist'), join(out, 'assets'));
+  await assembleAssets({ root: sourceRoot, out: join(out, 'assets') });
   await copyTree(join(sourceRoot, 'apps/server/migrations'), join(out, 'migration/migrations'));
   await mkdir(join(out, 'migration/dist'), { recursive: true });
   const { build } = await import(webRequire.resolve('esbuild'));
@@ -447,12 +477,19 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   }
   if (!directory) throw new Error('Artifact directory required.');
   let result;
-  if (command === 'package' && Object.keys(options).every((key) => key === 'source'))
+  if (command === 'assets' && !Object.keys(options).length) {
+    const out = resolve(directory);
+    if (out !== join(root, 'apps/server/dist/assets'))
+      throw new Error('Source assets must use apps/server/dist/assets.');
+    await rm(out, { recursive: true, force: true });
+    await assembleAssets({ out });
+    result = { directory: out };
+  } else if (command === 'package' && Object.keys(options).every((key) => key === 'source'))
     result = await packageArtifact({ out: directory, sourceSha: options.source });
   else if (command === 'verify' && !Object.keys(options).length)
     result = await verifyArtifact(directory);
   else if (command === 'qualify' && !options.source)
     result = await qualifyArtifact({ candidate: directory, ...options });
-  else throw new Error('Expected package, verify, or qualify with valid options.');
+  else throw new Error('Expected assets, package, verify, or qualify with valid options.');
   process.stdout.write(`${JSON.stringify(result)}\n`);
 }
