@@ -105,6 +105,7 @@ export async function sessionRecords(
       changeReason: row.change_reason,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
+      ...(row.timing === null ? {} : { timing: row.timing }),
       exercises: exercises
         .filter((exercise) => exercise.session_id === row.id)
         .map((exercise) => ({
@@ -167,6 +168,7 @@ export async function saveSession(
     change_reason: session.changeReason,
     created_at: session.createdAt,
     updated_at: session.updatedAt,
+    timing: session.timing ?? null,
   };
   await connection
     .insert(workoutSessions)

@@ -51,6 +51,14 @@ For production, `DATABASE_URL` is the pooled application connection; `DATABASE_U
 
 The runtime neither requires nor generates model encryption/session-binding keys. Preserve existing `data/`, `.corner-local/`, private configuration, backups, and matching original keys; retirement does not delete or rotate them. The local controller still requires independent Auth/password/control secrets and TLS keys. Production `CORNER_ORIGIN` must match the origin registered with Neon Auth.
 
+### Active workout logging
+
+Starting a planned workout saves its start time and opens the shared bottom drawer on mobile (760px and below), or a centered shared dialog on wider screens. Collapse, Escape, mobile swipe, or navigation leaves a persistent workout bar; resume it from any workspace page. Resizing between the drawer and dialog retains the current draft and timing. Only a successful finish removes the bar. Elapsed time and rest status remain secondary to exercise/set entry. Only one workout can be started at a time.
+
+Checking Done starts rest using the exercise target. Adjust the target by 15 seconds, then choose **Start next set** to record the measured rest interval. Countdown expiry shows Ready without inventing a rest end. A later set completion or workout finish leaves an unobserved rest end unknown. Older sessions keep their unknown start time.
+
+Workout timing is saved with the session and survives workspace export/import. Draft set edits autosave when valid and have account-scoped recovery in the current browser tab across reloads; signing out clears that local recovery. Failed saves retain the active workout and offer Retry. Finishing records elapsed minutes automatically; historical details remain editable. Initial set suggestions finish loading before result fields become editable, so a late prefill cannot overwrite selection while typing.
+
 ### Owner-approved MCP connections
 
 An external MCP client can connect to **`<CORNER_ORIGIN>/mcp`** using Streamable HTTP. This is a separate delegated connection, not an in-app model connection. Corner does not receive the client's conversations, memories, model credentials, or prompts beyond actual MCP tool arguments.
