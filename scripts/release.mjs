@@ -777,6 +777,18 @@ export async function publicChecks(origin, versionId, fetcher = fetch, access = 
   }
 }
 
+function hasOnlyAccessCookies(response, headers) {
+  // Access may set its authentication cookie before the request reaches the Worker.
+  return response.headers
+    .getSetCookie()
+    .every(
+      (cookie) =>
+        headers['CF-Access-Client-Id'] &&
+        headers['CF-Access-Client-Secret'] &&
+        cookie.startsWith('CF_Authorization='),
+    );
+}
+
 async function landingChecks(origin, versionId, fetcher, access) {
   const landing = new URL(access.landingOrigin);
   const check = (value, message) => {
@@ -799,16 +811,8 @@ async function landingChecks(origin, versionId, fetcher, access) {
       signal: AbortSignal.timeout(30000),
       headers,
     });
-    // Access may set its authentication cookie before the request reaches the Worker.
     check(
-      response.headers
-        .getSetCookie()
-        .every(
-          (cookie) =>
-            headers['CF-Access-Client-Id'] &&
-            headers['CF-Access-Client-Secret'] &&
-            cookie.startsWith('CF_Authorization='),
-        ),
+      hasOnlyAccessCookies(response, headers),
       'Public landing must not set application cookies',
     );
     return response;
@@ -891,6 +895,7 @@ async function docsChecks(origin, versionId, fetcher, access) {
       !docs.password,
     'Public docs must use the explicit distinct origin',
   );
+  const headers = { ...publicAccessHeaders(access), 'Cache-Control': 'no-cache' };
   const call = async (path, method = 'GET') => {
     const url = new URL(path, docs);
     check(url.origin === docs.origin, 'Public docs assets must remain same-origin');
@@ -898,10 +903,10 @@ async function docsChecks(origin, versionId, fetcher, access) {
       method,
       redirect: 'manual',
       signal: AbortSignal.timeout(30000),
-      headers: { ...publicAccessHeaders(access), 'Cache-Control': 'no-cache' },
+      headers,
     });
     check(
-      !response.headers.has('Set-Cookie') && !response.headers.has('Service-Worker-Allowed'),
+      hasOnlyAccessCookies(response, headers) && !response.headers.has('Service-Worker-Allowed'),
       'Public docs must not acquire application cookies or service-worker scope',
     );
     return response;

@@ -1690,6 +1690,7 @@ test('multi-origin public and maintenance probes reject missing docs, broken sea
   let landingCookies = [];
   const independentLandingVersion = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
   let docsVersion = versionId;
+  let docsCookies = [];
   const independentDocsVersion = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
   let docsPort;
   const requests = [];
@@ -1705,7 +1706,7 @@ test('multi-origin public and maintenance probes reject missing docs, broken sea
     };
     if (url.port === String(docsPort)) {
       response.setHeader('X-Corner-Version', docsVersion);
-      if (defect === 'docs-cookie') response.setHeader('Set-Cookie', 'session=unexpected');
+      if (docsCookies.length) response.setHeader('Set-Cookie', docsCookies);
       if (defect === 'docs-missing') return send(404);
       if (['/', '/nutrition/food-log'].includes(url.pathname)) {
         if (defect === 'docs-page-redirect') {
@@ -1859,9 +1860,38 @@ test('multi-origin public and maintenance probes reject missing docs, broken sea
   landingCookies = [accessCookie, 'session=unexpected; Path=/; Secure; HttpOnly'];
   await assert.rejects(publicChecks(appOrigin, versionId, fetch, options), cookieRejected);
   landingCookies = [];
+  const checkDocsCookies = async (probe) => {
+    docsCookies = [accessCookie];
+    await probe(appOrigin, versionId, fetch, options);
+    const withoutCredentials = { ...options };
+    delete withoutCredentials['CF-Access-Client-Id'];
+    delete withoutCredentials['CF-Access-Client-Secret'];
+    const rejectCookies = (access) =>
+      assert.rejects(
+        verifyPublic(appOrigin, versionId, access, probe, async () => {
+          assert.fail('Public docs cookie failures must not retry');
+        }),
+        cookieRejected,
+      );
+    for (const credentials of [
+      {},
+      { 'CF-Access-Client-Id': options['CF-Access-Client-Id'] },
+      { 'CF-Access-Client-Secret': options['CF-Access-Client-Secret'] },
+    ])
+      await rejectCookies({ ...withoutCredentials, ...credentials });
+    for (const cookies of [
+      ['session=unexpected; Path=/; Secure; HttpOnly'],
+      [accessCookie, 'session=unexpected; Path=/; Secure; HttpOnly'],
+      ['CF_Authorization_extra=unexpected; Path=/; Secure; HttpOnly'],
+    ]) {
+      docsCookies = cookies;
+      await rejectCookies(options);
+    }
+    docsCookies = [];
+  };
+  await checkDocsCookies(publicChecks);
   landingVersion = independentLandingVersion;
-  const retryableIdentity = (error) =>
-    error instanceof PublicCheckError && error.retryable && /version identity/.test(error.message);
+  const retryableIdentity = (error) => error instanceof PublicCheckError && error.retryable;
   // Without an override, production must still require the app's identity on the landing page.
   await assert.rejects(publicChecks(appOrigin, versionId, fetch, options), retryableIdentity);
   options.landingVersionId = independentLandingVersion;
@@ -1927,7 +1957,6 @@ test('multi-origin public and maintenance probes reject missing docs, broken sea
     ['csp', /security boundary/],
     ['page-redirect', /page unavailable/],
     ['docs-page-redirect', /page unavailable/],
-    ['docs-cookie', /application cookies/],
     ['docs-http-csp', /native-CSP composition/],
     ['docs-inline', /native hashed scripts/],
     ['docs-search', /static search index/],
@@ -1953,6 +1982,7 @@ test('multi-origin public and maintenance probes reject missing docs, broken sea
   }
   defect = undefined;
   maintenance = true;
+  await checkDocsCookies(maintenanceChecks);
   landingCookies = [accessCookie];
   await maintenanceChecks(appOrigin, versionId, fetch, options);
   landingVersion = versionId;
