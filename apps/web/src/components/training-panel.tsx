@@ -2003,7 +2003,7 @@ export default function TrainingPanel({
                           {session.status === 'completed'
                             ? session.durationMinutes === null
                               ? 'Time not logged'
-                              : `${session.durationMinutes} min logged`
+                              : `${n(session.durationMinutes, 1)} min logged`
                             : session.plannedMinutes === null
                               ? 'Time not planned'
                               : `${session.plannedMinutes} min planned`}
@@ -2355,7 +2355,7 @@ export default function TrainingPanel({
                         {todayLabel(session.date)} ·{' '}
                         {session.durationMinutes === null
                           ? 'Time not logged'
-                          : `${session.durationMinutes} min`}
+                          : `${n(session.durationMinutes, 1)} min`}
                         {doneSets(session) ? ` · ${doneSets(session)} working sets` : ''}
                       </small>
                     </span>

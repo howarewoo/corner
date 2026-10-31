@@ -880,6 +880,65 @@ test.each([false, true])(
   },
 );
 
+test.each([
+  [2.8017666666666665, '2.8'],
+  [20, '20'],
+  [null, null],
+] as const)(
+  'completed duration %s is readable without changing saved timing',
+  async (duration, label) => {
+    const recorded: WorkoutSession = {
+      ...historicalSession,
+      date: plannedSession.date,
+      durationMinutes: duration,
+      ...(duration === null
+        ? {}
+        : {
+            timing: {
+              startedAt: plannedSession.createdAt,
+              endedAt: new Date(
+                Date.parse(plannedSession.createdAt) + duration * 60000,
+              ).toISOString(),
+              rests: [],
+            },
+          }),
+    };
+    const state = createInitialState();
+    state.training.sessions = [recorded];
+    const mutate = vi.fn(async (..._args: unknown[]) => true);
+    render(
+      <QueryClientProvider client={runtime.queryClient}>
+        <TrainingPanel
+          state={state}
+          settings={state.settings}
+          selectedDate={recorded.date}
+          onDateChange={() => {}}
+          mutate={mutate}
+          busy={false}
+          notify={() => {}}
+        />
+      </QueryClientProvider>,
+    );
+    expect(
+      await screen.findByText(label === null ? 'Time not logged' : `${label} min logged`),
+    ).toBeVisible();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('tab', { name: 'Progress' }));
+    const row = screen.getByRole('button', { name: /Synthetic strength session/ });
+    expect(row).toHaveTextContent(label === null ? 'Time not logged' : `${label} min`);
+    if (duration !== null && duration !== Number(label))
+      expect(row).not.toHaveTextContent(String(duration));
+    await user.click(row);
+    expect(screen.getByLabelText('Actual minutes', { exact: true })).toHaveValue(duration);
+    await user.click(screen.getByRole('button', { name: 'Save workout' }));
+    await waitFor(() => expect(mutate).toHaveBeenCalledTimes(1));
+    expect(mutate.mock.calls[0]?.[0]).toMatchObject({
+      type: 'training.session.save',
+      data: { session: { durationMinutes: duration } },
+    });
+  },
+);
+
 test('an actual-only completed workout shows no invented plan and saves its actuals with plan fields still unknown', async () => {
   const recorded: WorkoutSession = {
     ...historicalSession,
