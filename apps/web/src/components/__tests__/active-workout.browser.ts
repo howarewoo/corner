@@ -53,6 +53,17 @@ test.describe('ambiguous workout saves', () => {
       external: true,
     });
   });
+  test('unfinished planned minutes preserves the complete draft across reload', async ({
+    page,
+    account,
+  }) => {
+    await exerciseAmbiguousSave(page, account, {
+      lostResponse: true,
+      reload: true,
+      external: false,
+      unfinished: true,
+    });
+  });
 });
 
 async function exerciseAmbiguousSave(
@@ -64,6 +75,7 @@ async function exerciseAmbiguousSave(
     external: boolean;
     delayed?: boolean;
     undo?: boolean;
+    unfinished?: boolean;
   },
 ) {
   const latestNotes = options.undo ? '' : 'AB';
@@ -194,6 +206,19 @@ async function exerciseAmbiguousSave(
       },
     });
   }
+  if (options.unfinished) {
+    await overlay.getByLabel('Planned minutes', { exact: true }).fill('');
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const key = Object.keys(sessionStorage).find((key) =>
+            key.startsWith('corner-active-workout:'),
+          )!;
+          return JSON.parse(sessionStorage.getItem(key)!).session.plannedMinutes;
+        }),
+      )
+      .toBeNull();
+  }
   failReads = false;
   if (options.reload) {
     await page.reload();
@@ -202,6 +227,11 @@ async function exerciseAmbiguousSave(
     await expect(
       overlay.getByPlaceholder('How did your strength, conditioning, or boxing quality feel?'),
     ).toHaveValue(latestNotes);
+  }
+  if (options.unfinished) {
+    await expect(overlay.getByLabel('Planned minutes', { exact: true })).toHaveValue('');
+    expect((await read()).notes).toBe('A');
+    await overlay.getByLabel('Planned minutes', { exact: true }).fill('35');
   }
   if (options.external) {
     await expect(overlay.getByRole('status')).toContainText('Your draft is kept');
@@ -212,6 +242,22 @@ async function exerciseAmbiguousSave(
     await expect(
       overlay.getByPlaceholder('How did your strength, conditioning, or boxing quality feel?'),
     ).toHaveValue(latestNotes);
+    await overlay.getByRole('button', { name: 'Load saved version', exact: true }).click();
+    await overlay.getByRole('button', { name: 'Keep draft', exact: true }).click();
+    await expect(
+      overlay.getByPlaceholder('How did your strength, conditioning, or boxing quality feel?'),
+    ).toHaveValue(latestNotes);
+    await overlay.getByRole('button', { name: 'Load saved version', exact: true }).click();
+    await overlay
+      .getByRole('button', { name: 'Discard draft and load saved', exact: true })
+      .click();
+    await overlay.getByRole('button', { name: 'Workout details', exact: true }).click();
+    await expect(
+      overlay.getByPlaceholder('How did your strength, conditioning, or boxing quality feel?'),
+    ).toHaveValue('Changed in another tab');
+    await overlay.getByRole('button', { name: 'Finish workout', exact: true }).click();
+    await expect(overlay).not.toBeVisible();
+    expect(await read()).toMatchObject({ status: 'completed', notes: 'Changed in another tab' });
   } else {
     await expect.poll(async () => (await read()).notes).toBe(latestNotes);
     if (options.undo) {
