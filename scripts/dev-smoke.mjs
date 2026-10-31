@@ -1,7 +1,7 @@
 // Exercise the real four-workspace development stack with disposable local
 // data. No provider connection, account email, or external request is needed.
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { access, mkdtemp, rm } from 'node:fs/promises';
 import { request as httpRequest } from 'node:http';
 import { createServer } from 'node:net';
@@ -55,13 +55,28 @@ await Promise.all(
     (port) =>
       new Promise((resolve, reject) => {
         const probe = createServer((socket) => socket.destroy());
-        probe.once('error', (error) =>
+        probe.once('error', (error) => {
+          if (
+            error.code === 'EADDRINUSE' &&
+            process.env.GITHUB_ACTIONS === 'true' &&
+            process.platform === 'linux'
+          ) {
+            const sockets = spawnSync('ss', ['-tanp', `sport = :${port}`], {
+              encoding: 'utf8',
+              timeout: 2000,
+              maxBuffer: 16 * 1024,
+            });
+            process.stderr.write(
+              `Development smoke socket snapshot (${new Date().toISOString()}, port ${port}, ss status ${sockets.status ?? sockets.error?.code ?? 'unknown'}):\n`,
+            );
+            process.stderr.write((sockets.stdout ?? '').slice(0, 16 * 1024));
+          }
           reject(
             new Error(
               `Development smoke port ${port} is unavailable (${error.code ?? 'listen failed'}).`,
             ),
-          ),
-        );
+          );
+        });
         probe.listen(port, '127.0.0.1', () => probe.close(resolve));
       }),
   ),
