@@ -765,7 +765,18 @@ async function landingChecks(origin, versionId, fetcher, access) {
       signal: AbortSignal.timeout(30000),
       headers,
     });
-    check(!response.headers.has('Set-Cookie'), 'Public landing must not set application cookies');
+    // Access may set its authentication cookie before the request reaches the Worker.
+    check(
+      response.headers
+        .getSetCookie()
+        .every(
+          (cookie) =>
+            headers['CF-Access-Client-Id'] &&
+            headers['CF-Access-Client-Secret'] &&
+            cookie.startsWith('CF_Authorization='),
+        ),
+      'Public landing must not set application cookies',
+    );
     return response;
   };
   let page;

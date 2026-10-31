@@ -1623,6 +1623,7 @@ test('dual-origin public and maintenance probes exercise fixed redirects and roo
   let defect;
   let appOrigin;
   let landingVersion = versionId;
+  let landingCookies = [];
   const independentLandingVersion = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
   const requests = [];
   const server = createServer((request, response) => {
@@ -1637,6 +1638,7 @@ test('dual-origin public and maintenance probes exercise fixed redirects and roo
     };
     if (url.hostname === 'localhost') {
       response.setHeader('X-Corner-Version', landingVersion);
+      if (landingCookies.length) response.setHeader('Set-Cookie', landingCookies);
       if (defect === 'cookie') response.setHeader('Set-Cookie', 'session=unexpected');
       if (url.pathname === '/') {
         if (defect === 'unavailable') return send(503);
@@ -1710,6 +1712,25 @@ test('dual-origin public and maintenance probes exercise fixed redirects and roo
     assert.equal(request.headers['cf-access-client-id'], options['CF-Access-Client-Id']);
     assert.equal(request.headers['cf-access-client-secret'], options['CF-Access-Client-Secret']);
   }
+  const accessCookie = 'CF_Authorization=synthetic-access-session; Path=/; Secure; HttpOnly';
+  landingCookies = [accessCookie];
+  await publicChecks(appOrigin, versionId, fetch, options);
+  const cookieRejected = (error) => error instanceof PublicCheckError && !error.retryable;
+  for (const credentials of [
+    {},
+    { 'CF-Access-Client-Id': options['CF-Access-Client-Id'] },
+    { 'CF-Access-Client-Secret': options['CF-Access-Client-Secret'] },
+  ])
+    await assert.rejects(
+      publicChecks(appOrigin, versionId, fetch, {
+        landingOrigin: options.landingOrigin,
+        ...credentials,
+      }),
+      cookieRejected,
+    );
+  landingCookies = [accessCookie, 'session=unexpected; Path=/; Secure; HttpOnly'];
+  await assert.rejects(publicChecks(appOrigin, versionId, fetch, options), cookieRejected);
+  landingCookies = [];
   landingVersion = independentLandingVersion;
   const retryableIdentity = (error) =>
     error instanceof PublicCheckError && error.retryable && /version identity/.test(error.message);
@@ -1763,6 +1784,7 @@ test('dual-origin public and maintenance probes exercise fixed redirects and roo
   }
   defect = undefined;
   maintenance = true;
+  landingCookies = [accessCookie];
   await maintenanceChecks(appOrigin, versionId, fetch, options);
   landingVersion = versionId;
   await assert.rejects(maintenanceChecks(appOrigin, versionId, fetch, options), retryableIdentity);
