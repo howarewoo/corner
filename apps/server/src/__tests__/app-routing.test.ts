@@ -153,6 +153,7 @@ test('maintenance Worker responds 503 with Retry-After and no-store without invo
   const env: WorkerEnvironment = {
     CORNER_ORIGIN: 'https://corner.example.test',
     CORNER_LANDING_ORIGIN: 'https://landing.example.test',
+    CORNER_DOCS_ORIGIN: 'https://docs.example.test',
     DATABASE_URL: 'postgresql://unused:unused@127.0.0.1:5432/unused',
     NEON_AUTH_BASE_URL: 'https://auth.example.test/neondb/auth',
     NEON_AUTH_REQUIRE_EMAIL_VERIFICATION: 'true',

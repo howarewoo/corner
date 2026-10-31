@@ -72,6 +72,7 @@ export async function fetchMaintenance(
         CORNER_DEPLOYMENT: 'hosted',
         CORNER_ORIGIN: env.CORNER_ORIGIN,
         CORNER_LANDING_ORIGIN: env.CORNER_LANDING_ORIGIN,
+        CORNER_DOCS_ORIGIN: env.CORNER_DOCS_ORIGIN,
         DATABASE_URL: env.DATABASE_URL,
         NEON_AUTH_BASE_URL: env.NEON_AUTH_BASE_URL,
         NEON_AUTH_REQUIRE_EMAIL_VERIFICATION: env.NEON_AUTH_REQUIRE_EMAIL_VERIFICATION,
@@ -79,7 +80,9 @@ export async function fetchMaintenance(
       { dataDir: '/tmp/corner' },
     );
     if (
-      (url.origin !== config.origin && url.origin !== config.landingOrigin) ||
+      (url.origin !== config.origin &&
+        url.origin !== config.landingOrigin &&
+        url.origin !== config.docsOrigin) ||
       (request.headers.has('Host') && request.headers.get('Host') !== url.host)
     )
       return secure(
@@ -87,7 +90,7 @@ export async function fetchMaintenance(
         true,
         versionId,
       );
-    if (url.origin === config.landingOrigin)
+    if (url.origin !== config.origin)
       return await fetchSiteAssets(request, config, env.ASSETS, versionId);
     if (!api) {
       if (!['GET', 'HEAD'].includes(request.method))

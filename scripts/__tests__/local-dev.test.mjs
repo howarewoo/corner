@@ -192,6 +192,7 @@ test(
           instance: reportedInstance,
           origin: 'http://127.0.0.1:45400',
           landingOrigin: 'http://localhost:45403',
+          docsOrigin: 'http://localhost:45404',
         }),
       );
     });

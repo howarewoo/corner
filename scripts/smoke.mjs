@@ -36,6 +36,8 @@ async function exitOf(child) {
 async function run(mode, port) {
   const origin = mode === 'hosted' ? 'https://corner.example.test' : `http://127.0.0.1:${port}`;
   const landingOrigin = mode === 'hosted' ? 'https://example.test' : `http://localhost:${port}`;
+  const docsOrigin =
+    mode === 'hosted' ? 'https://docs.example.test' : `http://docs.localhost:${port}`;
   const listener = `http://127.0.0.1:${port}`;
   const backend = await startSmokeServices(temporary, origin);
   services.add(backend);
@@ -66,6 +68,7 @@ async function run(mode, port) {
     CORNER_DEPLOYMENT: mode,
     CORNER_ORIGIN: origin,
     CORNER_LANDING_ORIGIN: landingOrigin,
+    CORNER_DOCS_ORIGIN: docsOrigin,
     CORNER_HOST: '127.0.0.1',
     CORNER_PORT: String(port),
     CORNER_DATA_DIR: join(temporary, mode),
@@ -235,6 +238,52 @@ async function run(mode, port) {
     400,
   );
   assert.equal((await rpc('account/policy', undefined, { Origin: landingOrigin })).status, 403);
+  const docsHeaders = { Host: new URL(docsOrigin).host };
+  for (const path of ['/', '/nutrition/food-log', '/nutrition/food-log/']) {
+    const guide = await call(path, { headers: docsHeaders });
+    assert.equal(guide.status, 200, path);
+    assert.equal(guide.headers.get('Set-Cookie'), null);
+    assert.match(guide.headers.get('Content-Security-Policy'), /frame-ancestors 'none'/);
+    assert.doesNotMatch(guide.headers.get('Content-Security-Policy'), /(?:script|default)-src/);
+    const html = await guide.text();
+    assert.match(html, /script-src[^;"]*'sha256-/);
+    assert.match(html, /href="\/open-app"/);
+  }
+  const search = await call('/search-index.json', { headers: docsHeaders });
+  assert.equal(search.status, 200);
+  assert.match(search.headers.get('Content-Type'), /application\/json/);
+  await search.json();
+  for (const path of [
+    '/api/search',
+    '/api/health',
+    '/api/auth/get-session',
+    '/api/rpc/workspace/get',
+    '/auth/callback',
+    '/oauth/authorize',
+    '/.well-known/oauth-authorization-server',
+    '/mcp',
+    '/sw.js',
+    '/manifest.webmanifest',
+    '/workouts',
+    '/unknown',
+    '/app/index.html',
+    '/landing/index.html',
+    '/docs/index.html',
+  ])
+    assert.equal((await call(path, { headers: docsHeaders })).status, 404, path);
+  for (const method of ['GET', 'HEAD']) {
+    for (const [path, headers, destination] of [
+      ['/open-docs', landingHeaders, docsOrigin],
+      ['/open-app', docsHeaders, origin],
+    ]) {
+      const hop = await call(`${path}?returnTo=https://evil.test`, { method, headers });
+      assert.equal(hop.status, 302);
+      assert.equal(hop.headers.get('Location'), destination);
+      assert.match(hop.headers.get('Cache-Control'), /no-store/);
+      assert.equal(await hop.text(), '');
+    }
+  }
+  assert.equal((await rpc('account/policy', undefined, { Origin: docsOrigin })).status, 403);
   const page = await call('/account/reset-password');
   assert.equal(page.status, 200);
   assert.match(page.headers.get('Content-Security-Policy'), /frame-ancestors 'none'/);

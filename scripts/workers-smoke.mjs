@@ -53,7 +53,8 @@ const previousMigrator = options['--previous-migration-entry']
 const candidateArtifact = options['--config']
   ? await verifyArtifact(dirname(options['--config']))
   : undefined;
-const hasLanding = !candidateArtifact || candidateArtifact.assetLayout === 'dual-origin';
+const hasLanding = !candidateArtifact || candidateArtifact.assetLayout !== 'single-site';
+const hasDocs = !candidateArtifact || candidateArtifact.assetLayout === 'three-origin';
 const previousArtifact = options['--previous-config']
   ? await verifyArtifact(dirname(options['--previous-config']))
   : undefined;
@@ -70,6 +71,11 @@ if (options['--preserving'] && !preserving)
 const directory = await mkdtemp(join(tmpdir(), 'corner-workers-smoke-'));
 const origin = 'https://corner.example.test';
 const landingOrigin = 'https://example.test';
+const docsOrigin = 'https://docs.example.test';
+const publicOptions = {
+  ...(hasLanding ? { landingOrigin } : {}),
+  ...(hasDocs ? { docsOrigin } : {}),
+};
 const cleanup = new AsyncDisposableStack();
 cleanup.defer(() => rm(directory, { recursive: true, force: true }));
 try {
@@ -193,7 +199,8 @@ try {
     const { rawConfig: original } = experimental_readRawConfig({ config });
     // These synthetic defaults follow each artifact, not the protected release configuration.
     const artifact = config === options['--previous-config'] ? previousArtifact : candidateArtifact;
-    const workerHasLanding = !artifact || artifact.assetLayout === 'dual-origin';
+    const workerHasLanding = !artifact || artifact.assetLayout !== 'single-site';
+    const workerHasDocs = !artifact || artifact.assetLayout === 'three-origin';
     const bundle = mainOverride
       ? resolve(dirname(config), mainOverride)
       : original.no_bundle
@@ -224,6 +231,7 @@ try {
         bindings: {
           ...bindings,
           ...(workerHasLanding ? { CORNER_LANDING_ORIGIN: landingOrigin } : {}),
+          ...(workerHasDocs ? { CORNER_DOCS_ORIGIN: docsOrigin } : {}),
           ...(options['--previous-config'] && config === options['--previous-config']
             ? {
                 BETTER_AUTH_SECRET: 'synthetic-workers-session-binding-secret-over-32-characters',
@@ -416,7 +424,7 @@ try {
         origin,
         maintVersion,
         (url, init) => worker.fetch(url, init),
-        hasLanding ? { landingOrigin } : {},
+        publicOptions,
       );
       assert.equal(
         (await worker.fetch(new URL('https://wrong.example.test/api/health'))).status,
@@ -486,7 +494,7 @@ try {
       origin,
       maintenance.headers.get('X-Corner-Version'),
       (url, init) => worker.fetch(url, init),
-      { landingOrigin },
+      publicOptions,
     );
     assert.equal((await worker.fetch(`${landingOrigin}/mcp`)).status, 404);
     const open = await worker.fetch(`${landingOrigin}/open-app`, { redirect: 'manual' });
@@ -546,12 +554,51 @@ try {
   if (workerConfig.version_metadata?.binding === 'CF_VERSION_METADATA') {
     assert.match(version ?? '', /^[a-f0-9-]{36}$/i);
   }
-  await publicChecks(
-    origin,
-    version,
-    (url, options) => worker.fetch(url, options),
-    hasLanding ? { landingOrigin } : {},
-  );
+  await publicChecks(origin, version, (url, options) => worker.fetch(url, options), publicOptions);
+  if (hasDocs) {
+    const previewCleanup = new AsyncDisposableStack();
+    try {
+      const config = options['--config'] ?? join(root, 'apps/server/wrangler.jsonc');
+      const landingPreview = await startWorker(config, true, { forbidOutbound: true });
+      previewCleanup.defer(() => landingPreview.dispose());
+      const docsPreview = await startWorker(config, true, { forbidOutbound: true });
+      previewCleanup.defer(() => docsPreview.dispose());
+      const landingVersionId = (
+        await landingPreview.fetch(landingOrigin, { method: 'HEAD' })
+      ).headers.get('X-Corner-Version');
+      const docsVersionId = (await docsPreview.fetch(docsOrigin, { method: 'HEAD' })).headers.get(
+        'X-Corner-Version',
+      );
+      assert.notEqual(landingVersionId, version);
+      assert.notEqual(docsVersionId, version);
+      assert.notEqual(docsVersionId, landingVersionId);
+      const previews = new Map([
+        [origin, worker],
+        [landingOrigin, landingPreview],
+        [docsOrigin, docsPreview],
+      ]);
+      const fetchPreview = (url, init) => previews.get(new URL(url).origin).fetch(url, init);
+      await publicChecks(origin, version, fetchPreview, {
+        ...publicOptions,
+        landingVersionId,
+        docsVersionId,
+      });
+      await assert.rejects(
+        publicChecks(origin, version, fetchPreview, {
+          ...publicOptions,
+          landingVersionId,
+          docsVersionId: landingVersionId,
+        }),
+        (error) => error.retryable === true,
+      );
+      console.log(
+        'Native Preview metadata: exact independent app/landing/docs accepted; wrong docs ID rejected.',
+        JSON.stringify({ app: version, landing: landingVersionId, docs: docsVersionId }),
+      );
+    } finally {
+      await previewCleanup.disposeAsync();
+    }
+  }
   assert.equal((await call('https://wrong.example.test/api/health')).status, 400);
   assert.equal((await call('/', { method: 'POST' })).status, 405);
   const page = await call('/account/reset-password');

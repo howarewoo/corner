@@ -27,6 +27,7 @@ export type WorkerEnvironment = {
   CF_VERSION_METADATA?: { id: string; tag?: string; timestamp?: string };
   CORNER_ORIGIN: string;
   CORNER_LANDING_ORIGIN: string;
+  CORNER_DOCS_ORIGIN: string;
   DATABASE_URL: string;
   NEON_AUTH_BASE_URL: string;
   NEON_AUTH_REQUIRE_EMAIL_VERIFICATION: string;
@@ -49,6 +50,7 @@ async function fetchApplication(request: Request, env: WorkerEnvironment): Promi
         CORNER_DEPLOYMENT: 'hosted',
         CORNER_ORIGIN: env.CORNER_ORIGIN,
         CORNER_LANDING_ORIGIN: env.CORNER_LANDING_ORIGIN,
+        CORNER_DOCS_ORIGIN: env.CORNER_DOCS_ORIGIN,
         DATABASE_URL: env.DATABASE_URL,
         NEON_AUTH_BASE_URL: env.NEON_AUTH_BASE_URL,
         NEON_AUTH_REQUIRE_EMAIL_VERIFICATION: env.NEON_AUTH_REQUIRE_EMAIL_VERIFICATION,
@@ -56,14 +58,16 @@ async function fetchApplication(request: Request, env: WorkerEnvironment): Promi
       { dataDir: '/tmp/corner' },
     );
     if (
-      (url.origin !== config.origin && url.origin !== config.landingOrigin) ||
+      (url.origin !== config.origin &&
+        url.origin !== config.landingOrigin &&
+        url.origin !== config.docsOrigin) ||
       (request.headers.has('Host') && request.headers.get('Host') !== url.host)
     )
       return secure(
         new Response('Open Corner using its configured origin.', { status: 400 }),
         true,
       );
-    if (url.origin === config.landingOrigin || !api)
+    if (url.origin !== config.origin || !api)
       return await fetchSiteAssets(request, config, env.ASSETS, env.CF_VERSION_METADATA?.id);
     const headers = new Headers(request.headers);
     for (const name of [

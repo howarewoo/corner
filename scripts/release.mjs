@@ -75,6 +75,7 @@ export function validateConfiguration(
   const allowed = new Set([
     'CORNER_ORIGIN',
     'CORNER_LANDING_ORIGIN',
+    'CORNER_DOCS_ORIGIN',
     'NEON_AUTH_REQUIRE_EMAIL_VERIFICATION',
   ]);
   need(
@@ -110,6 +111,21 @@ export function validateConfiguration(
     );
     landingOrigin = landing.origin;
   }
+  let docsOrigin;
+  if (value.CORNER_DOCS_ORIGIN !== undefined) {
+    const docs = new URL(value.CORNER_DOCS_ORIGIN);
+    need(
+      landingOrigin &&
+        docs.protocol === 'https:' &&
+        docs.origin === value.CORNER_DOCS_ORIGIN &&
+        !docs.username &&
+        !docs.password &&
+        !docs.port &&
+        docs.hostname === `docs.${new URL(landingOrigin).hostname}`,
+      'Release requires the explicit HTTPS docs.<root> origin alongside root landing and app.<root>',
+    );
+    docsOrigin = docs.origin;
+  }
   need(
     /^[A-Za-z0-9._-]{1,100}$/.test(revision ?? ''),
     'Explicit production bindings revision required',
@@ -126,18 +142,33 @@ export function validateConfiguration(
     origin: origin.origin,
     workersDev,
     landingOrigin,
+    docsOrigin,
     bindingsRevision: revision,
     digest: hash(canonical),
   };
 }
 
 export function publicCheckOptions(candidate, config, access = {}) {
-  if (!candidate.manifest.files?.['assets/landing/index.html']) {
-    need(!config.landingOrigin, 'Single-site artifact cannot serve CORNER_LANDING_ORIGIN');
+  const landing = Boolean(candidate.manifest.files?.['assets/landing/index.html']);
+  const docs = Boolean(candidate.manifest.files?.['assets/docs/index.html']);
+  need(
+    docs
+      ? config.docsOrigin && candidate.manifest.files?.['assets/docs/search-index.json']
+      : !config.docsOrigin,
+    docs
+      ? 'Three-origin artifact requires CORNER_DOCS_ORIGIN and its static search index before release'
+      : 'Artifact without docs cannot serve CORNER_DOCS_ORIGIN',
+  );
+  if (!landing) {
+    need(!config.landingOrigin && !docs, 'Single-site artifact cannot serve CORNER_LANDING_ORIGIN');
     return access;
   }
-  need(config.landingOrigin, 'Dual-origin artifact requires CORNER_LANDING_ORIGIN before release');
-  return { ...access, landingOrigin: config.landingOrigin };
+  need(config.landingOrigin, 'Multi-origin artifact requires CORNER_LANDING_ORIGIN before release');
+  return {
+    ...access,
+    landingOrigin: config.landingOrigin,
+    ...(docs ? { docsOrigin: config.docsOrigin } : {}),
+  };
 }
 export function validateReceipt(receipt) {
   need(
@@ -511,6 +542,8 @@ export async function plan({
           baseline.payload.runtimeConfigurationDigest === config.digest,
           'Already-deployed source has different runtime configuration; use explicit operator release',
         );
+        const serving = await github.artifact(baseline.payload, join(work, 'serving'));
+        publicCheckOptions(serving, config);
         return baseline;
       }
     }
@@ -737,10 +770,23 @@ export async function publicChecks(origin, versionId, fetcher = fetch, access = 
       );
     }
     if (access.landingOrigin) await landingChecks(origin, versionId, fetcher, access);
+    if (access.docsOrigin) await docsChecks(origin, versionId, fetcher, access);
   } catch (error) {
     if (error instanceof PublicCheckError) throw error;
     throw new PublicCheckError('Public request or response failed (private output withheld)');
   }
+}
+
+function hasOnlyAccessCookies(response, headers) {
+  // Access may set its authentication cookie before the request reaches the Worker.
+  return response.headers
+    .getSetCookie()
+    .every(
+      (cookie) =>
+        headers['CF-Access-Client-Id'] &&
+        headers['CF-Access-Client-Secret'] &&
+        cookie.startsWith('CF_Authorization='),
+    );
 }
 
 async function landingChecks(origin, versionId, fetcher, access) {
@@ -765,16 +811,8 @@ async function landingChecks(origin, versionId, fetcher, access) {
       signal: AbortSignal.timeout(30000),
       headers,
     });
-    // Access may set its authentication cookie before the request reaches the Worker.
     check(
-      response.headers
-        .getSetCookie()
-        .every(
-          (cookie) =>
-            headers['CF-Access-Client-Id'] &&
-            headers['CF-Access-Client-Secret'] &&
-            cookie.startsWith('CF_Authorization='),
-        ),
+      hasOnlyAccessCookies(response, headers),
       'Public landing must not set application cookies',
     );
     return response;
@@ -799,6 +837,8 @@ async function landingChecks(origin, versionId, fetcher, access) {
     throw new PublicCheckError('Public landing deployed version identity mismatch', true);
   const html = await page.text();
   check(/href="\/open-app"/.test(html), 'Public landing lacks the fixed app link');
+  if (access.docsOrigin)
+    check(/href="\/open-docs"/.test(html), 'Public landing lacks the fixed guide link');
   const asset = html.match(/(?:src|href)="([^" ]*\/_astro\/[^" ]+)"/)?.[1];
   check(asset, 'Public landing lacks a built asset');
   const built = await call(asset);
@@ -813,6 +853,17 @@ async function landingChecks(origin, versionId, fetcher, access) {
       'Public landing app redirect must use only the configured app origin',
     );
   }
+  if (access.docsOrigin) {
+    for (const method of ['GET', 'HEAD']) {
+      const redirect = await call('/open-docs?returnTo=https://cross-origin.invalid', method);
+      check(
+        redirect.status === 302 &&
+          redirect.headers.get('Location') === access.docsOrigin &&
+          /no-store/.test(redirect.headers.get('Cache-Control') ?? ''),
+        'Public guide redirect must use only the configured docs origin',
+      );
+    }
+  }
   for (const path of [
     '/api/health',
     '/api/auth/get-session',
@@ -826,8 +877,134 @@ async function landingChecks(origin, versionId, fetcher, access) {
     '/unknown',
     '/app/index.html',
     '/landing/index.html',
+    '/docs/index.html',
   ])
     check((await call(path)).status === 404, 'Public landing dynamic/private path boundary failed');
+}
+
+async function docsChecks(origin, versionId, fetcher, access) {
+  const docs = new URL(access.docsOrigin);
+  const check = (value, message) => {
+    if (!value) throw new PublicCheckError(message);
+  };
+  check(
+    docs.origin === access.docsOrigin &&
+      docs.hostname !== new URL(origin).hostname &&
+      docs.origin !== access.landingOrigin &&
+      !docs.username &&
+      !docs.password,
+    'Public docs must use the explicit distinct origin',
+  );
+  const headers = { ...publicAccessHeaders(access), 'Cache-Control': 'no-cache' };
+  const call = async (path, method = 'GET') => {
+    const url = new URL(path, docs);
+    check(url.origin === docs.origin, 'Public docs assets must remain same-origin');
+    const response = await fetcher(url, {
+      method,
+      redirect: 'manual',
+      signal: AbortSignal.timeout(30000),
+      headers,
+    });
+    check(
+      hasOnlyAccessCookies(response, headers) && !response.headers.has('Service-Worker-Allowed'),
+      'Public docs must not acquire application cookies or service-worker scope',
+    );
+    return response;
+  };
+  for (const path of ['/', '/nutrition/food-log']) {
+    let page;
+    try {
+      page = await call(path);
+    } catch (error) {
+      if (error instanceof PublicCheckError) throw error;
+      throw new PublicCheckError('Public docs page unavailable (private output withheld)', true);
+    }
+    if (page.status !== 200)
+      throw new PublicCheckError(
+        'Public docs page unavailable',
+        page.status === 404 || page.status === 429 || page.status >= 500,
+      );
+    const policy = page.headers.get('Content-Security-Policy') ?? '';
+    check(
+      /frame-ancestors 'none'/.test(policy) &&
+        !/(?:^|;)\s*(?:script-src(?:-elem|-attr)?|default-src)\s/.test(policy),
+      'Public docs native-CSP composition failed',
+    );
+    const html = await page.text();
+    const meta = html.match(/<meta\b[^>]*http-equiv="content-security-policy"[^>]*>/i)?.[0] ?? '';
+    const scriptPolicy = meta.match(/script-src\s+([^;"]+)/)?.[1] ?? '';
+    check(
+      /'sha256-[A-Za-z0-9+/=]+'/.test(scriptPolicy) &&
+        !/unsafe-inline|unsafe-eval/.test(scriptPolicy) &&
+        /href="\/open-app"/.test(html),
+      'Public docs lacks native hashed scripts or the fixed app handoff',
+    );
+    const asset = html.match(/(?:src|href)="([^" ]*\/_astro\/[^" ]+)"/)?.[1];
+    check(asset, 'Public docs lacks a built asset');
+    const built = await call(asset);
+    check(
+      built.status === 200 &&
+        /immutable/.test(built.headers.get('Cache-Control') ?? '') &&
+        built.headers.get('X-Content-Type-Options') === 'nosniff',
+      'Public docs asset protection failed',
+    );
+    if (page.headers.get('X-Corner-Version') !== (access.docsVersionId ?? versionId))
+      throw new PublicCheckError('Public docs deployed version identity mismatch', true);
+  }
+  const search = await call('/search-index.json');
+  check(
+    search.status === 200 && /application\/json/.test(search.headers.get('Content-Type') ?? ''),
+    'Public docs static search index is unavailable',
+  );
+  let data;
+  try {
+    data = await search.json();
+  } catch {
+    check(false, 'Public docs static search index is not valid JSON');
+  }
+  const documents = data?.docs?.docs;
+  check(
+    data?.type === 'advanced' &&
+      documents &&
+      typeof documents === 'object' &&
+      !Array.isArray(documents) &&
+      data.docs.count > 0 &&
+      Object.keys(documents).length === data.docs.count &&
+      data.index?.indexes?.content &&
+      typeof data.index.indexes.content === 'object' &&
+      Array.isArray(data.internalDocumentIDStore?.internalIdToId) &&
+      data.internalDocumentIDStore.internalIdToId.length === data.docs.count,
+    'Public docs static search index is unavailable or lacks its native exported database',
+  );
+  for (const method of ['GET', 'HEAD']) {
+    const redirect = await call('/open-app?returnTo=https://cross-origin.invalid', method);
+    check(
+      redirect.status === 302 &&
+        redirect.headers.get('Location') === origin &&
+        /no-store/.test(redirect.headers.get('Cache-Control') ?? ''),
+      'Public docs app redirect must use only the configured app origin',
+    );
+  }
+  for (const path of [
+    '/api/search',
+    '/api/health',
+    '/api/auth/get-session',
+    '/api/rpc/workspace/get',
+    '/auth/callback',
+    '/account/reset-password',
+    '/oauth/authorize',
+    '/.well-known/oauth-authorization-server',
+    '/mcp',
+    '/sw.js',
+    '/manifest.webmanifest',
+    '/workouts',
+    '/unknown',
+    '/app/index.html',
+    '/landing/index.html',
+    '/docs/index.html',
+    '/.env',
+  ])
+    check((await call(path)).status === 404, 'Public docs dynamic/private path boundary failed');
 }
 export async function maintenanceChecks(origin, versionId, fetcher = fetch, access = {}) {
   const accessHeaders = publicAccessHeaders(access);
@@ -895,6 +1072,7 @@ export async function maintenanceChecks(origin, versionId, fetcher = fetch, acce
       'rpc',
     );
     if (access.landingOrigin) await landingChecks(origin, versionId, fetcher, access);
+    if (access.docsOrigin) await docsChecks(origin, versionId, fetcher, access);
   } catch (error) {
     if (error instanceof PublicCheckError) throw error;
     throw new PublicCheckError('Maintenance gate check failed (private output withheld)', true);

@@ -9,6 +9,7 @@ services:
       CORNER_DEPLOYMENT: hosted
       CORNER_ORIGIN: https://app.${CORNER_DOMAIN:?Set CORNER_DOMAIN in .env.hosted}
       CORNER_LANDING_ORIGIN: https://${CORNER_DOMAIN:?Set CORNER_DOMAIN in .env.hosted}
+      CORNER_DOCS_ORIGIN: https://docs.${CORNER_DOMAIN:?Set CORNER_DOMAIN in .env.hosted}
       CORNER_HOST: 0.0.0.0
       CORNER_PORT: '3000'
       CORNER_DATA_DIR: /app/data

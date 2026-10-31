@@ -87,11 +87,22 @@ export async function verifyArtifact(directory) {
     )
       throw new Error(`Forbidden payload: ${name}`);
   }
+  const docs = names.some((name) => name.startsWith('assets/docs/'));
   const dualOrigin = Boolean(files['assets/app/index.html'] && files['assets/landing/index.html']);
   if (
-    dualOrigin
-      ? names.some((name) => name.startsWith('assets/') && !/^assets\/(?:app|landing)\//.test(name))
-      : !files['assets/index.html'] || names.some((name) => /^assets\/(?:app|landing)\//.test(name))
+    docs
+      ? !dualOrigin ||
+        !files['assets/docs/index.html'] ||
+        !files['assets/docs/search-index.json'] ||
+        names.some(
+          (name) => name.startsWith('assets/') && !/^assets\/(?:app|landing|docs)\//.test(name),
+        )
+      : dualOrigin
+        ? names.some(
+            (name) => name.startsWith('assets/') && !/^assets\/(?:app|landing)\//.test(name),
+          )
+        : !files['assets/index.html'] ||
+          names.some((name) => /^assets\/(?:app|landing|docs)\//.test(name))
   )
     throw new Error('Invalid or mixed artifact asset layout.');
   if (
@@ -175,7 +186,7 @@ export async function verifyArtifact(directory) {
     manifest,
     digest: hash(bytes),
     generation: relational ? 'relational-v1' : 'document-v1',
-    assetLayout: dualOrigin ? 'dual-origin' : 'single-site',
+    assetLayout: docs ? 'three-origin' : dualOrigin ? 'dual-origin' : 'single-site',
   };
 }
 
@@ -228,11 +239,13 @@ async function copyTree(source, destination) {
 export async function assembleAssets({ root: sourceRoot = root, out }) {
   sourceRoot = resolve(sourceRoot);
   out = resolve(out);
-  for (const site of ['web', 'landing'])
+  for (const site of ['web', 'landing', 'docs'])
     await access(join(sourceRoot, `apps/${site}/dist/index.html`));
+  await access(join(sourceRoot, 'apps/docs/dist/search-index.json'));
   await mkdir(out);
   await copyTree(join(sourceRoot, 'apps/web/dist'), join(out, 'app'));
   await copyTree(join(sourceRoot, 'apps/landing/dist'), join(out, 'landing'));
+  await copyTree(join(sourceRoot, 'apps/docs/dist'), join(out, 'docs'));
 }
 
 export async function packageArtifact({ root: sourceRoot = root, out, sourceSha }) {

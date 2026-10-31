@@ -10,7 +10,9 @@ export const test = base.extend<{ account: BrowserAccount }>({
     if (baseURL !== 'http://127.0.0.1:43141')
       throw new Error('Browser tests require the owned loopback runtime.');
     await context.route('**/*', (route) =>
-      [baseURL, 'http://localhost:43141'].includes(new URL(route.request().url()).origin)
+      [baseURL, 'http://localhost:43141', 'http://docs.localhost:43141'].includes(
+        new URL(route.request().url()).origin,
+      )
         ? route.continue()
         : route.abort(),
     );

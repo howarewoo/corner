@@ -8,6 +8,7 @@ services:
       CORNER_DEPLOYMENT: local
       CORNER_ORIGIN: http://127.0.0.1:3000
       CORNER_LANDING_ORIGIN: http://localhost:3000
+      CORNER_DOCS_ORIGIN: http://docs.localhost:3000
       CORNER_HOST: 0.0.0.0
       CORNER_PORT: '3000'
       CORNER_DATA_DIR: /app/data

@@ -5,6 +5,7 @@ import { RootProvider } from 'fumadocs-ui/provider/astro';
 import { DocsLayout } from 'fumadocs-ui/layouts/docs';
 import { DocsBody, DocsDescription, DocsPage, DocsTitle } from 'fumadocs-ui/layouts/docs/page';
 import DocsSearch from './search';
+import { Button } from '@packages/ui';
 
 interface DocsProps {
   pathname: string;
@@ -29,6 +30,21 @@ export function Docs({ tree, title, description, toc, children, pathname, params
       <DocsLayout
         tree={data.tree}
         nav={{ title: 'Corner / Guide', url: '/' }}
+        links={[
+          {
+            type: 'custom',
+            children: (
+              <Button
+                render={<a href="/open-app" />}
+                nativeButton={false}
+                role="link"
+                variant="outline"
+              >
+                Open Corner
+              </Button>
+            ),
+          },
+        ]}
         themeSwitch={{ enabled: false }}
         tabs={false}
         sidebar={{ collapsible: false }}

@@ -42,9 +42,12 @@ export function previewConfiguration(raw, environment = process.env) {
   );
   need(
     Object.keys(value).every((key) =>
-      ['CORNER_ORIGIN', 'CORNER_LANDING_ORIGIN', 'NEON_AUTH_REQUIRE_EMAIL_VERIFICATION'].includes(
-        key,
-      ),
+      [
+        'CORNER_ORIGIN',
+        'CORNER_LANDING_ORIGIN',
+        'CORNER_DOCS_ORIGIN',
+        'NEON_AUTH_REQUIRE_EMAIL_VERIFICATION',
+      ].includes(key),
     ) &&
       Object.values(value).every((entry) => typeof entry === 'string') &&
       value.NEON_AUTH_REQUIRE_EMAIL_VERIFICATION === 'false',
@@ -70,6 +73,28 @@ export function previewConfiguration(raw, environment = process.env) {
     !paired || value.CORNER_LANDING_ORIGIN === landingOrigin,
     'Preview requires the exact matched-account staging-corner landing origin',
   );
+  let docsOrigin;
+  let docsPreviewName;
+  if (value.CORNER_DOCS_ORIGIN !== undefined) {
+    const docs = new URL(value.CORNER_DOCS_ORIGIN);
+    const docsMatch = docs.hostname.match(
+      /^([a-z0-9](?:[a-z0-9-]*[a-z0-9])?)-corner\.([a-z0-9-]+)\.workers\.dev$/,
+    );
+    need(
+      paired &&
+        docs.protocol === 'https:' &&
+        docs.origin === value.CORNER_DOCS_ORIGIN &&
+        !docs.port &&
+        docsMatch &&
+        docsMatch[2] === match[1] &&
+        docsMatch[1] !== previewName &&
+        docsMatch[1] !== 'staging-app' &&
+        docs.hostname.split('.')[0].length <= 63,
+      'Preview requires an explicit distinct matched-account docs native Preview origin',
+    );
+    docsOrigin = docs.origin;
+    docsPreviewName = docsMatch[1];
+  }
   const revision = environment.CORNER_STAGING_BINDINGS_REVISION;
   need(
     /^[A-Za-z0-9._-]{1,100}$/.test(revision ?? ''),
@@ -81,6 +106,8 @@ export function previewConfiguration(raw, environment = process.env) {
     bindingsRevision: revision,
     previewName: paired ? 'staging-app' : previewName,
     landingOrigin,
+    docsOrigin,
+    docsPreviewName,
     digest: hash(JSON.stringify({ vars: value, bindingsRevision: revision })),
   };
 }
@@ -182,6 +209,9 @@ async function record(github, payload, state = 'in_progress') {
 function assertBindings(live, config) {
   need(
     Object.entries(config.value).every(([name, value]) => live?.env?.[name]?.text === value) &&
+      ['CORNER_LANDING_ORIGIN', 'CORNER_DOCS_ORIGIN'].every(
+        (name) => config.value[name] !== undefined || live?.env?.[name] === undefined,
+      ) &&
       live.env?.CF_VERSION_METADATA?.type === 'version_metadata' &&
       secretNames.every((name) => live.env?.[name]?.type === 'secret_text') &&
       !Object.values(live.env ?? {}).some((binding) => binding.type === 'service'),
@@ -189,10 +219,11 @@ function assertBindings(live, config) {
   );
 }
 
-async function assertPair(cf, receipt, config) {
+async function assertPreviews(cf, receipt, config) {
   for (const [name, deployment] of [
     [receipt.previewName, receipt.deploymentId],
     ...(config.landingOrigin ? [[previewName, receipt.landingDeploymentId]] : []),
+    ...(config.docsOrigin ? [[config.docsPreviewName, receipt.docsDeploymentId]] : []),
   ]) {
     const live = await cf(`workers/workers/${workerName}/previews/${name}/deployments/latest`);
     need(live?.id === deployment, 'Live Preview differs from the incomplete deployment');
@@ -230,6 +261,12 @@ export async function completePreview({
           p.landingPreviewName === previewName &&
           typeof p.landingDeploymentId === 'string' &&
           p.landingDeploymentId === p.landingVersionId)) &&
+      (config.docsOrigin
+        ? p.docsOrigin === config.docsOrigin &&
+          p.docsPreviewName === config.docsPreviewName &&
+          typeof p.docsDeploymentId === 'string' &&
+          p.docsDeploymentId === p.docsVersionId
+        : p.docsOrigin === undefined) &&
       /^[a-f0-9]{40}$/.test(p.sourceSha ?? '') &&
       p.origin === config.origin &&
       p.runtimeConfigurationDigest === config.digest &&
@@ -266,6 +303,7 @@ export async function completePreview({
     'CF-Access-Client-Secret': environment.CORNER_STAGING_ACCESS_CLIENT_SECRET,
   });
   if (config.landingOrigin) access.landingVersionId = p.landingVersionId;
+  if (config.docsOrigin) access.docsVersionId = p.docsVersionId;
   const assertCurrent = async () => {
     need(
       (await github.api('git/ref/heads/staging')).object?.sha === p.sourceSha &&
@@ -273,7 +311,7 @@ export async function completePreview({
         String((await github.all(schemaPath))[0]?.id) === String(schema.id),
       'Preview source or deployment/schema journal changed during completion',
     );
-    await assertPair(cf, p, config);
+    await assertPreviews(cf, p, config);
     need(
       (await verify(candidate.directory)).digest === candidate.digest,
       'Immutable Preview payload changed during completion',
@@ -361,56 +399,94 @@ export async function deployPreview({
     );
   const deployments = await github.all('deployments?environment=staging&task=corner-preview');
   const previous = deployments[0];
+  const previousReceipt = previous?.payload;
   need(
-    previous?.payload?.phase !== 'app-uploaded',
-    'Partial Preview pair on HOLD; reconcile both live deployments and the app-uploaded history before another deployment',
+    !['upload-attempted', 'app-uploaded', 'docs-uploaded'].includes(previousReceipt?.phase),
+    'Partial Preview set on HOLD; reconcile all live deployments and recorded upload history before another deployment',
   );
   if (previous)
     need(
-      previous.payload?.format === 4 &&
-        previous.payload.kind === kind &&
-        ['deployed', 'complete'].includes(previous.payload.phase) &&
-        previous.payload.workerName === workerName &&
-        ((previous.payload.previewName === config.previewName &&
-          previous.payload.origin === config.origin &&
-          (!config.landingOrigin ||
-            (previous.payload.landingOrigin === config.landingOrigin &&
-              previous.payload.landingPreviewName === previewName &&
-              typeof previous.payload.landingDeploymentId === 'string' &&
-              previous.payload.landingVersionId === previous.payload.landingDeploymentId))) ||
+      previousReceipt?.format === 4 &&
+        previousReceipt.kind === kind &&
+        ['deployed', 'complete'].includes(previousReceipt.phase) &&
+        previousReceipt.workerName === workerName &&
+        ((previousReceipt.previewName === config.previewName &&
+          previousReceipt.origin === config.origin &&
+          (config.landingOrigin
+            ? previousReceipt.landingOrigin === config.landingOrigin &&
+              previousReceipt.landingPreviewName === previewName &&
+              typeof previousReceipt.landingDeploymentId === 'string' &&
+              previousReceipt.landingVersionId === previousReceipt.landingDeploymentId
+            : previousReceipt.landingOrigin === undefined) &&
+          (previousReceipt.docsOrigin === undefined ||
+            (config.docsOrigin &&
+              previousReceipt.docsOrigin === config.docsOrigin &&
+              previousReceipt.docsPreviewName === config.docsPreviewName &&
+              typeof previousReceipt.docsDeploymentId === 'string' &&
+              previousReceipt.docsVersionId === previousReceipt.docsDeploymentId))) ||
           (config.landingOrigin &&
-            previous.payload.previewName === previewName &&
-            previous.payload.origin === config.landingOrigin &&
-            previous.payload.landingOrigin === undefined)) &&
-        typeof previous.payload.deploymentId === 'string',
+            previousReceipt.previewName === previewName &&
+            previousReceipt.origin === config.landingOrigin &&
+            previousReceipt.landingOrigin === undefined &&
+            previousReceipt.docsOrigin === undefined)) &&
+        typeof previousReceipt.deploymentId === 'string',
       'Invalid Preview deployment history',
     );
+  // Untouched sites retain their recorded public-binding contract during an origin transition.
+  const previousConfig = previous
+    ? {
+        value: {
+          CORNER_ORIGIN: previousReceipt.origin,
+          ...(previousReceipt.landingOrigin
+            ? { CORNER_LANDING_ORIGIN: previousReceipt.landingOrigin }
+            : {}),
+          ...(previousReceipt.docsOrigin ? { CORNER_DOCS_ORIGIN: previousReceipt.docsOrigin } : {}),
+          NEON_AUTH_REQUIRE_EMAIL_VERIFICATION: 'false',
+        },
+      }
+    : null;
   const expected = new Map([
     [
       config.previewName,
-      previous?.payload.previewName === config.previewName ? previous.payload.deploymentId : null,
+      {
+        deploymentId:
+          previousReceipt?.previewName === config.previewName ? previousReceipt.deploymentId : null,
+        config: previousConfig,
+      },
     ],
     ...(config.landingOrigin
       ? [
           [
             previewName,
-            previous?.payload.previewName === previewName
-              ? previous.payload.deploymentId
-              : (previous?.payload.landingDeploymentId ?? null),
+            {
+              deploymentId:
+                previousReceipt?.previewName === previewName
+                  ? previousReceipt.deploymentId
+                  : (previousReceipt?.landingDeploymentId ?? null),
+              config: previousConfig,
+            },
+          ],
+        ]
+      : []),
+    ...(config.docsOrigin
+      ? [
+          [
+            config.docsPreviewName,
+            { deploymentId: previousReceipt?.docsDeploymentId ?? null, config: previousConfig },
           ],
         ]
       : []),
   ]);
   const serving = async () => {
-    for (const [name, deployment] of expected) {
+    for (const [name, site] of expected) {
       const live = await cf(`workers/workers/${workerName}/previews/${name}/deployments/latest`, {
         allowMissing: true,
       });
       need(
-        deployment ? live?.id === deployment : live === null,
+        site.deploymentId ? live?.id === site.deploymentId : live === null,
         'Live Preview deployment differs from its ledger; reconcile before retrying',
       );
-      if (deployment && previous?.payload.landingOrigin) assertBindings(live, config);
+      if (site.deploymentId) assertBindings(live, site.config);
     }
   };
   await serving();
@@ -423,11 +499,16 @@ export async function deployPreview({
       'Candidate does not preserve CURRENT attempted migration history',
     );
   }
-  const prior = previous ? await load(previous.payload, join(work, 'previous')) : null;
-  if (config.landingOrigin && previous?.payload.previewName === previewName)
+  const prior = previous ? await load(previousReceipt, join(work, 'previous')) : null;
+  if (prior)
     need(
-      prior.assetLayout === 'single-site',
-      'Origin cutover requires a retained single-site Preview artifact',
+      prior.assetLayout ===
+        (previousReceipt.docsOrigin
+          ? 'three-origin'
+          : previousReceipt.landingOrigin
+            ? 'dual-origin'
+            : 'single-site'),
+      'Serving Preview artifact differs from its recorded site profile',
     );
   const qualification = await qualify({
     candidate: candidate.directory,
@@ -469,6 +550,36 @@ export async function deployPreview({
     ...(config.landingOrigin
       ? { landingOrigin: config.landingOrigin, landingPreviewName: previewName }
       : {}),
+    ...(config.docsOrigin
+      ? { docsOrigin: config.docsOrigin, docsPreviewName: config.docsPreviewName }
+      : {}),
+    previousPreviews: previous
+      ? {
+          receiptId: id(previous.id),
+          sourceSha: previousReceipt.sourceSha,
+          runId: previousReceipt.runId,
+          artifactId: previousReceipt.artifactId,
+          candidateDigest: previousReceipt.candidateDigest,
+          runtimeConfigurationDigest: previousReceipt.runtimeConfigurationDigest,
+          bindingsRevision: previousReceipt.bindingsRevision,
+          publicBindings: previousConfig.value,
+          origin: previousReceipt.origin,
+          previewName: previousReceipt.previewName,
+          previewId: previousReceipt.previewId,
+          deploymentId: previousReceipt.deploymentId,
+          versionId: previousReceipt.versionId,
+          landingOrigin: previousReceipt.landingOrigin,
+          landingPreviewName: previousReceipt.landingPreviewName,
+          landingPreviewId: previousReceipt.landingPreviewId,
+          landingDeploymentId: previousReceipt.landingDeploymentId,
+          landingVersionId: previousReceipt.landingVersionId,
+          docsOrigin: previousReceipt.docsOrigin,
+          docsPreviewName: previousReceipt.docsPreviewName,
+          docsPreviewId: previousReceipt.docsPreviewId,
+          docsDeploymentId: previousReceipt.docsDeploymentId,
+          docsVersionId: previousReceipt.docsVersionId,
+        }
+      : null,
     qualification,
     phase: 'schema-attempted',
   };
@@ -572,43 +683,38 @@ export async function deployPreview({
     );
     return output;
   };
-  const output = await upload(config.previewName, config.origin);
-  const deployed = {
-    ...payload,
-    phase: config.landingOrigin ? 'app-uploaded' : 'deployed',
-    previewId: output.preview_id,
-    deploymentId: output.deployment_id,
-    deploymentUrls: output.deployment_urls,
-    versionId: output.deployment_id,
-    ...(config.landingOrigin
-      ? {
-          previousLanding: previous
-            ? {
-                previewName,
-                origin: config.landingOrigin,
-                deploymentId: expected.get(previewName),
-                sourceSha: previous.payload.sourceSha,
-                runId: previous.payload.runId,
-                artifactId: previous.payload.artifactId,
-                candidateDigest: previous.payload.candidateDigest,
-                runtimeConfigurationDigest: previous.payload.runtimeConfigurationDigest,
-                bindingsRevision: previous.payload.bindingsRevision,
-              }
-            : null,
-        }
-      : {}),
-  };
-  let deployedRecord = await record(github, deployed);
-  expected.set(config.previewName, output.deployment_id);
+  // Journal before the first provider effect so a lost response/write cannot permit blind retry.
+  let deployedRecord = await record(github, { ...payload, phase: 'upload-attempted' });
   try {
-    const appLive = await cf(
-      `workers/workers/${workerName}/previews/${config.previewName}/deployments/latest`,
-    );
-    need(
-      appLive?.id === output.deployment_id,
-      'Native Preview deployment changed before validation',
-    );
-    assertBindings(appLive, config);
+    const output = await upload(config.previewName, config.origin);
+    const deployed = {
+      ...payload,
+      phase: config.landingOrigin ? 'app-uploaded' : 'deployed',
+      previewId: output.preview_id,
+      deploymentId: output.deployment_id,
+      deploymentUrls: output.deployment_urls,
+      versionId: output.deployment_id,
+    };
+    const attemptedRecord = deployedRecord;
+    deployedRecord = await record(github, deployed);
+    await setStatus(github, attemptedRecord, 'inactive');
+    expected.set(config.previewName, { deploymentId: output.deployment_id, config });
+    await serving();
+    if (config.docsOrigin) {
+      const docs = await upload(config.docsPreviewName, config.docsOrigin);
+      Object.assign(deployed, {
+        phase: 'docs-uploaded',
+        docsPreviewId: docs.preview_id,
+        docsDeploymentId: docs.deployment_id,
+        docsVersionId: docs.deployment_id,
+        docsDeploymentUrls: docs.deployment_urls,
+      });
+      const appRecord = deployedRecord;
+      deployedRecord = await record(github, deployed);
+      await setStatus(github, appRecord, 'inactive');
+      expected.set(config.docsPreviewName, { deploymentId: docs.deployment_id, config });
+      publicOptions.docsVersionId = docs.deployment_id;
+    }
     if (config.landingOrigin) {
       const landing = await upload(previewName, config.landingOrigin);
       Object.assign(deployed, {
@@ -618,12 +724,13 @@ export async function deployPreview({
         landingVersionId: landing.deployment_id,
         landingDeploymentUrls: landing.deployment_urls,
       });
-      const pairedRecord = await record(github, deployed);
-      await setStatus(github, deployedRecord, 'inactive');
-      deployedRecord = pairedRecord;
+      const publicRecord = deployedRecord;
+      deployedRecord = await record(github, deployed);
+      await setStatus(github, publicRecord, 'inactive');
+      expected.set(previewName, { deploymentId: landing.deployment_id, config });
       publicOptions.landingVersionId = landing.deployment_id;
     }
-    await assertPair(cf, deployed, config);
+    await assertPreviews(cf, deployed, config);
     await reverify();
     need(
       JSON.stringify(await cf(`workers/scripts/${workerName}/deployments`)) === production,
@@ -632,7 +739,7 @@ export async function deployPreview({
     await verifyPublic(config.origin, output.deployment_id, publicOptions, checkPublic, wait);
     await current();
     await reverify();
-    await assertPair(cf, deployed, config);
+    await assertPreviews(cf, deployed, config);
     need(
       JSON.stringify(await cf(`workers/scripts/${workerName}/deployments`)) === production,
       'Preview or production deployment changed during public validation',
