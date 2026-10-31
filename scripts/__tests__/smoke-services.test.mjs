@@ -7,10 +7,54 @@ import { Server } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { startSmokeServices } from '../smoke-services.mjs';
+import { findSmokePorts, startSmokeServices } from '../smoke-services.mjs';
 
 const require = createRequire(new URL('../../apps/server/package.json', import.meta.url));
 const { Pool } = require('pg');
+
+test('smoke port selection skips unrelated listeners and returns distinct usable ports', async () => {
+  const [occupiedPort] = await findSmokePorts(1);
+  const unrelated = createServer((_request, response) => response.end('unrelated-listener'));
+  const applications = [];
+  try {
+    const listening = once(unrelated, 'listening');
+    unrelated.listen(occupiedPort, 'localhost');
+    await listening;
+    const ports = await findSmokePorts(2, occupiedPort);
+    assert(!ports.includes(occupiedPort));
+    for (const [index, port] of ports.entries()) {
+      const application = createServer((_request, response) =>
+        response.end(`application-${index}`),
+      );
+      applications.push(application);
+      const ready = once(application, 'listening');
+      application.listen(port, '127.0.0.1');
+      await ready;
+      assert.equal(await (await fetch(`http://127.0.0.1:${port}`)).text(), `application-${index}`);
+    }
+    assert.equal(
+      await (await fetch(`http://localhost:${occupiedPort}`)).text(),
+      'unrelated-listener',
+    );
+  } finally {
+    for (const server of [...applications, unrelated])
+      if (server.listening) await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test('exhausted smoke port selection fails without disturbing an occupied listener', async () => {
+  const [port] = await findSmokePorts(1);
+  const unrelated = createServer((_request, response) => response.end('still-listening'));
+  try {
+    const listening = once(unrelated, 'listening');
+    unrelated.listen(port, '127.0.0.1');
+    await listening;
+    await assert.rejects(findSmokePorts(1, port, port));
+    assert.equal(await (await fetch(`http://127.0.0.1:${port}`)).text(), 'still-listening');
+  } finally {
+    if (unrelated.listening) await new Promise((resolve) => unrelated.close(resolve));
+  }
+});
 
 test(
   'Auth fixture leaves the application port available when the OS initially assigns it',

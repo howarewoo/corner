@@ -4,6 +4,12 @@
 
 Corner has not been released. This is the current implementation baseline, not a record of a public launch, live configuration, or completed deployment. Setup commands live in [README.md](README.md); operator procedures and recovery gates live in [HOSTING.md](HOSTING.md).
 
+### Development smoke port discovery
+
+- Development smoke now finds four available app/API/landing/docs ports in 14339–32767, below the default Linux/macOS ephemeral TCP ranges. Selection checks both numeric app/API loopback and the public sites' `localhost` binding, skips occupied ports, and preserves strict child-server binding and unrelated listeners. Production and browser-test ports are unchanged.
+- PR #89's failed check was an existing development-smoke collision: port 43142 remained in `TIME-WAIT` after a browser connection to 43141. The unchanged base revision's port probe reproduced the exact bind failure in an isolated Linux container; the corrected selector returned four simultaneously usable ports with that socket present and its preferred port occupied.
+- Observed Node `24.21.0` / pnpm `10.33.2`: root build passed all 10 workspace tasks; all 166 native CI/release regressions passed without skips; root lint passed with 0 errors and 28 existing warnings. Actual development smoke passed with preferred port 14339 occupied on `localhost` and former port 43142 occupied on numeric loopback; both blocker listeners remained intact afterward. The localhost-only regression failed before probing both host bindings and passed afterward. No live cloud services, retained records, or keys were changed; remote CI was not rerun.
+
 ### Three-origin guide runtime and immutable releases
 
 - The existing one-process Node server and normal/maintenance `corner` Workers now dispatch exact app, landing and guide origins. Docs serves real nested Astro articles, native search JSON and its own assets before Auth/database handlers; unknown pages, private protocols, other-site assets and app service-worker paths do not receive a product fallback. App cookies, Auth/CORS trust, request fingerprinting, owner locks and persistence remain app-only.
