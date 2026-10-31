@@ -768,13 +768,24 @@ async function landingChecks(origin, versionId, fetcher, access) {
     check(!response.headers.has('Set-Cookie'), 'Public landing must not set application cookies');
     return response;
   };
-  const page = await call('/');
+  let page;
+  try {
+    page = await call('/');
+  } catch (error) {
+    if (error instanceof PublicCheckError) throw error;
+    throw new PublicCheckError('Public landing page unavailable (private output withheld)', true);
+  }
+  if (page.status !== 200)
+    throw new PublicCheckError(
+      'Public landing page unavailable',
+      page.status === 404 || page.status === 429 || page.status >= 500,
+    );
   check(
-    page.status === 200 &&
-      page.headers.get('X-Corner-Version') === versionId &&
-      /frame-ancestors 'none'/.test(page.headers.get('Content-Security-Policy') ?? ''),
-    'Public landing page or version/security boundary failed',
+    /frame-ancestors 'none'/.test(page.headers.get('Content-Security-Policy') ?? ''),
+    'Public landing page security boundary failed',
   );
+  if (page.headers.get('X-Corner-Version') !== (access.landingVersionId ?? versionId))
+    throw new PublicCheckError('Public landing deployed version identity mismatch', true);
   const html = await page.text();
   check(/href="\/open-app"/.test(html), 'Public landing lacks the fixed app link');
   const asset = html.match(/(?:src|href)="([^" ]*\/_astro\/[^" ]+)"/)?.[1];
@@ -1974,7 +1985,10 @@ export async function deploy(options) {
   });
   if (prepared.payload.phase !== 'planned') {
     const config = validateConfiguration(options.configuration);
-    const candidate = await options.github.artifact(prepared.payload, join(options.work, 'candidate'));
+    const candidate = await options.github.artifact(
+      prepared.payload,
+      join(options.work, 'candidate'),
+    );
     await (options.checkPublic ?? verifyPublic)(
       prepared.payload.origin,
       prepared.payload.versionId,

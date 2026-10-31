@@ -1622,6 +1622,8 @@ test('dual-origin public and maintenance probes exercise fixed redirects and roo
   let maintenance = false;
   let defect;
   let appOrigin;
+  let landingVersion = versionId;
+  const independentLandingVersion = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
   const requests = [];
   const server = createServer((request, response) => {
     const url = new URL(request.url, `http://${request.headers.host}`);
@@ -1634,8 +1636,15 @@ test('dual-origin public and maintenance probes exercise fixed redirects and roo
       response.end(typeof body === 'string' ? body : JSON.stringify(body));
     };
     if (url.hostname === 'localhost') {
+      response.setHeader('X-Corner-Version', landingVersion);
       if (defect === 'cookie') response.setHeader('Set-Cookie', 'session=unexpected');
       if (url.pathname === '/') {
+        if (defect === 'unavailable') return send(503);
+        if (defect === 'page-redirect') {
+          response.setHeader('Location', 'https://external.invalid');
+          return send(302);
+        }
+        if (defect === 'csp') response.removeHeader('Content-Security-Policy');
         const asset =
           defect === 'external-asset'
             ? 'https://external.invalid/_astro/landing.css'
@@ -1701,17 +1710,63 @@ test('dual-origin public and maintenance probes exercise fixed redirects and roo
     assert.equal(request.headers['cf-access-client-id'], options['CF-Access-Client-Id']);
     assert.equal(request.headers['cf-access-client-secret'], options['CF-Access-Client-Secret']);
   }
+  landingVersion = independentLandingVersion;
+  const retryableIdentity = (error) =>
+    error instanceof PublicCheckError && error.retryable && /version identity/.test(error.message);
+  // Without an override, production must still require the app's identity on the landing page.
+  await assert.rejects(publicChecks(appOrigin, versionId, fetch, options), retryableIdentity);
+  options.landingVersionId = independentLandingVersion;
+  await publicChecks(appOrigin, versionId, fetch, options);
+  landingVersion = versionId;
+  await assert.rejects(publicChecks(appOrigin, versionId, fetch, options), retryableIdentity);
+  const check = (origin, version, fetcher, access) => publicChecks(origin, version, fetch, access);
+  let waits = 0;
+  await verifyPublic(appOrigin, versionId, options, check, async (milliseconds) => {
+    assert.equal(milliseconds, 5000);
+    waits++;
+    landingVersion = independentLandingVersion;
+  });
+  assert.equal(waits, 1);
+  defect = 'unavailable';
+  await verifyPublic(appOrigin, versionId, options, check, async () => {
+    waits++;
+    defect = undefined;
+  });
+  assert.equal(waits, 2);
+  landingVersion = versionId;
+  await assert.rejects(
+    verifyPublic(appOrigin, versionId, options, check, async () => {
+      waits++;
+    }),
+    retryableIdentity,
+  );
+  assert.equal(waits, 13);
+  landingVersion = independentLandingVersion;
   for (const [failure, expected] of [
     ['external-asset', /remain same-origin/],
     ['redirect', /configured app origin/],
     ['cookie', /must not set application cookies/],
     ['root-api', /dynamic\/private path boundary/],
+    ['csp', /security boundary/],
+    ['page-redirect', /page unavailable/],
   ]) {
     defect = failure;
-    await assert.rejects(publicChecks(appOrigin, versionId, fetch, options), expected);
+    const before = waits;
+    await assert.rejects(
+      verifyPublic(appOrigin, versionId, options, check, async () => {
+        waits++;
+      }),
+      (error) =>
+        error instanceof PublicCheckError && !error.retryable && expected.test(error.message),
+    );
+    assert.equal(waits, before);
   }
   defect = undefined;
   maintenance = true;
+  await maintenanceChecks(appOrigin, versionId, fetch, options);
+  landingVersion = versionId;
+  await assert.rejects(maintenanceChecks(appOrigin, versionId, fetch, options), retryableIdentity);
+  delete options.landingVersionId;
   await maintenanceChecks(appOrigin, versionId, fetch, options);
 });
 
