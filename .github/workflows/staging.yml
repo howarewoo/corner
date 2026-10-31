@@ -138,3 +138,64 @@ jobs:
             -f description="$description" \
             -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
           test "$state" = success
+
+  production-readiness:
+    name: ${{ github.event_name == 'workflow_dispatch' && !inputs.completion_deployment_id && 'Production readiness' || 'Production readiness listener' }}
+    if: github.event_name == 'workflow_dispatch' && !inputs.completion_deployment_id
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+      statuses: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      CORNER_PRODUCTION_CONFIG_JSON: ${{ vars.CORNER_PRODUCTION_CONFIG_JSON }}
+      CORNER_PRODUCTION_ORIGIN: ${{ vars.CORNER_PRODUCTION_ORIGIN }}
+      CORNER_PRODUCTION_BINDINGS_REVISION: ${{ vars.CORNER_PRODUCTION_BINDINGS_REVISION }}
+    steps:
+      - name: Report pending production readiness on the promotion PR
+        run: |
+          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" \
+            -f context='Production readiness' \
+            -f state=pending \
+            -f description='Checking candidate against production public configuration' \
+            -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+      - name: Check out the merged staging source only
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Set up pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '>=24.15.0 <25'
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - name: Check the qualified candidate against production public configuration
+        id: readiness
+        run: node scripts/production-readiness.mjs
+        env:
+          READINESS_RUN_ID: ${{ inputs.run_id }}
+          READINESS_SOURCE_SHA: ${{ inputs.source_sha }}
+      - name: Report production readiness on the promotion PR
+        if: ${{ always() }}
+        env:
+          READINESS_JOB_STATUS: ${{ job.status }}
+          VERIFIED_SOURCE_SHA: ${{ steps.readiness.outputs.source_sha }}
+        run: |
+          state=failure
+          description='Production configuration readiness failed or did not verify this commit'
+          if [ "$READINESS_JOB_STATUS" = success ] && [ "$VERIFIED_SOURCE_SHA" = "$GITHUB_SHA" ]; then
+            state=success
+            description='Candidate supports the current production public configuration'
+          fi
+          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" \
+            -f context='Production readiness' \
+            -f state="$state" \
+            -f description="$description" \
+            -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          test "$state" = success

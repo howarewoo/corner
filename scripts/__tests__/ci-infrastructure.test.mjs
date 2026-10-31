@@ -6,6 +6,7 @@ import { configure, protectionBody, stagingDeploymentRuleset } from '../ci-confi
 const repository = 'owner/corner';
 const sourceSha = 'a'.repeat(40);
 const fullContext = 'Test, build, and smoke check workspaces';
+const readinessContext = 'Production readiness';
 
 test('GitHub credentials cannot escape the selected repository and private errors are withheld', async () => {
   let calls = 0;
@@ -49,6 +50,9 @@ function configurationFixture({
   corruptReadback,
   current = null,
   existingRulesets = [],
+  readiness = 'failure',
+  readinessCreator = 'github-actions[bot]',
+  productionOverrides = [],
 } = {}) {
   const writes = [];
   const repo = {
@@ -191,6 +195,12 @@ function configurationFixture({
       if (writes.length && corruptReadback && value) corruptReadback(value);
       return value;
     }
+    if (path.startsWith('/commits/'))
+      return readiness
+        ? [{ context: readinessContext, state: readiness, creator: { login: readinessCreator } }]
+        : [];
+    if (path.startsWith('/environments/production/variables?'))
+      return { variables: productionOverrides.map((name) => ({ name })) };
     if (path.startsWith('/rulesets?')) return [...rulesets.values()];
     const ruleset = path.match(/^\/rulesets\/(\d+)$/);
     if (ruleset) return structuredClone(rulesets.get(Number(ruleset[1])));
@@ -250,7 +260,10 @@ test('complete two-branch dry run proposes every mutation without writing', asyn
     plan.branches.map((value) => value.branch),
     ['main', 'staging'],
   );
-  assert.equal(plan.requiredContext, fullContext);
+  assert.deepEqual(plan.requiredContexts, {
+    main: [fullContext, readinessContext],
+    staging: [fullContext],
+  });
   assert.deepEqual(plan.environments, {
     staging: 'staging',
     production: 'main',
@@ -350,7 +363,7 @@ test('full-check protection preserves unrelated checks and stronger reviews whil
       allow_deletions: { enabled: true },
       allow_force_pushes: { enabled: true },
     },
-    fullContext,
+    [fullContext],
     1,
     true,
   );
@@ -390,6 +403,11 @@ test('every dangerous protection read-back blocks the default-branch change', as
     (value) => {
       value.required_status_checks.checks[0].app_id = 99;
     },
+    (value) => {
+      value.required_status_checks.checks = value.required_status_checks.checks.filter(
+        (check) => check.context !== readinessContext,
+      );
+    },
   ]) {
     const fixture = configurationFixture({ corruptReadback });
     await assert.rejects(
@@ -405,7 +423,12 @@ test('every dangerous protection read-back blocks the default-branch change', as
 
 test('strong unrelated checks and review requirements survive application on both branches', async () => {
   const current = {
-    required_status_checks: { checks: [{ context: 'External security', app_id: 42 }] },
+    required_status_checks: {
+      checks: [
+        { context: 'External security', app_id: 42 },
+        { context: readinessContext, app_id: 99 },
+      ],
+    },
     required_pull_request_reviews: {
       required_approving_review_count: 2,
       dismiss_stale_reviews: true,
@@ -415,10 +438,11 @@ test('strong unrelated checks and review requirements survive application on bot
   };
   const fixture = configurationFixture({ current });
   await configure({ api: fixture.api, apply: true });
-  for (const observed of fixture.protections.values()) {
+  for (const [branch, observed] of fixture.protections) {
     assert.deepEqual(observed.required_status_checks.checks, [
       { context: 'External security', app_id: 42 },
       { context: fullContext, app_id: 1 },
+      ...(branch === 'main' ? [{ context: readinessContext, app_id: 1 }] : []),
     ]);
     assert.equal(observed.required_pull_request_reviews.required_approving_review_count, 2);
     assert.equal(observed.required_pull_request_reviews.require_code_owner_reviews, true);
@@ -489,6 +513,29 @@ test('main requires an actual successful staging deployment without gating stagi
   assert.deepEqual(fixture.protections.get('staging').required_status_checks.checks, [
     { context: fullContext, app_id: 1 },
   ]);
+});
+
+test('readiness must have run on the current staging source before enforcing its main-only check', async () => {
+  for (const options of [{ readiness: null }, { readinessCreator: 'unrelated-user' }]) {
+    const fixture = configurationFixture(options);
+    await assert.rejects(
+      configure({ api: fixture.api, apply: true }),
+      /Run Production readiness on the exact current staging revision/,
+    );
+    assert.deepEqual(fixture.writes, []);
+  }
+});
+
+test('environment public-variable duplicates block all policy effects without deleting configuration', async () => {
+  const productionOverrides = [
+    'CORNER_PRODUCTION_CONFIG_JSON',
+    'CORNER_PRODUCTION_ORIGIN',
+    'CORNER_PRODUCTION_BINDINGS_REVISION',
+  ];
+  const fixture = configurationFixture({ productionOverrides });
+  fixture.environments.set('production', { protection_rules: [] });
+  await assert.rejects(configure({ api: fixture.api, apply: true }), /repository variables only/);
+  assert.deepEqual(fixture.writes, []);
 });
 
 test('reapplying deployment protection preserves unrelated rules and updates its existing identity', async () => {

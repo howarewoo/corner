@@ -4,7 +4,14 @@ import { isDeepStrictEqual, parseArgs } from 'node:util';
 import { githubClient, pages } from './github.mjs';
 
 const fullContext = 'Test, build, and smoke check workspaces';
+const readinessContext = 'Production readiness';
+const productionVariables = new Set([
+  'CORNER_PRODUCTION_CONFIG_JSON',
+  'CORNER_PRODUCTION_ORIGIN',
+  'CORNER_PRODUCTION_BINDINGS_REVISION',
+]);
 const branches = ['main', 'staging'];
+const requiredContexts = { main: [fullContext, readinessContext], staging: [fullContext] };
 const environmentBranches = {
   staging: 'staging',
   production: 'main',
@@ -62,9 +69,9 @@ export function protectionBody(current, required, appId, organization) {
     current?.required_status_checks?.checks ??
     (current?.required_status_checks?.contexts ?? []).map((context) => ({ context, app_id: -1 }));
   const checks = existing
-    .filter((check) => check.context !== required)
+    .filter((check) => !required.includes(check.context) && check.context !== readinessContext)
     .map(({ context, app_id }) => ({ context, app_id }));
-  checks.push({ context: required, app_id: appId });
+  checks.push(...required.map((context) => ({ context, app_id: appId })));
   const reviews = current?.required_pull_request_reviews;
   return {
     required_status_checks: { strict: true, checks },
@@ -113,9 +120,14 @@ function verifyProtection(observed, body, appId, branch, organization) {
     observed.allow_deletions?.enabled !== false ||
     !reviews ||
     (bypass && ['users', 'teams', 'apps'].some((key) => bypass[key]?.length)) ||
-    !isDeepStrictEqual(protectionBody(observed, fullContext, appId, organization), body) ||
-    !observed.required_status_checks.checks?.some(
-      (check) => check.context === fullContext && check.app_id === appId,
+    !isDeepStrictEqual(
+      protectionBody(observed, requiredContexts[branch], appId, organization),
+      body,
+    ) ||
+    !requiredContexts[branch].every((context) =>
+      observed.required_status_checks.checks?.some(
+        (check) => check.context === context && check.app_id === appId,
+      ),
     )
   ) {
     throw new Error(`Branch ${branch} protection read-back failed.`);
@@ -203,9 +215,20 @@ export async function configure({ api, apply = false }) {
       branch,
       sourceSha: ref.object.sha,
       appId: suite.app.id,
-      protection: protectionBody(current, fullContext, suite.app.id, organization),
+      protection: protectionBody(current, requiredContexts[branch], suite.app.id, organization),
     });
   }
+  const stagingSource = branchPlans.find((value) => value.branch === 'staging').sourceSha;
+  const statuses = await pages(api, `/commits/${stagingSource}/statuses`);
+  if (
+    !statuses.some(
+      (status) =>
+        status.context === readinessContext && status.creator?.login === 'github-actions[bot]',
+    )
+  )
+    throw new Error(
+      'Run Production readiness on the exact current staging revision before configuring its required check.',
+    );
   const rulesets = (await pages(api, '/rulesets')).filter(
     (ruleset) => ruleset.name === stagingRulesetName,
   );
@@ -231,6 +254,13 @@ export async function configure({ api, apply = false }) {
       },
     });
     const existing = await api(`/environments/${environment}`, { missing: true });
+    if (environment === 'production' && existing) {
+      const variables = await pages(api, '/environments/production/variables', 'variables');
+      if (variables.some((variable) => productionVariables.has(variable.name)))
+        throw new Error(
+          'Production public configuration belongs in repository variables only; preserve their values and explicitly remove the three production-environment duplicates before configuration.',
+        );
+    }
     const policies = existing
       ? await pages(
           api,
@@ -261,7 +291,7 @@ export async function configure({ api, apply = false }) {
   const repositorySettings = { default_branch: 'staging', delete_branch_on_merge: false };
   const plan = {
     branches: branchPlans,
-    requiredContext: fullContext,
+    requiredContexts,
     requiredDeployment,
     environments: environmentBranches,
     mutations,
