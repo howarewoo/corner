@@ -51,29 +51,25 @@ export function previewConfiguration(raw, environment = process.env) {
     'Preview requires only explicit public origins and disabled email verification',
   );
   const origin = new URL(value.CORNER_ORIGIN);
-  need(
-    origin.origin === value.CORNER_ORIGIN &&
-      origin.protocol === 'https:' &&
-      /^staging-corner\.[a-z0-9-]+\.workers\.dev$/.test(origin.hostname) &&
-      value.CORNER_ORIGIN === environment.CORNER_STAGING_ORIGIN,
-    'Preview requires the exact registered staging-corner HTTPS origin',
+  const paired = value.CORNER_LANDING_ORIGIN !== undefined;
+  const match = origin.hostname.match(
+    paired
+      ? /^staging-app-corner\.([a-z0-9-]+)\.workers\.dev$/
+      : /^staging-corner\.([a-z0-9-]+)\.workers\.dev$/,
   );
-  let landingOrigin;
-  if (value.CORNER_LANDING_ORIGIN !== undefined) {
-    const landing = new URL(value.CORNER_LANDING_ORIGIN);
-    need(
-      landing.protocol === 'https:' &&
-        landing.origin === value.CORNER_LANDING_ORIGIN &&
-        !landing.username &&
-        !landing.password &&
-        !landing.port &&
-        landing.hostname.includes('.') &&
-        landing.hostname !== origin.hostname &&
-        !/(^|\.)workers\.dev$|(^|\.)workers-preview\.com$/.test(landing.hostname),
-      'Preview requires an explicit distinct HTTPS landing hostname protected by staging Access',
-    );
-    landingOrigin = landing.origin;
-  }
+  need(
+    match &&
+      origin.origin === value.CORNER_ORIGIN &&
+      origin.protocol === 'https:' &&
+      !origin.port &&
+      value.CORNER_ORIGIN === environment.CORNER_STAGING_ORIGIN,
+    'Preview requires the exact registered staging workers.dev HTTPS origin',
+  );
+  const landingOrigin = paired ? `https://staging-corner.${match[1]}.workers.dev` : undefined;
+  need(
+    !paired || value.CORNER_LANDING_ORIGIN === landingOrigin,
+    'Preview requires the exact matched-account staging-corner landing origin',
+  );
   const revision = environment.CORNER_STAGING_BINDINGS_REVISION;
   need(
     /^[A-Za-z0-9._-]{1,100}$/.test(revision ?? ''),
@@ -83,6 +79,7 @@ export function previewConfiguration(raw, environment = process.env) {
     value,
     origin: origin.origin,
     bindingsRevision: revision,
+    previewName: paired ? 'staging-app' : previewName,
     landingOrigin,
     digest: hash(JSON.stringify({ vars: value, bindingsRevision: revision })),
   };
@@ -182,6 +179,26 @@ async function record(github, payload, state = 'in_progress') {
   await setStatus(github, deployment, state);
   return deployment;
 }
+function assertBindings(live, config) {
+  need(
+    Object.entries(config.value).every(([name, value]) => live?.env?.[name]?.text === value) &&
+      live.env?.CF_VERSION_METADATA?.type === 'version_metadata' &&
+      secretNames.every((name) => live.env?.[name]?.type === 'secret_text') &&
+      !Object.values(live.env ?? {}).some((binding) => binding.type === 'service'),
+    'Preview has unexpected runtime bindings',
+  );
+}
+
+async function assertPair(cf, receipt, config) {
+  for (const [name, deployment] of [
+    [receipt.previewName, receipt.deploymentId],
+    ...(config.landingOrigin ? [[previewName, receipt.landingDeploymentId]] : []),
+  ]) {
+    const live = await cf(`workers/workers/${workerName}/previews/${name}/deployments/latest`);
+    need(live?.id === deployment, 'Live Preview differs from the incomplete deployment');
+    assertBindings(live, config);
+  }
+}
 
 export async function completePreview({
   github,
@@ -206,8 +223,13 @@ export async function completePreview({
       p.kind === kind &&
       p.phase === 'deployed' &&
       p.workerName === workerName &&
-      p.previewName === previewName &&
+      p.previewName === config.previewName &&
       p.versionId === p.deploymentId &&
+      (!config.landingOrigin ||
+        (p.landingOrigin === config.landingOrigin &&
+          p.landingPreviewName === previewName &&
+          typeof p.landingDeploymentId === 'string' &&
+          p.landingDeploymentId === p.landingVersionId)) &&
       /^[a-f0-9]{40}$/.test(p.sourceSha ?? '') &&
       p.origin === config.origin &&
       p.runtimeConfigurationDigest === config.digest &&
@@ -243,6 +265,7 @@ export async function completePreview({
     'CF-Access-Client-Id': environment.CORNER_STAGING_ACCESS_CLIENT_ID,
     'CF-Access-Client-Secret': environment.CORNER_STAGING_ACCESS_CLIENT_SECRET,
   });
+  if (config.landingOrigin) access.landingVersionId = p.landingVersionId;
   const assertCurrent = async () => {
     need(
       (await github.api('git/ref/heads/staging')).object?.sha === p.sourceSha &&
@@ -250,17 +273,7 @@ export async function completePreview({
         String((await github.all(schemaPath))[0]?.id) === String(schema.id),
       'Preview source or deployment/schema journal changed during completion',
     );
-    const live = await cf(
-      `workers/workers/${workerName}/previews/${previewName}/deployments/latest`,
-    );
-    need(
-      live.id === p.deploymentId &&
-        Object.entries(config.value).every(([name, value]) => live.env?.[name]?.text === value) &&
-        live.env?.CF_VERSION_METADATA?.type === 'version_metadata' &&
-        secretNames.every((name) => live.env?.[name]?.type === 'secret_text') &&
-        !Object.values(live.env ?? {}).some((binding) => binding.type === 'service'),
-      'Live Preview differs from the incomplete deployment',
-    );
+    await assertPair(cf, p, config);
     need(
       (await verify(candidate.directory)).digest === candidate.digest,
       'Immutable Preview payload changed during completion',
@@ -348,26 +361,57 @@ export async function deployPreview({
     );
   const deployments = await github.all('deployments?environment=staging&task=corner-preview');
   const previous = deployments[0];
+  need(
+    previous?.payload?.phase !== 'app-uploaded',
+    'Partial Preview pair on HOLD; reconcile both live deployments and the app-uploaded history before another deployment',
+  );
   if (previous)
     need(
       previous.payload?.format === 4 &&
         previous.payload.kind === kind &&
         ['deployed', 'complete'].includes(previous.payload.phase) &&
         previous.payload.workerName === workerName &&
-        previous.payload.previewName === previewName &&
-        previous.payload.origin === config.origin &&
+        ((previous.payload.previewName === config.previewName &&
+          previous.payload.origin === config.origin &&
+          (!config.landingOrigin ||
+            (previous.payload.landingOrigin === config.landingOrigin &&
+              previous.payload.landingPreviewName === previewName &&
+              typeof previous.payload.landingDeploymentId === 'string' &&
+              previous.payload.landingVersionId === previous.payload.landingDeploymentId))) ||
+          (config.landingOrigin &&
+            previous.payload.previewName === previewName &&
+            previous.payload.origin === config.landingOrigin &&
+            previous.payload.landingOrigin === undefined)) &&
         typeof previous.payload.deploymentId === 'string',
       'Invalid Preview deployment history',
     );
+  const expected = new Map([
+    [
+      config.previewName,
+      previous?.payload.previewName === config.previewName ? previous.payload.deploymentId : null,
+    ],
+    ...(config.landingOrigin
+      ? [
+          [
+            previewName,
+            previous?.payload.previewName === previewName
+              ? previous.payload.deploymentId
+              : (previous?.payload.landingDeploymentId ?? null),
+          ],
+        ]
+      : []),
+  ]);
   const serving = async () => {
-    const live = await cf(
-      `workers/workers/${workerName}/previews/${previewName}/deployments/latest`,
-      { allowMissing: true },
-    );
-    need(
-      previous ? live?.id === previous.payload.deploymentId : live === null,
-      'Live Preview deployment differs from its ledger; reconcile before retrying',
-    );
+    for (const [name, deployment] of expected) {
+      const live = await cf(`workers/workers/${workerName}/previews/${name}/deployments/latest`, {
+        allowMissing: true,
+      });
+      need(
+        deployment ? live?.id === deployment : live === null,
+        'Live Preview deployment differs from its ledger; reconcile before retrying',
+      );
+      if (deployment && previous?.payload.landingOrigin) assertBindings(live, config);
+    }
   };
   await serving();
   if (schema) {
@@ -380,6 +424,11 @@ export async function deployPreview({
     );
   }
   const prior = previous ? await load(previous.payload, join(work, 'previous')) : null;
+  if (config.landingOrigin && previous?.payload.previewName === previewName)
+    need(
+      prior.assetLayout === 'single-site',
+      'Origin cutover requires a retained single-site Preview artifact',
+    );
   const qualification = await qualify({
     candidate: candidate.directory,
     previous: prior?.directory,
@@ -416,12 +465,17 @@ export async function deployPreview({
     bindingsRevision: config.bindingsRevision,
     origin: config.origin,
     workerName,
-    previewName,
+    previewName: config.previewName,
+    ...(config.landingOrigin
+      ? { landingOrigin: config.landingOrigin, landingPreviewName: previewName }
+      : {}),
     qualification,
     phase: 'schema-attempted',
   };
   const schemaAttempt = await record(github, payload);
   try {
+    await current();
+    await serving();
     execute(
       process.execPath,
       [join(candidate.directory, candidate.manifest.migrationEntry), '--apply'],
@@ -455,80 +509,121 @@ export async function deployPreview({
       },
     }),
   );
-  const outputFile = join(work, 'preview-output.jsonl');
-  await writeFile(outputFile, '', { flag: 'wx', mode: 0o600 });
-  const secretFile = join(work, 'preview-secrets.json');
-  await writeFile(secretFile, JSON.stringify(secrets), { mode: 0o600 });
-  try {
-    execute(
-      'pnpm',
-      [
-        '--filter',
-        'server',
-        'exec',
-        'wrangler',
-        'preview',
-        '--config',
-        cfg,
-        '--worker-name',
-        workerName,
-        '--name',
-        previewName,
-        '--ignore-base-config',
-        '--secrets-file',
-        secretFile,
-        '--tag',
-        sourceSha,
-        '--json',
-      ],
-      {
-        env: {
-          ...environment,
-          WRANGLER_SEND_METRICS: 'false',
-          WRANGLER_OUTPUT_FILE_PATH: outputFile,
-        },
-      },
+  const upload = async (name, origin) => {
+    await current();
+    await serving();
+    await reverify();
+    need(
+      JSON.stringify(await cf(`workers/scripts/${workerName}/deployments`)) === production,
+      'Production Worker changed before Preview upload',
     );
-  } finally {
-    await rm(secretFile, { force: true });
-  }
-  const outputs = (await readFile(outputFile, 'utf8'))
-    .trim()
-    .split('\n')
-    .map((line) => JSON.parse(line))
-    .filter((entry) => entry.type === 'preview');
-  need(outputs.length === 1, 'Exactly one native Preview machine-output record required');
-  const output = outputs[0];
-  need(
-    output.version === 1 &&
-      output.worker_name === workerName &&
-      output.preview_name === previewName &&
-      output.preview_urls?.includes(config.origin) &&
-      typeof output.preview_id === 'string' &&
-      typeof output.deployment_id === 'string',
-    'Native Preview identity or stable URL differs',
-  );
-  const live = await cf(
-    `workers/workers/${workerName}/previews/${output.preview_id}/deployments/latest`,
-  );
-  need(live.id === output.deployment_id, 'Native Preview deployment changed before validation');
-  const bindings = live.env ?? {};
-  need(
-    !Object.values(bindings).some((binding) => binding.type === 'service') &&
-      Object.entries(config.value).every(([name, value]) => bindings[name]?.text === value) &&
-      secretNames.every((name) => bindings[name]?.type === 'secret_text'),
-    'Preview has unexpected runtime bindings',
-  );
+    const outputFile = join(work, `preview-${name}-output.jsonl`);
+    await writeFile(outputFile, '', { flag: 'wx', mode: 0o600 });
+    const secretFile = join(work, 'preview-secrets.json');
+    await writeFile(secretFile, JSON.stringify(secrets), { mode: 0o600 });
+    try {
+      execute(
+        'pnpm',
+        [
+          '--filter',
+          'server',
+          'exec',
+          'wrangler',
+          'preview',
+          '--config',
+          cfg,
+          '--worker-name',
+          workerName,
+          '--name',
+          name,
+          '--ignore-base-config',
+          '--secrets-file',
+          secretFile,
+          '--tag',
+          sourceSha,
+          '--json',
+        ],
+        {
+          env: {
+            ...environment,
+            WRANGLER_SEND_METRICS: 'false',
+            WRANGLER_OUTPUT_FILE_PATH: outputFile,
+          },
+        },
+      );
+    } finally {
+      await rm(secretFile, { force: true });
+    }
+    const outputs = (await readFile(outputFile, 'utf8'))
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line))
+      .filter((entry) => entry.type === 'preview');
+    need(outputs.length === 1, 'Exactly one native Preview machine-output record required');
+    const output = outputs[0];
+    need(
+      output.version === 1 &&
+        output.worker_name === workerName &&
+        output.preview_name === name &&
+        output.preview_urls?.includes(origin) &&
+        typeof output.preview_id === 'string' &&
+        typeof output.deployment_id === 'string',
+      'Native Preview identity or stable URL differs',
+    );
+    return output;
+  };
+  const output = await upload(config.previewName, config.origin);
   const deployed = {
     ...payload,
-    phase: 'deployed',
+    phase: config.landingOrigin ? 'app-uploaded' : 'deployed',
     previewId: output.preview_id,
     deploymentId: output.deployment_id,
     deploymentUrls: output.deployment_urls,
     versionId: output.deployment_id,
+    ...(config.landingOrigin
+      ? {
+          previousLanding: previous
+            ? {
+                previewName,
+                origin: config.landingOrigin,
+                deploymentId: expected.get(previewName),
+                sourceSha: previous.payload.sourceSha,
+                runId: previous.payload.runId,
+                artifactId: previous.payload.artifactId,
+                candidateDigest: previous.payload.candidateDigest,
+                runtimeConfigurationDigest: previous.payload.runtimeConfigurationDigest,
+                bindingsRevision: previous.payload.bindingsRevision,
+              }
+            : null,
+        }
+      : {}),
   };
-  const deployedRecord = await record(github, deployed);
+  let deployedRecord = await record(github, deployed);
+  expected.set(config.previewName, output.deployment_id);
   try {
+    const appLive = await cf(
+      `workers/workers/${workerName}/previews/${config.previewName}/deployments/latest`,
+    );
+    need(
+      appLive?.id === output.deployment_id,
+      'Native Preview deployment changed before validation',
+    );
+    assertBindings(appLive, config);
+    if (config.landingOrigin) {
+      const landing = await upload(previewName, config.landingOrigin);
+      Object.assign(deployed, {
+        phase: 'deployed',
+        landingPreviewId: landing.preview_id,
+        landingDeploymentId: landing.deployment_id,
+        landingVersionId: landing.deployment_id,
+        landingDeploymentUrls: landing.deployment_urls,
+      });
+      const pairedRecord = await record(github, deployed);
+      await setStatus(github, deployedRecord, 'inactive');
+      deployedRecord = pairedRecord;
+      publicOptions.landingVersionId = landing.deployment_id;
+    }
+    await assertPair(cf, deployed, config);
     await reverify();
     need(
       JSON.stringify(await cf(`workers/scripts/${workerName}/deployments`)) === production,
@@ -537,10 +632,9 @@ export async function deployPreview({
     await verifyPublic(config.origin, output.deployment_id, publicOptions, checkPublic, wait);
     await current();
     await reverify();
+    await assertPair(cf, deployed, config);
     need(
-      (await cf(`workers/workers/${workerName}/previews/${previewName}/deployments/latest`)).id ===
-        output.deployment_id &&
-        JSON.stringify(await cf(`workers/scripts/${workerName}/deployments`)) === production,
+      JSON.stringify(await cf(`workers/scripts/${workerName}/deployments`)) === production,
       'Preview or production deployment changed during public validation',
     );
     const result = await record(github, { ...deployed, phase: 'complete' }, 'success');

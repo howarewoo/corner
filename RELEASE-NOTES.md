@@ -4,6 +4,15 @@
 
 Corner has not been released. This is the current implementation baseline, not a record of a public launch, live configuration, or completed deployment. Setup commands live in [README.md](README.md); operator procedures and recovery gates live in [HOSTING.md](HOSTING.md).
 
+### Paired workers.dev staging origins
+
+- Staging now deploys native Previews `staging` (landing) and `staging-app` (app) under the existing `corner` Worker, using the same immutable artifact and staging configuration with one migration application. Approved origins are `https://staging-corner.adam-nathaniel-woo.workers.dev` and `https://staging-app-corner.adam-nathaniel-woo.workers.dev`. No custom staging domain, additional Worker, service binding or production traffic change is introduced.
+- The format-4 staging journal binds both independent deployment IDs. The first upload receives an `app-uploaded` checkpoint retaining the prior landing artifact/configuration identity; partial pairs remain failed on operator HOLD. Pinned public-only completion requires both uploads journaled as `deployed`. Retained single-site format-4 serving artifacts qualify the first transition without rewriting historical receipts.
+- Landing public/maintenance probes accept an independently pinned landing version while production retains its same-version default. Temporary landing availability/version propagation uses the existing bounded readiness loop; security failures still fail immediately.
+- Local verification exercised two real workerd runtimes with identical CI artifact bytes and distinct generated version IDs, including fixed CTA routing, both sites' assets/security boundaries, cookie isolation and rejection of a wrong landing version. Upgrade/previous-code recovery qualification passed against the exact retained staging artifact `fd3bf2ccd682b6b3f48fad6c24b659b249285e27` using disposable PostgreSQL/HTTPS Auth fixtures; the result was `compatible`. The root build passed.
+- Final local checks passed root lint (existing warnings only), all 153 native CI/release regressions with disposable PostgreSQL and no skips, and local-link validation for the affected documentation. No live deployment or remote CI rerun is claimed.
+- Live Access/Auth/GitHub configuration and deployment were not changed. Before dispatch, protect both Previews, register the new staging app Auth origin, supply the documented origin pair and advance its bindings revision. Existing account/PWA/OAuth/MCP origin-cutover gates remain; no account, session, grant, record, key or schema reset is authorized.
+
 ### Production smoke port isolation
 
 - Moved only the compiled Node production-smoke listeners to 14337/14338, below the default Linux/macOS ephemeral TCP ranges. The previous 43137/43138 listeners overlapped Linux's default outbound allocation range. No application runtime contract, retries, or unrelated-process termination was added.
