@@ -1,0 +1,32 @@
+---
+title: Import a Corner workspace
+description: Preview a supported JSON export before confirming a copy into an empty workspace.
+---
+
+## Before you choose a file
+
+Use a supported **Corner workspace JSON export**, not a recipe text download, spreadsheet, or account-service backup. Keep an untouched copy of the source file.
+
+The receiving workspace must be empty. Existing records are not overwritten, and this flow is not a merge or a reset tool. If Corner says the destination is not empty, stop and choose an appropriate empty destination; do not delete retained records just to force an import.
+
+## Preview and confirm
+
+1. Sign in to the receiving account and open **Settings → Import workspace**.
+2. Select the Corner JSON export.
+3. Wait for **Review your import** and check the file name and record counts.
+4. Confirm this is the account and data you intended. Type **IMPORT** in the confirmation field.
+5. Choose **Import my records** and wait for completion before leaving or editing elsewhere.
+
+The import copies supported records into this account. It does not change the original workspace, transfer your login, or reconnect previously approved clients.
+
+## If the import is refused
+
+- **Invalid or unsupported file:** select an intact supported Corner JSON export. Do not remove fields blindly to make validation pass.
+- **Workspace not empty:** use the supported empty-workspace destination; imports never overwrite existing records.
+- **Workspace changed after preview:** review the current destination and preview again. An old preview is not approval to replace newer data.
+- **File too large:** the workspace transfer limit is 32 MiB, with additional collection and nesting limits. Do not split a JSON export manually and assume the fragments are supported imports.
+- **Connection or service failure:** preserve your file and follow the displayed error. Check the destination before retrying; do not infer success from a button press.
+
+## After importing
+
+Review a few known recipes, dates, workouts, food entries, settings, and check-ins. Confirm serving definitions and units still mean what you expect. Reconnect any external client only if you still want to grant it access; [consent and revocation](/connections) are separate from workspace portability.

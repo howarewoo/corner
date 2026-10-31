@@ -6,6 +6,7 @@ COPY apps/server/package.json ./apps/server/package.json
 COPY apps/web/package.json ./apps/web/package.json
 COPY apps/design/package.json ./apps/design/package.json
 COPY apps/landing/package.json ./apps/landing/package.json
+COPY apps/docs/package.json ./apps/docs/package.json
 COPY packages/nutrition/package.json ./packages/nutrition/package.json
 COPY packages/training/package.json ./packages/training/package.json
 COPY packages/workspace/package.json ./packages/workspace/package.json
