@@ -32,6 +32,7 @@ type Recovery = {
   session: WorkoutSession;
   expectedUpdatedAt: string | null;
   prefillEdits: Record<string, boolean>;
+  pendingSave?: WorkoutSession;
 };
 const comparable = (session: WorkoutSession) => {
   const parsed = WorkoutSessionSchema.safeParse(session);
@@ -64,11 +65,25 @@ function recover(key: string, saved: WorkoutSession): Recovery | undefined {
       Object.values(raw.prefillEdits).some((value) => typeof value !== 'boolean')
     )
       return;
+    let pendingSave: WorkoutSession | undefined;
+    if (raw.pendingSave != null) {
+      const pending = WorkoutSessionSchema.safeParse(raw.pendingSave);
+      if (
+        !pending.success ||
+        pending.data.id !== saved.id ||
+        !['in_progress', 'completed'].includes(pending.data.status)
+      )
+        return;
+      pendingSave = pending.data;
+    }
+    const confirmed =
+      comparable(saved) === comparable(candidate) ||
+      (pendingSave && comparable(saved) === comparable(pendingSave));
     return {
       session: candidate,
-      expectedUpdatedAt:
-        comparable(saved) === comparable(candidate) ? saved.updatedAt : raw.expectedUpdatedAt,
+      expectedUpdatedAt: confirmed ? saved.updatedAt : raw.expectedUpdatedAt,
       prefillEdits: raw.prefillEdits,
+      pendingSave: confirmed || saved.updatedAt === raw.expectedUpdatedAt ? undefined : pendingSave,
     };
   } catch {
     return;
@@ -111,15 +126,24 @@ export function useActiveWorkout({
   const savedContent = useRef('');
   const attempted = useRef('');
   const finishedId = useRef<string | null>(null);
-  const needsVersion = useRef(false);
+  // Keep the submitted write separate from newer editable content until its
+  // outcome/version is known, including across reload during a network outage.
+  const pendingSave = useRef<WorkoutSession | undefined>(undefined);
+  const recoveryDraft = useRef<Pick<Recovery, 'session' | 'prefillEdits'> | null>(null);
   const finish = useRef<() => void>(() => {});
   const resume = useRef<HTMLButtonElement>(null);
   const remember = useCallback(
     (session: WorkoutSession, prefillEdits: Record<string, boolean>) => {
+      recoveryDraft.current = { session, prefillEdits };
       try {
         sessionStorage.setItem(
           storageKey,
-          JSON.stringify({ session, expectedUpdatedAt: expected.current, prefillEdits }),
+          JSON.stringify({
+            session,
+            expectedUpdatedAt: expected.current,
+            prefillEdits,
+            pendingSave: pendingSave.current,
+          }),
         );
       } catch {
         /* Server save remains available when browser storage is blocked. */
@@ -127,12 +151,18 @@ export function useActiveWorkout({
     },
     [storageKey],
   );
+  const checkpoint = useCallback(() => {
+    const latest = recoveryDraft.current;
+    if (latest) remember(latest.session, latest.prefillEdits);
+  }, [remember]);
   const open = useCallback(
     (saved: WorkoutSession, show: boolean) => {
       const recovery = recover(storageKey, saved);
       expected.current = recovery?.expectedUpdatedAt ?? saved.updatedAt;
+      pendingSave.current = recovery?.pendingSave;
       savedContent.current = comparable(saved);
       const session = recovery?.session ?? structuredClone(saved);
+      remember(session, recovery?.prefillEdits ?? {});
       setEditor({
         session,
         expectedUpdatedAt: expected.current,
@@ -142,7 +172,7 @@ export function useActiveWorkout({
       setEdits(recovery?.prefillEdits ?? {});
       setExpanded(show);
     },
-    [storageKey],
+    [storageKey, remember],
   );
   useEffect(() => {
     if (!lock.current && !editor && sessions?.[0] && sessions[0].id !== finishedId.current)
@@ -178,51 +208,50 @@ export function useActiveWorkout({
     lock.current = true;
     setSaving(true);
     try {
-      if (needsVersion.current) {
+      if (pendingSave.current) {
         const saved = await readSaved(session.id);
-        if (saved && comparable(saved) !== savedContent.current)
+        // A prior write either committed our exact snapshot, or did not advance
+        // its original version. Anything else is an unrelated edit, not a token
+        // we can safely adopt for replacing it with our newer draft.
+        if (
+          saved &&
+          comparable(saved) !== comparable(pendingSave.current) &&
+          saved.updatedAt !== expected.current
+        )
           throw new Error(
             'This workout changed elsewhere. Your local draft is kept; reload the saved version before replacing it.',
           );
         if (saved) expected.current = saved.updatedAt;
-        needsVersion.current = false;
+        pendingSave.current = undefined;
+        checkpoint();
       }
+      pendingSave.current = structuredClone(session);
+      checkpoint();
       const ok = await mutate(
         { type: 'training.session.save', data: { session, expectedUpdatedAt: expected.current } },
         session.status === 'completed' ? 'Workout logged' : undefined,
       );
-      if (!ok) {
-        // A lost response does not prove the transaction failed. Confirm the exact
-        // saved content before retrying with a new request/version token.
-        const confirmed = await readSaved(session.id).catch(() => null);
-        if (!confirmed || comparable(confirmed) !== comparable(session)) {
-          setSaveFailed(true);
-          return false;
-        }
-        expected.current = confirmed.updatedAt;
-        notify('Workout save confirmed.');
+      const confirmed = session.status === 'completed' && ok ? null : await readSaved(session.id);
+      if ((!ok && !confirmed) || (confirmed && comparable(confirmed) !== comparable(session))) {
+        setSaveFailed(true);
+        return false;
       }
+      if (!ok) notify('Workout save confirmed.');
+      expected.current = confirmed?.updatedAt ?? session.updatedAt;
       savedContent.current = comparable(session);
+      pendingSave.current = undefined;
+      checkpoint();
+      setSaveFailed(false);
       if (session.status === 'completed') {
         finishedId.current = session.id;
         setEditor(null);
         setDraft(null);
         setExpanded(false);
-        setSaveFailed(false);
         try {
           sessionStorage.removeItem(storageKey);
         } catch {
           /* Storage can be unavailable. */
         }
-      } else {
-        needsVersion.current = true;
-        const saved = await readSaved(session.id);
-        // Preview mutations allocate their timestamp locally, without a server read.
-        if (saved && comparable(saved) !== savedContent.current)
-          throw new Error('This workout changed elsewhere. Your local draft is kept.');
-        expected.current = saved?.updatedAt ?? session.updatedAt;
-        needsVersion.current = false;
-        setSaveFailed(false);
       }
       return true;
     } catch (error) {
@@ -278,13 +307,18 @@ export function useActiveWorkout({
       // Show the active workout even if the follow-up read is temporarily unavailable.
       open(next, true);
       savedContent.current = comparable(next);
-      needsVersion.current = true;
+      pendingSave.current = next;
+      checkpoint();
       const saved = await readSaved(next.id);
+      if (saved && comparable(saved) !== comparable(next))
+        throw new Error('This workout changed elsewhere. Your local draft is kept.');
       expected.current = saved?.updatedAt ?? next.updatedAt;
-      needsVersion.current = false;
+      pendingSave.current = undefined;
+      checkpoint();
       savedContent.current = comparable(next);
       return true;
     } catch (error) {
+      if (pendingSave.current) setSaveFailed(true);
       notify(error instanceof Error ? error.message : 'Could not open your workout.', true);
       return false;
     } finally {
