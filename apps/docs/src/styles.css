@@ -1,0 +1,148 @@
+@import '@packages/ui/utilities.css';
+@import 'fumadocs-ui/css/neutral.css';
+@import 'fumadocs-ui/css/preset.css';
+@import '@packages/ui/theme.css';
+@import '@packages/ui/styles.css';
+
+:root {
+  --color-fd-background: var(--paper);
+  --color-fd-foreground: var(--ink);
+  --color-fd-muted: var(--surface-secondary);
+  --color-fd-muted-foreground: var(--muted-foreground);
+  --color-fd-popover: var(--paper);
+  --color-fd-popover-foreground: var(--ink);
+  --color-fd-card: var(--paper);
+  --color-fd-card-foreground: var(--ink);
+  --color-fd-primary: var(--forest);
+  --color-fd-primary-foreground: var(--on-accent);
+  --color-fd-secondary: var(--surface-secondary);
+  --color-fd-secondary-foreground: var(--ink);
+  --color-fd-accent: var(--surface-hover);
+  --color-fd-accent-foreground: var(--ink);
+  --color-fd-border: var(--surface-inset);
+  --color-fd-ring: var(--ring);
+}
+
+html {
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.65;
+  color: var(--ink);
+  background: var(--paper);
+  scrollbar-color: var(--forest) var(--backdrop);
+  scroll-padding-top: 100px;
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  margin: 0;
+}
+::selection {
+  color: var(--on-accent);
+  background: var(--forest);
+}
+a {
+  text-underline-offset: 4px;
+}
+input {
+  caret-color: var(--forest);
+}
+:focus-visible {
+  outline: 3px solid var(--ring);
+  outline-offset: 4px;
+}
+h1,
+h2,
+h3 {
+  text-wrap: balance;
+}
+#main:focus {
+  outline: none;
+}
+#nd-sidebar {
+  background: var(--backdrop);
+}
+#main {
+  max-width: 78ch;
+}
+.prose {
+  overflow-wrap: anywhere;
+}
+#main h1 {
+  font-size: clamp(30px, 2.45vw, 38px);
+  letter-spacing: -0.025em;
+  font-weight: 600;
+}
+.prose h2 {
+  margin-top: 2.2em;
+}
+.prose table {
+  font-variant-numeric: tabular-nums;
+}
+.prose a {
+  text-decoration-thickness: 1px;
+}
+
+.skip-link {
+  position: fixed;
+  top: 12px;
+  left: 16px;
+  z-index: 100;
+  padding: 12px 18px;
+  background: var(--paper);
+  color: var(--ink);
+  border-radius: var(--radius-control);
+  transform: translateY(-180%);
+}
+.skip-link:focus {
+  transform: none;
+}
+.no-script-navigation {
+  padding: 20px;
+  background: var(--backdrop);
+}
+.no-script-navigation summary {
+  cursor: pointer;
+  font-weight: 600;
+  padding-block: 8px;
+}
+.no-script-navigation a {
+  display: block;
+  padding-block: 10px;
+}
+.no-script-navigation p {
+  margin-block: 12px 0;
+}
+.not-found {
+  max-width: 65ch;
+  margin: 12vh auto;
+  padding: 24px;
+}
+.not-found h1 {
+  font-size: clamp(30px, 4vw, 38px);
+  font-weight: 600;
+  line-height: 1.22;
+}
+.not-found p {
+  margin-block: 20px 28px;
+}
+
+@media (max-width: 760px) {
+  input {
+    font-size: 16px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+@media (forced-colors: active) {
+  :focus-visible {
+    outline-color: Highlight;
+  }
+}

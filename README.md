@@ -174,6 +174,23 @@ Development binds to and advertises the configured landing hostname (**http://lo
 
 Hosted routing uses the root domain for this page and `app.<root-domain>` for the existing product, with product routes unchanged (never `/app/`). No production domain is guessed. Every **Open Corner** action is a real HTML link to `/open-app`; Node and Worker accept only GET/HEAD there and redirect to the configured `CORNER_ORIGIN`, ignoring visitor return URLs. `CORNER_LANDING_ORIGIN` is the exact landing origin. Landing requests never enter Auth/API/OAuth/MCP handlers, have no account cookies or service worker, and unknown landing paths return 404 rather than the product shell. Unknown hosts are rejected.
 
+### Standalone product guide
+
+[`apps/docs`](apps/docs/) is the public product-user guide, built with Astro 7.4.4 and the official Fumadocs Astro integration. Reviewed MDX in `apps/docs/content/docs` covers accounts, nutrition, training, profile/progress, workspace portability, optional MCP connections, and mobile/troubleshooting. It contains synthetic examples, not operator runbooks or personal records.
+
+```bash
+pnpm --filter docs dev
+pnpm --filter docs check
+pnpm run build --filter=docs
+pnpm --filter docs preview
+```
+
+Development and standalone built preview use **http://127.0.0.1:43204**. No database, account service, private configuration, root environment file, or external search service is needed. Root Turbo `check` and `build` discover the workspace automatically; the owned full-stack `dev` controller does not launch docs yet.
+
+Static output is `apps/docs/dist`: `/index.html`, nested article `index.html` files, `/404.html`, root-relative `/_astro/` assets, and `/search-index.json`. Fumadocs searches that generated index in the browser; no `/api/search` endpoint exists. Article navigation uses normal full-document links, not Astro ClientRouter. Articles and a native section menu remain available without JavaScript; search and interactive menus are enhanced by React islands.
+
+Astro's built-in CSP emits per-page script hashes in a CSP meta element: scripts permit only the same origin and generated hashes, never `unsafe-inline` or `unsafe-eval`. Styles separately permit the same origin and `unsafe-inline` because Fumadocs/Radix use inline layout attributes and viewport-dependent scroll-lock sheets that cannot be covered by build-time hashes. The guide disables the optional runtime theme provider and keeps Corner's shared light tokens. This standalone output is not yet served by Node/Worker, included in hosted release assets, or linked through a cross-site app handoff; those integration boundaries remain separate work. Do not add environment-specific origins to content or treat standalone preview as hosted security qualification.
+
 ### Build and run production locally
 
 ```bash
@@ -182,7 +199,7 @@ pnpm run db:migrate
 pnpm start
 ```
 
-The build compiles shared domain/API packages, server, web product, catalog, and static landing page. One compiled Node process serves app/API at `CORNER_ORIGIN` (default **http://127.0.0.1:3000**) and landing at `CORNER_LANDING_ORIGIN` (default **http://localhost:3000**) on its configured listener. Both builds are required. Hosted origins require HTTPS; local origins must be loopback and use different hostnames. Production runs ordinary JavaScript from `apps/server/dist`, not Vite or a TypeScript loader.
+The build compiles shared domain/API packages, server, web product, catalog, static landing page, and standalone product guide. One compiled Node process serves app/API at `CORNER_ORIGIN` (default **http://127.0.0.1:3000**) and landing at `CORNER_LANDING_ORIGIN` (default **http://localhost:3000**) on its configured listener; it does not yet serve the guide. Both app and landing builds are required for that runtime. Hosted origins require HTTPS; local origins must be loopback and use different hostnames. Production runs ordinary JavaScript from `apps/server/dist`, not Vite or a TypeScript loader.
 
 ### Workspace commands
 

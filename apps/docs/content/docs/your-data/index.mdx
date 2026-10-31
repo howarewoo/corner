@@ -1,0 +1,30 @@
+---
+title: Your data
+description: Take supported records with you, and understand what a workspace export does not contain.
+---
+
+## Export your workspace
+
+Use **Export workspace** in the workspace navigation or account controls. Wait for the JSON download to finish and save it somewhere private. This downloads the supported workspace records from the server, not just the currently visible day.
+
+A workspace export can carry recipes, dated meal plans, food entries, workouts, routines, check-ins, settings, and supported historical archive and import-identity data. It is intended for supported Corner workspace transfer and recovery into an empty workspace.
+
+## Know the limits
+
+A workspace JSON export is **not a full account or installation backup**. It excludes login credentials, account sessions, connected-client credentials and grants, and separate agent-run history. It does not preserve every service, key, or operator-managed backup needed to recover an installation.
+
+Historical recipe or training request/review data may remain in supported exports as archive data. Importing it does not restore retired assistance, request execution, or review commands.
+
+Keep the original JSON intact if you want to import it later. Renaming a file is different from editing its structure or deleting fields.
+
+## Handle downloads privately
+
+Exports contain your personal activity and profile information. Avoid public repositories, shared downloads folders, and screenshots of raw exports. Downloading a file does not encrypt it or remove the original records from Corner.
+
+A recipe's **Download recipe (.txt)** and a grocery-list text download are readable copies, not replacement workspace JSON exports.
+
+## Bring supported records into another workspace
+
+Use the [previewed workspace import](/your-data/import-workspace) only when the receiving workspace is empty. It does not merge two populated workspaces and does not match records by account email.
+
+Separately consented [MCP tracking imports](/connections/permissions#understand-import-permissions) can add supported native records without overwriting existing ones. They are a different flow, not permission to bypass the browser import's empty-workspace rule.
