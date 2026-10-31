@@ -43,9 +43,13 @@ function recover(key: string, saved: WorkoutSession): Recovery | undefined {
     const raw = JSON.parse(sessionStorage.getItem(key) ?? 'null');
     const candidate = raw?.session as WorkoutSession | undefined;
     if (!candidate || !Array.isArray(candidate.exercises)) return;
+    // Check the stored shape without requiring an unfinished form to be saveable.
+    // Return the original values below, not these validation-only substitutions.
     const checked = WorkoutSessionSchema.safeParse({
       ...candidate,
       name: candidate.name === '' ? saved.name : candidate.name,
+      date: candidate.date === '' ? saved.date : candidate.date,
+      plannedMinutes: candidate.plannedMinutes === null ? 0 : candidate.plannedMinutes,
       exercises: candidate.exercises.map((exercise) => ({
         ...exercise,
         name: exercise.name === '' ? 'Draft exercise' : exercise.name,
@@ -121,6 +125,8 @@ export function useActiveWorkout({
   const lock = useRef(false);
   const [saving, setSaving] = useState(false);
   const [saveFailed, setSaveFailed] = useState(false);
+  const [confirmReload, setConfirmReload] = useState(false);
+  const [editorVersion, setEditorVersion] = useState(0);
   const savedContent = useRef('');
   const attempted = useRef('');
   const finishedId = useRef<string | null>(null);
@@ -154,8 +160,8 @@ export function useActiveWorkout({
     if (latest) remember(latest.session, latest.prefillEdits);
   }, [remember]);
   const open = useCallback(
-    (saved: WorkoutSession, show: boolean) => {
-      const recovery = recover(storageKey, saved);
+    (saved: WorkoutSession, show: boolean, restoreDraft = true) => {
+      const recovery = restoreDraft ? recover(storageKey, saved) : undefined;
       expected.current = recovery?.expectedUpdatedAt ?? saved.updatedAt;
       pendingSave.current = recovery?.pendingSave;
       savedContent.current = comparable(saved);
@@ -203,6 +209,10 @@ export function useActiveWorkout({
   };
   const persist = async (session: WorkoutSession) => {
     if (busy || lock.current) return false;
+    if (!WorkoutSessionSchema.safeParse(session).success) {
+      notify('Repair the unfinished workout fields before saving. Your draft is kept.', true);
+      return false;
+    }
     lock.current = true;
     setSaving(true);
     try {
@@ -275,6 +285,42 @@ export function useActiveWorkout({
         true,
       );
       return false;
+    } finally {
+      lock.current = false;
+      setSaving(false);
+    }
+  };
+  const loadSaved = async () => {
+    if (!draft || busy || lock.current) return;
+    lock.current = true;
+    setSaving(true);
+    try {
+      const saved = state
+        ? state.training.sessions.find((session) => session.id === draft.id)
+        : await readSaved(draft.id);
+      if (!saved)
+        throw new Error('This workout is no longer saved. Your draft is still available.');
+      attempted.current = '';
+      pendingSave.current = undefined;
+      if (saved.status === 'in_progress') {
+        open(saved, true, false);
+        setEditorVersion((version) => version + 1);
+      } else {
+        finishedId.current = saved.id;
+        recoveryDraft.current = null;
+        setEditor(null);
+        setDraft(null);
+        setExpanded(false);
+        try {
+          sessionStorage.removeItem(storageKey);
+        } catch {
+          /* Storage can be unavailable. */
+        }
+      }
+      setSaveFailed(false);
+      setConfirmReload(false);
+    } catch (error) {
+      notify(error instanceof Error ? error.message : 'Could not load the saved workout.', true);
     } finally {
       lock.current = false;
       setSaving(false);
@@ -404,11 +450,41 @@ export function useActiveWorkout({
             >
               Retry save
             </Button>
+            {confirmReload ? (
+              <>
+                Discard your local edits and load the current saved workout?{' '}
+                <Button
+                  variant="link"
+                  size="sm"
+                  disabled={busy || saving}
+                  onClick={() => void loadSaved()}
+                >
+                  Discard draft and load saved
+                </Button>
+                <Button
+                  variant="link"
+                  size="sm"
+                  disabled={saving}
+                  onClick={() => setConfirmReload(false)}
+                >
+                  Keep draft
+                </Button>
+              </>
+            ) : (
+              <Button
+                variant="link"
+                size="sm"
+                disabled={busy || saving}
+                onClick={() => setConfirmReload(true)}
+              >
+                Load saved version
+              </Button>
+            )}
           </div>
         )}
         <div className="active-workout-body">
           <ActiveWorkoutEditor
-            key={editor.session.id}
+            key={`${editor.session.id}:${editorVersion}`}
             editor={{ ...editor, session: draft, prefillEdits: edits }}
             busy={busy || saving}
             history={state?.training.sessions}
