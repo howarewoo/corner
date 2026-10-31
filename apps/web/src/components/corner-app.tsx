@@ -21,6 +21,7 @@ import {
   type MobileNavigation,
 } from '@packages/ui';
 import TrainingPanel from './training-panel';
+import { useActiveWorkout } from './active-workout';
 import Today from '../features/today/today';
 import MealPlanner from '../features/meal-planner/meal-planner';
 import RecipeCollection, { useRecipeFilters } from '../features/recipes/recipe-collection';
@@ -65,6 +66,14 @@ function CornerWorkspace({
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
   const { state, settings, busy, disabled, notifications, notify, mutate, copyText } =
     useWorkspaceState({ initialState, initialSettings, preview });
+  const activeWorkout = useActiveWorkout({
+    state,
+    accountKey: accountEmail ?? 'preview',
+    busy: disabled,
+    mutate,
+    notify,
+    view,
+  });
   // Collection filters stay mounted with the workspace across navigation.
   const recipeFilters = useRecipeFilters();
   const resetNavigation = useCallback(() => {
@@ -142,7 +151,7 @@ function CornerWorkspace({
           mobileNavigation={mobileNavigation}
         />
         <SidebarInset>
-          <div className="workspace">
+          <div className="workspace" data-active-workout={activeWorkout.hasActive || undefined}>
             {isMobile && (
               <WorkspaceMobileBar
                 homeLabel="Corner home"
@@ -215,6 +224,7 @@ function CornerWorkspace({
                   mutate={mutate}
                   busy={disabled}
                   notify={notify}
+                  onActivateWorkout={activeWorkout.activate}
                 />
               )}
 
@@ -273,6 +283,7 @@ function CornerWorkspace({
             </div>
           </div>
         </SidebarInset>
+        {activeWorkout.surface}
         <WorkspaceOverlays
           state={state}
           selectedDate={selectedDate}

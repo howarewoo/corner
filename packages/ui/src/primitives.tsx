@@ -226,12 +226,14 @@ export function DialogContent({
   className,
   children,
   showCloseButton = true,
+  keepMounted,
   ...props
 }: Styled<ComponentProps<typeof DialogPrimitive.Popup>> & {
   showCloseButton?: boolean;
+  keepMounted?: boolean;
 }) {
   return (
-    <DialogPrimitive.Portal>
+    <DialogPrimitive.Portal keepMounted={keepMounted}>
       <DialogPrimitive.Backdrop className="ui-dialog-backdrop" />
       <DialogPrimitive.Popup
         data-slot="dialog-content"

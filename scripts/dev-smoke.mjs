@@ -1,21 +1,16 @@
 // Exercise the real four-workspace development stack with disposable local
 // data. No provider connection, account email, or external request is needed.
 import assert from 'node:assert/strict';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { access, mkdtemp, rm } from 'node:fs/promises';
 import { request as httpRequest } from 'node:http';
-import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
-import { startSmokeServices } from './smoke-services.mjs';
+import { findSmokePorts, startSmokeServices } from './smoke-services.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const origin = 'http://127.0.0.1:43139';
-const apiPort = 43140;
-const landingOrigin = 'http://localhost:43142';
-const docsOrigin = 'http://localhost:43143';
 const password = 'synthetic-development-smoke-password-not-used-elsewhere';
 const compilerTasks = [
   '@packages/nutrition',
@@ -50,37 +45,10 @@ for (const name of ['.env', '.env.local', '.env.development', '.env.development.
       'Run the development smoke check in a clean checkout without local Node or Vite environment files.',
     );
 }
-await Promise.all(
-  [43139, apiPort, 43142].map(
-    (port) =>
-      new Promise((resolve, reject) => {
-        const probe = createServer((socket) => socket.destroy());
-        probe.once('error', (error) => {
-          if (
-            error.code === 'EADDRINUSE' &&
-            process.env.GITHUB_ACTIONS === 'true' &&
-            process.platform === 'linux'
-          ) {
-            const sockets = spawnSync('ss', ['-tanp', `sport = :${port}`], {
-              encoding: 'utf8',
-              timeout: 2000,
-              maxBuffer: 16 * 1024,
-            });
-            process.stderr.write(
-              `Development smoke socket snapshot (${new Date().toISOString()}, port ${port}, ss status ${sockets.status ?? sockets.error?.code ?? 'unknown'}):\n`,
-            );
-            process.stderr.write((sockets.stdout ?? '').slice(0, 16 * 1024));
-          }
-          reject(
-            new Error(
-              `Development smoke port ${port} is unavailable (${error.code ?? 'listen failed'}).`,
-            ),
-          );
-        });
-        probe.listen(port, '127.0.0.1', () => probe.close(resolve));
-      }),
-  ),
-);
+const [appPort, apiPort, landingPort, docsPort] = await findSmokePorts(4);
+const origin = `http://127.0.0.1:${appPort}`;
+const landingOrigin = `http://localhost:${landingPort}`;
+const docsOrigin = `http://localhost:${docsPort}`;
 
 const temporary = await mkdtemp(join(tmpdir(), 'corner-development-smoke-'));
 const testDatabaseUrl = process.env.CORNER_TEST_DATABASE_URL;
@@ -353,7 +321,7 @@ try {
     403,
     'Docs development must not expose the product source through Vite.',
   );
-  assert.equal((await call('/', { headers: { Host: 'localhost:43139' } })).status, 400);
+  assert.equal((await call('/', { headers: { Host: `localhost:${appPort}` } })).status, 400);
   const entry = await call('/src/main.tsx');
   assert.equal(entry.status, 200, 'Vite must transform the web entry module.');
   assert.ok(

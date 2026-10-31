@@ -84,10 +84,15 @@ test('populated recorded-workout migration upgrades additively without rewriting
   const directory = await mkdtemp(join(tmpdir(), 'corner-import-upgrade-'));
   const folder = join(directory, 'migrations');
   try {
-    const journal = JSON.parse(await readFile(join(migrationsFolder, 'meta/_journal.json'), 'utf8'));
+    const journal = JSON.parse(
+      await readFile(join(migrationsFolder, 'meta/_journal.json'), 'utf8'),
+    );
     const previousEntries = journal.entries.slice(0, 4);
     await mkdir(join(folder, 'meta'), { recursive: true });
-    await writeFile(join(folder, 'meta/_journal.json'), JSON.stringify({ ...journal, entries: previousEntries }));
+    await writeFile(
+      join(folder, 'meta/_journal.json'),
+      JSON.stringify({ ...journal, entries: previousEntries }),
+    );
     for (const entry of previousEntries) {
       await cp(join(migrationsFolder, `${entry.tag}.sql`), join(folder, `${entry.tag}.sql`));
       const snapshot = `meta/${String(entry.idx).padStart(4, '0')}_snapshot.json`;
@@ -95,24 +100,57 @@ test('populated recorded-workout migration upgrades additively without rewriting
     }
     await migrate(f.database, folder);
     const metadata = await savedRecord(f.database);
-    await f.database.query(`INSERT INTO workspace_workout_sessions
+    await f.database.query(
+      `INSERT INTO workspace_workout_sessions
       (user_id,id,position,date,name,kind,status,unit,planned_minutes,duration_minutes,notes,change_reason,created_at,updated_at)
       VALUES ('owner','retained-history',0,'2026-10-28','Retained walk','conditioning','completed','kg',NULL,28,'Keep original','',$1,$1)`,
-      ['2026-10-28T12:00:00.000Z']);
-    await f.database.query(`INSERT INTO mutation_receipts(user_id,request_id,payload_hash,revision,created_at)
+      ['2026-10-28T12:00:00.000Z'],
+    );
+    await f.database
+      .query(`INSERT INTO mutation_receipts(user_id,request_id,payload_hash,revision,created_at)
       VALUES ('owner','old-operation','old-original-fingerprint',7,'2026-10-28T12:00:00.000Z')`);
-    await f.database.query("INSERT INTO corner_subscription_meta(key,value) VALUES ('retained-key','synthetic-private-key')");
+    await f.database.query(
+      "INSERT INTO corner_subscription_meta(key,value) VALUES ('retained-key','synthetic-private-key')",
+    );
     const workouts = (await f.database.query('SELECT * FROM workspace_workout_sessions')).rows;
     const history = (await f.database.query('SELECT * FROM __drizzle_migrations ORDER BY id')).rows;
     await migrate(f.database);
     assert.deepEqual((await f.database.query('SELECT * FROM workspace_metadata')).rows, metadata);
-    assert.deepEqual((await f.database.query('SELECT * FROM workspace_workout_sessions')).rows, workouts);
-    assert.deepEqual((await f.database.query('SELECT * FROM __drizzle_migrations ORDER BY id')).rows.slice(0, 4), history);
-    assert.deepEqual((await f.database.query('SELECT request_id,payload_hash,revision,import_outcomes FROM mutation_receipts')).rows,
-      [{ request_id: 'old-operation', payload_hash: 'old-original-fingerprint', revision: 7, import_outcomes: null }]);
-    assert.equal((await f.database.query("SELECT value FROM corner_subscription_meta WHERE key='retained-key'")).rows[0].value,
-      'synthetic-private-key');
-    assert.equal((await f.database.query('SELECT count(*)::int AS n FROM workspace_import_sources')).rows[0].n, 0);
+    assert.deepEqual(
+      (await f.database.query('SELECT * FROM workspace_workout_sessions')).rows,
+      workouts.map((workout) => ({ ...workout, timing: null })),
+    );
+    assert.deepEqual(
+      (await f.database.query('SELECT * FROM __drizzle_migrations ORDER BY id')).rows.slice(0, 4),
+      history,
+    );
+    assert.deepEqual(
+      (
+        await f.database.query(
+          'SELECT request_id,payload_hash,revision,import_outcomes FROM mutation_receipts',
+        )
+      ).rows,
+      [
+        {
+          request_id: 'old-operation',
+          payload_hash: 'old-original-fingerprint',
+          revision: 7,
+          import_outcomes: null,
+        },
+      ],
+    );
+    assert.equal(
+      (
+        await f.database.query(
+          "SELECT value FROM corner_subscription_meta WHERE key='retained-key'",
+        )
+      ).rows[0].value,
+      'synthetic-private-key',
+    );
+    assert.equal(
+      (await f.database.query('SELECT count(*)::int AS n FROM workspace_import_sources')).rows[0].n,
+      0,
+    );
   } finally {
     await f.close();
     await rm(directory, { recursive: true, force: true });

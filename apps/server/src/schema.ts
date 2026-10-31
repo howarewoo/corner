@@ -16,7 +16,7 @@ import {
 } from 'drizzle-orm/pg-core';
 import type { Settings } from '@packages/workspace/types';
 import type { Recipe } from '@packages/nutrition/types';
-import type { ExerciseTarget, TrainingReview } from '@packages/training/types';
+import type { ExerciseTarget, TrainingReview, WorkoutTiming } from '@packages/training/types';
 import { sql } from 'drizzle-orm';
 
 const instant = customType<{ data: string; driverData: string | Date }>({
@@ -182,6 +182,7 @@ export const workoutSessions = pgTable(
     kind: text().notNull(),
     status: text().notNull(),
     allows_unknown_targets: boolean().generatedAlwaysAs(sql`status = 'completed'`),
+    timing: jsonb().$type<WorkoutTiming>(),
     unit: text().notNull(),
     planned_minutes: integer(),
     duration_minutes: doublePrecision(),
@@ -195,7 +196,11 @@ export const workoutSessions = pgTable(
   },
   (t) => [
     primaryKey({ columns: [t.user_id, t.id] }),
-    unique('workspace_workout_sessions_recorded_targets').on(t.user_id, t.id, t.allows_unknown_targets),
+    unique('workspace_workout_sessions_recorded_targets').on(
+      t.user_id,
+      t.id,
+      t.allows_unknown_targets,
+    ),
     index('workspace_workout_sessions_date').on(t.user_id, t.date, t.position, t.id),
     check(
       'workspace_workout_sessions_status',
@@ -244,7 +249,11 @@ export const workoutExercises = pgTable(
     foreignKey({
       name: 'workspace_workout_exercises_recorded_targets',
       columns: [t.user_id, t.session_id, t.requires_completed],
-      foreignColumns: [workoutSessions.user_id, workoutSessions.id, workoutSessions.allows_unknown_targets],
+      foreignColumns: [
+        workoutSessions.user_id,
+        workoutSessions.id,
+        workoutSessions.allows_unknown_targets,
+      ],
     }),
     index('workspace_workout_exercises_history').on(t.user_id, t.name, t.session_id),
     check(
@@ -353,7 +362,9 @@ export const scheduledDates = pgTable(
 export const importSources = pgTable(
   'workspace_import_sources',
   {
-    user_id: text().notNull().references(() => workspaceMetadata.user_id, { onDelete: 'cascade' }),
+    user_id: text()
+      .notNull()
+      .references(() => workspaceMetadata.user_id, { onDelete: 'cascade' }),
     source_namespace: text().notNull(),
     record_type: text().notNull(),
     source_record_id: text().notNull(),
@@ -362,7 +373,10 @@ export const importSources = pgTable(
     position: position(),
   },
   (t) => [
-    primaryKey({ name: 'workspace_import_sources_identity', columns: [t.user_id, t.source_namespace, t.record_type, t.source_record_id] }),
+    primaryKey({
+      name: 'workspace_import_sources_identity',
+      columns: [t.user_id, t.source_namespace, t.record_type, t.source_record_id],
+    }),
     unique('workspace_import_sources_destination').on(t.user_id, t.record_type, t.destination_id),
     index('workspace_import_sources_export').on(t.user_id, t.position),
   ],
@@ -376,7 +390,10 @@ export const mutationReceipts = pgTable(
     payload_hash: text().notNull(),
     revision: bigint({ mode: 'number' }).notNull(),
     created_at: text().notNull(),
-    import_outcomes: jsonb().$type<Array<{ sourceRecordId: string; destinationId: string; outcome: 'created' | 'skipped' }>>(),
+    import_outcomes:
+      jsonb().$type<
+        Array<{ sourceRecordId: string; destinationId: string; outcome: 'created' | 'skipped' }>
+      >(),
   },
   (table) => [
     primaryKey({ name: 'mutation_receipts_pkey', columns: [table.user_id, table.request_id] }),
