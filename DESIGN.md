@@ -110,6 +110,14 @@ The page moves from a synthetic Today preview to planned-versus-recorded workout
 
 [`styles.css`](apps/landing/src/styles.css) owns only landing layout and domain-preview presentation. Wide screens pair copy with previews; smaller screens stack them, keep section navigation visible, and retain native document scrolling and browser zoom. A skip link, visible focus, semantic sections, table headers, synthetic-data captions, and reduced-motion rules remain present without JavaScript. Local Chromium inspection covered 1440px desktop, 390px phone, 320px reflow, keyboard navigation, native 200% page zoom, and JavaScript-disabled links. This is not real-iPhone validation or an accessibility certification.
 
+## Product-user guide
+
+[`apps/docs`](apps/docs/) uses the official Fumadocs Astro/React shell for sidebar, mobile navigation, table of contents and search, with Corner's shared light tokens and reviewed MDX content. Preserve the admitted reader layout; hosting integration does not introduce another renderer, theme controller or navigation framework.
+
+Landing's **Guide** is a native `/open-docs` link. The guide's **Open Corner** uses the existing shared Button as a native `/open-app` anchor inside Fumadocs' custom-link slot, including its mobile sidebar; the no-JavaScript section menu also exposes a native app link. Article navigation remains full-document links. Only the host resolves these fixed cross-origin destinations, never content-embedded environment URLs.
+
+Astro's generated script hashes remain authoritative. The docs-only style inline allowance is required for native Fumadocs grid and Radix scroll-lock behavior, not permission for inline/evaluated scripts or a weaker app/landing policy. Desktop/phone browser evidence belongs in the dated changelog; emulated WebKit or local Chromium does not establish real-iPhone usability or accessibility certification.
+
 ## Do's and Don'ts
 
 - Do reuse semantic tokens, existing component states, and the established responsive rules.
