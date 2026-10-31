@@ -117,6 +117,7 @@ async function scenario(t, overrides = {}) {
     qualify: async () => ({
       passed: true,
       candidateDigest: digest,
+      sourceSha,
       previousDigest: null,
       generation: 'relational-v1',
       previousGeneration: null,
@@ -210,6 +211,7 @@ test('successful upload with noisy stdout records and verifies the serving deplo
   assert.deepEqual(f.effects, [
     'schema-attempted',
     'migration',
+    'upload-attempted',
     'upload',
     'deployed',
     'public',
@@ -256,10 +258,53 @@ test('single-site Preview cannot qualify an explicit dual-origin configuration',
   assert.deepEqual(f.effects, []);
 });
 
+test('Preview refuses docs/config capability mismatches before qualification or schema effects', async (t) => {
+  for (const [configuredDocs, artifactDocs] of [
+    [true, false],
+    [false, true],
+  ]) {
+    const f = await scenario(t);
+    pairEnvironment(f.options.environment);
+    const candidate = await f.options.loadArtifact();
+    candidate.manifest.files = {
+      'assets/landing/index.html': 'c'.repeat(64),
+      ...(artifactDocs
+        ? {
+            'assets/docs/index.html': 'c'.repeat(64),
+            'assets/docs/search-index.json': 'c'.repeat(64),
+          }
+        : {}),
+    };
+    const value = JSON.parse(f.options.environment.CORNER_STAGING_CONFIG_JSON);
+    if (configuredDocs) value.CORNER_DOCS_ORIGIN = docsOrigin;
+    f.options.environment.CORNER_STAGING_CONFIG_JSON = JSON.stringify(value);
+    let qualified = false;
+    f.options.qualify = async () => {
+      qualified = true;
+      throw new Error('Unexpected qualification');
+    };
+    await assert.rejects(deployPreview(f.options));
+    assert.equal(qualified, false);
+    assert.deepEqual(f.effects, []);
+    for (const invalid of [
+      value.CORNER_ORIGIN,
+      value.CORNER_LANDING_ORIGIN,
+      'http://docs.example.com',
+      'https://docs.example.com/',
+    ])
+      assert.throws(() =>
+        previewConfiguration(
+          JSON.stringify({ ...value, CORNER_DOCS_ORIGIN: invalid }),
+          f.options.environment,
+        ),
+      );
+  }
+});
+
 test('machine output for another Worker cannot become the staging serving baseline', async (t) => {
   const f = await uploadingScenario(t, 'another-worker');
   await assert.rejects(deployPreview(f.options), /Native Preview identity or stable URL differs/);
-  assert.deepEqual(f.effects, ['schema-attempted', 'migration', 'upload']);
+  assert.deepEqual(f.effects, ['schema-attempted', 'migration', 'upload-attempted', 'upload']);
 });
 
 test('superseded staging head cannot qualify, journal, or migrate', async (t) => {
@@ -306,6 +351,7 @@ async function interruptedDeployment(t) {
   const serving = {
     ...candidate,
     directory: join(f.options.work, 'serving-a'),
+    assetLayout: 'single-site',
     digest: 'c'.repeat(64),
     manifest: { ...candidate.manifest, migrations: [migration] },
   };
@@ -324,8 +370,8 @@ async function interruptedDeployment(t) {
   };
   f.options.github.all = async (path) =>
     path.includes('environment=staging-schema&')
-      ? [{ payload: { ...payload, phase: 'schema-attempted', artifactId: 'b' } }]
-      : [{ payload: { ...payload, phase: 'complete', artifactId: 'a' } }];
+      ? [{ id: 5, payload: { ...payload, phase: 'schema-attempted', artifactId: 'b' } }]
+      : [{ id: 4, payload: { ...payload, phase: 'complete', artifactId: 'a' } }];
   f.options.loadArtifact = async ({ reference }) => {
     if (reference.artifactId === 'a') return serving;
     if (reference.artifactId === 'b') return attempted;
@@ -333,7 +379,21 @@ async function interruptedDeployment(t) {
   };
   const cf = f.options.cf;
   f.options.cf = async (path, options) =>
-    path.endsWith('/deployments/latest') ? { id: 'deployment-a' } : cf(path, options);
+    path.endsWith('/deployments/latest')
+      ? {
+          id: 'deployment-a',
+          env: {
+            ...Object.fromEntries(
+              Object.entries(JSON.parse(f.options.environment.CORNER_STAGING_CONFIG_JSON)).map(
+                ([name, text]) => [name, { type: 'plain_text', text }],
+              ),
+            ),
+            CF_VERSION_METADATA: { type: 'version_metadata' },
+            DATABASE_URL: { type: 'secret_text' },
+            NEON_AUTH_BASE_URL: { type: 'secret_text' },
+          },
+        }
+      : cf(path, options);
   return { ...f, candidate, serving, attempted };
 }
 
@@ -577,6 +637,7 @@ test('schema or serving journal changes during public validation prevent a compl
 });
 
 const appOrigin = 'https://staging-app-corner.example.workers.dev';
+const docsOrigin = 'https://guide-review-corner.example.workers.dev';
 function pairEnvironment(env) {
   env.CORNER_STAGING_ORIGIN = appOrigin;
   env.CORNER_STAGING_CONFIG_JSON = JSON.stringify({
@@ -586,11 +647,33 @@ function pairEnvironment(env) {
   });
 }
 
-async function pairedScenario(t, legacy = false) {
+async function pairedScenario(t, { previous, docs = false } = {}) {
   const f = await uploadingScenario(t);
   pairEnvironment(f.options.environment);
+  if (docs) {
+    const value = JSON.parse(f.options.environment.CORNER_STAGING_CONFIG_JSON);
+    value.CORNER_DOCS_ORIGIN = docsOrigin;
+    f.options.environment.CORNER_STAGING_CONFIG_JSON = JSON.stringify(value);
+  }
   const candidate = await f.options.loadArtifact();
-  candidate.manifest.files = { 'assets/landing/index.html': 'c'.repeat(64) };
+  candidate.assetLayout = docs ? 'three-origin' : 'dual-origin';
+  candidate.manifest.files = {
+    'assets/landing/index.html': 'c'.repeat(64),
+    ...(docs
+      ? {
+          'assets/docs/index.html': 'c'.repeat(64),
+          'assets/docs/search-index.json': 'c'.repeat(64),
+        }
+      : {}),
+  };
+  const bindings = (value) => ({
+    ...Object.fromEntries(
+      Object.entries(value).map(([name, text]) => [name, { type: 'plain_text', text }]),
+    ),
+    CF_VERSION_METADATA: { type: 'version_metadata' },
+    DATABASE_URL: { type: 'secret_text' },
+    NEON_AUTH_BASE_URL: { type: 'secret_text' },
+  });
   const live = new Map();
   const records = [];
   let sequence = 20;
@@ -606,6 +689,16 @@ async function pairedScenario(t, legacy = false) {
     if (/^deployments\/\d+\/statuses$/.test(path)) return {};
     return api(path, options);
   };
+  const baselineValue = {
+    NEON_AUTH_REQUIRE_EMAIL_VERIFICATION: 'false',
+    CORNER_ORIGIN: previous === 'pair' ? appOrigin : origin,
+    ...(previous === 'pair' ? { CORNER_LANDING_ORIGIN: origin } : {}),
+  };
+  const baseline = previewConfiguration(JSON.stringify(baselineValue), {
+    ...f.options.environment,
+    CORNER_STAGING_ORIGIN: baselineValue.CORNER_ORIGIN,
+    CORNER_STAGING_BINDINGS_REVISION: 'retained-1',
+  });
   const prior = {
     id: 5,
     payload: {
@@ -613,18 +706,45 @@ async function pairedScenario(t, legacy = false) {
       kind: 'corner-staging-preview',
       phase: 'complete',
       workerName: 'corner',
-      previewName: 'staging',
-      origin,
-      deploymentId: 'legacy-deployment',
+      previewName: baseline.previewName,
+      origin: baseline.origin,
+      deploymentId: previous === 'pair' ? 'previous-app' : 'legacy-deployment',
+      versionId: previous === 'pair' ? 'previous-app' : 'legacy-deployment',
+      ...(previous === 'pair'
+        ? {
+            landingOrigin: origin,
+            landingPreviewName: 'staging',
+            landingDeploymentId: 'previous-landing',
+            landingVersionId: 'previous-landing',
+          }
+        : {}),
+      sourceSha: 'd'.repeat(40),
+      runId: '4',
       artifactId: 'old',
+      candidateDigest: 'd'.repeat(64),
+      runtimeConfigurationDigest: baseline.digest,
+      bindingsRevision: baseline.bindingsRevision,
     },
   };
   const retained = structuredClone(prior);
-  if (legacy) {
-    live.set('staging', { id: 'legacy-deployment' });
-    const old = {
+  let old;
+  if (previous) {
+    live.set(prior.payload.previewName, {
+      id: prior.payload.deploymentId,
+      env: bindings(baselineValue),
+    });
+    if (previous === 'pair')
+      live.set('staging', {
+        id: prior.payload.landingDeploymentId,
+        env: bindings(baselineValue),
+      });
+    old = {
       ...candidate,
-      assetLayout: 'single-site',
+      assetLayout: previous === 'pair' ? 'dual-origin' : 'single-site',
+      manifest: {
+        ...candidate.manifest,
+        files: previous === 'pair' ? { 'assets/landing/index.html': 'd'.repeat(64) } : {},
+      },
       digest: 'd'.repeat(64),
       directory: join(f.options.work, 'old'),
     };
@@ -634,6 +754,7 @@ async function pairedScenario(t, legacy = false) {
       assert.equal(previous, old.directory);
       return {
         passed: true,
+        sourceSha,
         candidateDigest: digest,
         previousDigest: old.digest,
         generation: 'relational-v1',
@@ -647,8 +768,13 @@ async function pairedScenario(t, legacy = false) {
       return records.filter((r) => r.payload.phase === 'schema-attempted');
     return [
       ...records.filter((r) => r.payload.phase !== 'schema-attempted'),
-      ...(legacy ? [prior] : []),
+      ...(previous ? [prior] : []),
     ];
+  };
+  const stableOrigins = {
+    'staging-app': appOrigin,
+    staging: origin,
+    'guide-review': docsOrigin,
   };
   f.options.execute = (binary, args, options) => {
     if (binary === process.execPath) {
@@ -664,21 +790,12 @@ async function pairedScenario(t, legacy = false) {
       preview_name: name,
       preview_id: name,
       deployment_id: `${name}-deployment`,
-      preview_urls: [name === 'staging-app' ? appOrigin : origin],
+      preview_urls: [stableOrigins[name]],
       deployment_urls: [],
     };
     live.set(name, {
       id: output.deployment_id,
-      env: {
-        ...Object.fromEntries(
-          Object.entries(JSON.parse(f.options.environment.CORNER_STAGING_CONFIG_JSON)).map(
-            ([key, text]) => [key, { type: 'plain_text', text }],
-          ),
-        ),
-        CF_VERSION_METADATA: { type: 'version_metadata' },
-        DATABASE_URL: { type: 'secret_text' },
-        NEON_AUTH_BASE_URL: { type: 'secret_text' },
-      },
+      env: bindings(JSON.parse(f.options.environment.CORNER_STAGING_CONFIG_JSON)),
     });
     writeFileSync(options.env.WRANGLER_OUTPUT_FILE_PATH, JSON.stringify(output) + '\n');
     return '';
@@ -687,13 +804,10 @@ async function pairedScenario(t, legacy = false) {
     if (path.endsWith('/deployments/latest')) return live.get(path.split('/')[4]) ?? null;
     return path.endsWith('/subdomain') ? { previews_enabled: true } : { deployments: [] };
   };
-  f.options.checkPublic = async (url, version, fetcher, options) => {
-    assert.equal(url, appOrigin);
-    assert.equal(version, 'staging-app-deployment');
-    assert.equal(options.landingVersionId, 'staging-deployment');
+  f.options.checkPublic = async () => {
     f.effects.push('public');
   };
-  return { ...f, live, records, prior, retained };
+  return { ...f, live, records, prior, retained, old };
 }
 
 test('paired native Previews migrate once and verify independent deployment identities', async (t) => {
@@ -704,6 +818,7 @@ test('paired native Previews migrate once and verify independent deployment iden
   assert.deepEqual(f.effects, [
     'schema-attempted',
     'migration',
+    'upload-attempted',
     'upload:staging-app',
     'app-uploaded',
     'upload:staging',
@@ -713,18 +828,41 @@ test('paired native Previews migrate once and verify independent deployment iden
   ]);
 });
 
-test('first pair qualifies retained single-site format-4 artifact without changing its receipt', async (t) => {
-  const f = await pairedScenario(t, true);
-  await deployPreview(f.options);
-  assert.deepEqual(f.prior, f.retained);
-  const checkpoint = f.records.find((r) => r.payload.phase === 'app-uploaded');
-  assert.equal(checkpoint.payload.previousLanding.deploymentId, 'legacy-deployment');
-  assert.equal(checkpoint.payload.previousLanding.artifactId, 'old');
-  assert.equal(checkpoint.payload.previousLanding.origin, origin);
+test('retained single and paired Previews advance to three sites without rewriting their history', async (t) => {
+  for (const previous of ['single', 'pair']) {
+    const f = await pairedScenario(t, { previous, docs: true });
+    const result = await deployPreview(f.options);
+    assert.deepEqual(f.prior, f.retained);
+    assert.equal(result.payload.docsDeploymentId, 'guide-review-deployment');
+    assert.equal(result.payload.landingDeploymentId, 'staging-deployment');
+    assert.deepEqual(f.effects, [
+      'schema-attempted',
+      'migration',
+      'upload-attempted',
+      'upload:staging-app',
+      'app-uploaded',
+      'upload:guide-review',
+      'docs-uploaded',
+      'upload:staging',
+      'deployed',
+      'public',
+      'complete',
+    ]);
+    const baseline = f.records.find((r) => r.payload.phase === 'schema-attempted').payload
+      .previousPreviews;
+    assert.equal(baseline.deploymentId, f.retained.payload.deploymentId);
+    assert.equal(baseline.landingDeploymentId, f.retained.payload.landingDeploymentId);
+    assert.equal(
+      baseline.runtimeConfigurationDigest,
+      f.retained.payload.runtimeConfigurationDigest,
+    );
+    assert.equal(baseline.bindingsRevision, 'retained-1');
+    assert.equal(baseline.publicBindings.CORNER_DOCS_ORIGIN, undefined);
+  }
 });
 
 test('legacy origin cutover rejects a dual-origin artifact recorded as single-site', async (t) => {
-  const f = await pairedScenario(t, true);
+  const f = await pairedScenario(t, { previous: 'single' });
   const load = f.options.loadArtifact;
   f.options.loadArtifact = async (options) => {
     const artifact = await load(options);
@@ -733,7 +871,7 @@ test('legacy origin cutover rejects a dual-origin artifact recorded as single-si
       : artifact;
   };
   f.options.qualify = async () => assert.fail('Must reject unsupported serving topology');
-  await assert.rejects(deployPreview(f.options), /retained single-site Preview artifact/);
+  await assert.rejects(deployPreview(f.options));
   assert.deepEqual(f.effects, []);
 });
 
@@ -755,9 +893,9 @@ test('second upload failure preserves first identity and puts partial pair on HO
   assert.deepEqual(f.effects, []);
 });
 
-test('public drift on either paired Preview blocks completion', async (t) => {
-  for (const name of ['staging-app', 'staging']) {
-    const f = await pairedScenario(t);
+test('public drift on every member of three native Previews blocks completion', async (t) => {
+  for (const name of ['staging-app', 'staging', 'guide-review']) {
+    const f = await pairedScenario(t, { docs: true });
     f.options.checkPublic = async () => {
       f.live.get(name).id = 'drift';
     };
@@ -769,25 +907,25 @@ test('public drift on either paired Preview blocks completion', async (t) => {
   }
 });
 
-test('pinned pair completion requires both uploads and no private database credentials', async (t) => {
-  const f = await pairedScenario(t);
+test('pinned three-site completion needs all uploads but no private database credentials', async (t) => {
+  const f = await pairedScenario(t, { docs: true });
   f.options.checkPublic = async () => {
     throw new PublicCheckError('security boundary');
   };
   await assert.rejects(deployPreview(f.options), /security boundary/);
   const receipt = f.records[0];
-  receipt.payload.qualification.sourceSha = sourceSha;
   delete f.options.environment.CORNER_WORKER_SECRETS_JSON;
   delete f.options.environment.DATABASE_URL;
   delete f.options.environment.DATABASE_URL_UNPOOLED;
   f.options.execute = () => assert.fail('Completion must not execute SQL or upload');
-  f.options.checkPublic = async (url, version, fetcher, options) => {
-    assert.equal(version, 'staging-app-deployment');
-    assert.equal(options.landingVersionId, 'staging-deployment');
+  f.options.checkPublic = async () => {
+    f.effects.push('public');
   };
   const result = await completePreview({ ...f.options, deploymentId: receipt.id });
   assert.equal(result.payload.phase, 'complete');
   assert.equal(result.payload.landingDeploymentId, 'staging-deployment');
+  assert.equal(result.payload.docsDeploymentId, 'guide-review-deployment');
+  assert.equal(f.effects.filter((effect) => effect === 'migration').length, 1);
 });
 
 test('paired origins reject mismatched accounts and nested Preview labels', () => {
@@ -814,21 +952,148 @@ test('unrecorded identity on either paired target blocks schema effects', async 
   }
 });
 
-test('pair completion rejects landing identity and binding drift before public probes', async (t) => {
-  for (const drift of ['identity', 'binding']) {
-    const f = await pairedScenario(t);
+test('three-site completion rejects any identity or binding drift before public probes', async (t) => {
+  for (const [name, drift] of ['staging-app', 'staging', 'guide-review'].flatMap((name) =>
+    ['identity', 'binding'].map((drift) => [name, drift]),
+  )) {
+    const f = await pairedScenario(t, { docs: true });
     f.options.checkPublic = async () => {
       throw new PublicCheckError('security boundary');
     };
     await assert.rejects(deployPreview(f.options), /security boundary/);
     const receipt = f.records[0];
-    receipt.payload.qualification.sourceSha = sourceSha;
-    if (drift === 'identity') f.live.get('staging').id = 'drift';
-    else f.live.get('staging').env.DATABASE_URL = { type: 'plain_text', text: 'invalid' };
+    if (drift === 'identity') f.live.get(name).id = 'drift';
+    else f.live.get(name).env.DATABASE_URL = { type: 'plain_text', text: 'invalid' };
     f.options.checkPublic = async () => assert.fail('Must reject drift before public checks');
     await assert.rejects(completePreview({ ...f.options, deploymentId: receipt.id }));
     assert.equal(
       f.records.some((r) => r.payload.phase === 'complete'),
+      false,
+    );
+  }
+});
+
+test('docs Preview targets must be explicit distinct matched-account native names', () => {
+  const env = environment();
+  pairEnvironment(env);
+  const value = JSON.parse(env.CORNER_STAGING_CONFIG_JSON);
+  for (const invalid of [
+    appOrigin,
+    origin,
+    'https://guide-review-corner.other.workers.dev',
+    'https://guide.review-corner.example.workers.dev',
+    'https://guide-review-another.example.workers.dev',
+    'https://docs.example.com',
+    `${docsOrigin}/`,
+    `${docsOrigin}:443`,
+  ])
+    assert.throws(() =>
+      previewConfiguration(JSON.stringify({ ...value, CORNER_DOCS_ORIGIN: invalid }), env),
+    );
+});
+
+test('retained pair identity, binding and unexpected docs drift block all effects', async (t) => {
+  for (const [name, defect] of [
+    ['staging-app', 'identity'],
+    ['staging', 'identity'],
+    ['staging-app', 'public'],
+    ['staging', 'secret'],
+    ['staging', 'extra-docs'],
+    ['guide-review', 'unrecorded'],
+  ]) {
+    const f = await pairedScenario(t, { previous: 'pair', docs: true });
+    if (defect === 'identity') f.live.get(name).id = 'unrecorded';
+    if (defect === 'public') f.live.get(name).env.CORNER_ORIGIN.text = origin;
+    if (defect === 'secret')
+      f.live.get(name).env.DATABASE_URL = { type: 'plain_text', text: 'invalid' };
+    if (defect === 'extra-docs')
+      f.live.get(name).env.CORNER_DOCS_ORIGIN = { type: 'plain_text', text: docsOrigin };
+    if (defect === 'unrecorded') f.live.set(name, { id: 'unrecorded' });
+    f.options.qualify = async () => assert.fail('Drift must stop before qualification');
+    await assert.rejects(deployPreview(f.options));
+    assert.deepEqual(f.effects, []);
+    assert.deepEqual(f.prior, f.retained);
+  }
+});
+
+test('paired history cannot claim a different retained artifact site profile', async (t) => {
+  const f = await pairedScenario(t, { previous: 'pair', docs: true });
+  f.old.assetLayout = 'three-origin';
+  f.options.qualify = async () => assert.fail('Profile must stop before qualification');
+  await assert.rejects(deployPreview(f.options));
+  assert.deepEqual(f.effects, []);
+});
+
+test('partial three-site uploads stay on HOLD without inventing missing identities', async (t) => {
+  for (const [failedName, phase] of [
+    ['staging-app', 'upload-attempted'],
+    ['guide-review', 'app-uploaded'],
+    ['staging', 'docs-uploaded'],
+  ]) {
+    const f = await pairedScenario(t, { previous: 'pair', docs: true });
+    const execute = f.options.execute;
+    f.options.execute = (...args) => {
+      if (args[1].includes('--name') && args[1][args[1].indexOf('--name') + 1] === failedName)
+        throw new Error('Provider response unavailable');
+      return execute(...args);
+    };
+    await assert.rejects(deployPreview(f.options));
+    const partial = f.records[0];
+    assert.equal(partial.payload.phase, phase);
+    assert.equal(partial.payload.landingDeploymentId, undefined);
+    assert.equal(
+      partial.payload.docsDeploymentId,
+      phase === 'docs-uploaded' ? 'guide-review-deployment' : undefined,
+    );
+    assert.equal(partial.payload.previousPreviews.landingDeploymentId, 'previous-landing');
+    assert.equal(f.effects.filter((effect) => effect === 'migration').length, 1);
+    f.effects.length = 0;
+    await assert.rejects(deployPreview(f.options), /HOLD/);
+    await assert.rejects(completePreview({ ...f.options, deploymentId: partial.id }));
+    assert.deepEqual(f.effects, []);
+  }
+});
+
+test('lost first-upload checkpoint cannot fall back to live reads and blind retry', async (t) => {
+  const f = await pairedScenario(t, { previous: 'pair', docs: true });
+  const api = f.options.github.api;
+  f.options.github.api = async (path, options) => {
+    if (
+      path === 'deployments' &&
+      options?.method === 'POST' &&
+      JSON.parse(options.body).payload.phase === 'app-uploaded'
+    )
+      throw new Error('Journal response unavailable');
+    return api(path, options);
+  };
+  await assert.rejects(deployPreview(f.options));
+  assert.equal(f.live.get('staging-app').id, 'staging-app-deployment');
+  assert.equal(f.records[0].payload.phase, 'upload-attempted');
+  f.effects.length = 0;
+  f.options.cf = async () => assert.fail('Unknown upload must HOLD before provider inspection');
+  await assert.rejects(deployPreview(f.options), /HOLD/);
+  await assert.rejects(completePreview({ ...f.options, deploymentId: f.records[0].id }));
+  assert.deepEqual(f.effects, []);
+});
+
+test('untouched landing bindings remain guarded while app and docs advance', async (t) => {
+  for (const advanced of ['staging-app', 'guide-review']) {
+    const f = await pairedScenario(t, { previous: 'pair', docs: true });
+    const execute = f.options.execute;
+    f.options.execute = (...args) => {
+      const result = execute(...args);
+      if (args[1].includes('--name') && args[1][args[1].indexOf('--name') + 1] === advanced)
+        f.live.get('staging').env.CORNER_ORIGIN.text = origin;
+      return result;
+    };
+    await assert.rejects(deployPreview(f.options));
+    assert.equal(
+      f.records[0].payload.phase,
+      advanced === 'staging-app' ? 'app-uploaded' : 'docs-uploaded',
+    );
+    assert.equal(f.effects.includes('upload:staging'), false);
+    assert.equal(
+      f.records.some((record) => record.payload.phase === 'complete'),
       false,
     );
   }

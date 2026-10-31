@@ -9,7 +9,12 @@ const developmentConfigurationError =
   'Development requires loopback PostgreSQL and Auth in local mode. Run pnpm dev to start the isolated stack.';
 
 function isLoopback(hostname: string): boolean {
-  return hostname === '127.0.0.1' || hostname === 'localhost' || hostname === '[::1]';
+  return (
+    hostname === '127.0.0.1' ||
+    hostname === 'localhost' ||
+    hostname === '[::1]' ||
+    hostname === 'docs.localhost'
+  );
 }
 
 /** Common validation without process environment, repository paths, or filesystem I/O. */
@@ -124,10 +129,40 @@ export function loadRuntimeConfig(environment: NodeJS.ProcessEnv, options: Optio
     throw new Error(
       'CORNER_LANDING_ORIGIN must be a distinct canonical origin on a different hostname: HTTPS when hosted, loopback when local.',
     );
+  const rawDocsOrigin =
+    environment.CORNER_DOCS_ORIGIN ??
+    (deployment === 'local'
+      ? `http://${development ? landing.hostname : 'docs.localhost'}:${development ? 3004 : port}`
+      : '');
+  let docs: URL;
+  try {
+    docs = new URL(rawDocsOrigin);
+  } catch {
+    throw new Error('Set CORNER_DOCS_ORIGIN to the public guide origin.');
+  }
+  if (
+    !['http:', 'https:'].includes(docs.protocol) ||
+    docs.origin !== rawDocsOrigin ||
+    docs.username ||
+    docs.password ||
+    (deployment === 'hosted' && docs.protocol !== 'https:') ||
+    (deployment === 'local' && !isLoopback(docs.hostname)) ||
+    docs.hostname === url.hostname ||
+    docs.origin === landing.origin ||
+    (deployment === 'hosted' && docs.hostname === landing.hostname)
+  )
+    throw new Error(
+      'CORNER_DOCS_ORIGIN must be a distinct canonical origin with a different app hostname: HTTPS when hosted, loopback when local.',
+    );
   if (development && Number(url.port || (url.protocol === 'https:' ? 443 : 80)) === port)
     throw new Error('CORNER_DEV_API_PORT must differ from the browser port in CORNER_ORIGIN.');
   if (development && [port, Number(url.port || 80)].includes(Number(landing.port || 80)))
     throw new Error('CORNER_LANDING_ORIGIN must use a separate development listener port.');
+  if (
+    development &&
+    [port, Number(url.port || 80), Number(landing.port || 80)].includes(Number(docs.port || 80))
+  )
+    throw new Error('CORNER_DOCS_ORIGIN must use a separate development listener port.');
   const host = development ? '127.0.0.1' : (environment.CORNER_HOST ?? '127.0.0.1');
   if (!host || /[\s/\\]/.test(host)) throw new Error('CORNER_HOST must be a bind address.');
   const proxySecret = environment.CORNER_PROXY_SECRET;
@@ -139,6 +174,7 @@ export function loadRuntimeConfig(environment: NodeJS.ProcessEnv, options: Optio
   return {
     origin: url.origin,
     landingOrigin: landing.origin,
+    docsOrigin: docs.origin,
     host,
     port,
     dataDir: options.dataDir,

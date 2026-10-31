@@ -15,6 +15,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const origin = 'http://127.0.0.1:43139';
 const apiPort = 43140;
 const landingOrigin = 'http://localhost:43142';
+const docsOrigin = 'http://localhost:43143';
 const password = 'synthetic-development-smoke-password-not-used-elsewhere';
 const compilerTasks = [
   '@packages/nutrition',
@@ -22,7 +23,7 @@ const compilerTasks = [
   '@packages/workspace',
   '@packages/api',
 ];
-const tasks = [...compilerTasks, 'server', 'web', 'landing'];
+const tasks = [...compilerTasks, 'server', 'web', 'landing', 'docs'];
 const seenTasks = new Set();
 const compiledTasks = new Set();
 const interrupted = new AbortController();
@@ -86,6 +87,7 @@ Object.assign(environment, {
   CORNER_DEPLOYMENT: 'local',
   CORNER_ORIGIN: origin,
   CORNER_LANDING_ORIGIN: landingOrigin,
+  CORNER_DOCS_ORIGIN: docsOrigin,
   CORNER_DEV_API_PORT: String(apiPort),
   CORNER_DATA_DIR: join(temporary, 'data'),
   DATABASE_URL: backend.databaseUrl,
@@ -179,14 +181,16 @@ async function ready() {
     ) {
       try {
         const timeout = Math.max(1, Math.min(1000, deadline - Date.now()));
-        const [response, landing] = await Promise.all([
+        const [response, landing, docs] = await Promise.all([
           call('/api/health', { timeout }),
           call('/', { origin: landingOrigin, timeout }),
+          call('/nutrition/food-log', { origin: docsOrigin, timeout }),
         ]);
         if (
           response.status === 200 &&
           json(response, 'Development health').ok === true &&
-          landing.status === 200
+          landing.status === 200 &&
+          docs.status === 200
         ) {
           healthySince ||= Date.now();
           if (Date.now() - healthySince >= 1000) return;
@@ -303,6 +307,36 @@ try {
     (await call(filesystemPath('apps/web/src/main.tsx'), { origin: landingOrigin })).status,
     403,
     'Landing development must not expose the product source through Vite.',
+  );
+  const docsUrl = captured.match(/docs:dev:[^\r\n]*\bLocal\s+(http:\/\/\S+)/)?.[1];
+  assert(docsUrl, 'Astro must advertise the owned guide URL.');
+  assert.equal(new URL(docsUrl).origin, docsOrigin);
+  assert.equal((await call('/nutrition/food-log', { origin: docsUrl })).status, 200);
+  const guideHop = await call('/open-docs?returnTo=https://evil.test', { origin: landingOrigin });
+  assert.equal(guideHop.status, 302);
+  assert.equal(guideHop.headers.get('Location'), docsOrigin);
+  const appHop = await call('/open-app?returnTo=https://evil.test', { origin: docsOrigin });
+  assert.equal(appHop.status, 302);
+  assert.equal(appHop.headers.get('Location'), origin);
+  const search = await call('/search-index.json', { origin: docsOrigin });
+  assert.equal(search.status, 200);
+  assert.match(search.headers.get('Content-Type'), /application\/json/);
+  JSON.parse(search.body);
+  for (const path of [
+    '/api/search',
+    '/api/health',
+    '/api/auth/get-session',
+    '/mcp',
+    '/sw.js',
+    '/workouts',
+    '/unknown',
+  ]) {
+    assert.equal((await call(path, { origin: docsOrigin })).status, 404, path);
+  }
+  assert.equal(
+    (await call(filesystemPath('apps/web/src/main.tsx'), { origin: docsOrigin })).status,
+    403,
+    'Docs development must not expose the product source through Vite.',
   );
   assert.equal((await call('/', { headers: { Host: 'localhost:43139' } })).status, 400);
   const entry = await call('/src/main.tsx');

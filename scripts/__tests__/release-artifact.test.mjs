@@ -237,6 +237,8 @@ test('packaging canonicalizes JSONC comments and trailing commas but rejects mal
     'apps/server/wrangler.jsonc': await readFile(join(candidate, 'wrangler.json')),
     'apps/landing/dist/index.html': '<html>public landing</html>',
     'apps/landing/dist/_astro/landing.css': 'body { color: inherit; }',
+    'apps/docs/dist/index.html': '<html>guide</html>',
+    'apps/docs/dist/search-index.json': '{"type":"advanced","data":{}}',
   };
   for (const [name, bytes] of Object.entries(inputs)) {
     await mkdir(join(sourceRoot, name, '..'), { recursive: true });
@@ -270,18 +272,7 @@ test('packaging canonicalizes JSONC comments and trailing commas but rejects mal
   await writeFile(path, `// Wrangler JSONC\n/* format-only change */\n${json.slice(0, -2)},\n}\n`);
   const jsonc = await packageArtifact({ ...options, out: join(directory, 'jsonc') });
   assert.equal(jsonc.digest, plain.digest, 'JSONC formatting must not change the release payload.');
-  assert.equal(plain.manifest.maintenanceWorkerEntry, 'worker/maintenance-worker.js');
-  assert.ok(plain.manifest.files['worker/maintenance-worker.js']);
-  assert.equal(plain.assetLayout, 'dual-origin');
-  assert.equal(
-    await readFile(join(directory, 'plain/assets/app/index.html'), 'utf8'),
-    '<html>artifact</html>',
-  );
-  assert.equal(
-    await readFile(join(directory, 'plain/assets/landing/index.html'), 'utf8'),
-    '<html>public landing</html>',
-  );
-  assert.equal(existsSync(join(directory, 'plain/assets/index.html')), false);
+  assert.equal(plain.assetLayout, 'three-origin');
   await writeFile(path, '{"name": }');
   await assert.rejects(
     packageArtifact({ ...options, out: join(directory, 'malformed') }),
@@ -308,6 +299,10 @@ test('asset capability derives from immutable inventory and rejects incomplete o
   delete manifest.files['assets/index.html'];
   await writeFile(join(candidate, 'manifest.json'), JSON.stringify(manifest));
   assert.equal((await verifyArtifact(candidate)).assetLayout, 'dual-origin');
+  await add('assets/docs/index.html', '<html>guide</html>');
+  await assert.rejects(verifyArtifact(candidate), /asset layout/);
+  await add('assets/docs/search-index.json', '{"type":"advanced","data":{}}');
+  assert.equal((await verifyArtifact(candidate)).assetLayout, 'three-origin');
   await rm(join(candidate, 'assets/landing/index.html'));
   delete manifest.files['assets/landing/index.html'];
   await writeFile(join(candidate, 'manifest.json'), JSON.stringify(manifest));

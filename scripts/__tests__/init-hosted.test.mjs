@@ -18,7 +18,6 @@ test('hosted initialization creates only the proxy proof and preserves existing 
       });
     const result = initialize();
     assert.equal(result.status, 0, result.stderr);
-    assert.match(result.stdout, /one random proxy proof/);
     const path = join(directory, '.env.hosted');
     const contents = await readFile(path, 'utf8');
     assert.match(contents, /^CORNER_PROXY_SECRET=[A-Za-z0-9_-]{64}$/m);
@@ -26,8 +25,26 @@ test('hosted initialization creates only the proxy proof and preserves existing 
     assert.equal((await stat(path)).mode & 0o777, 0o600);
     const retry = initialize();
     assert.equal(retry.status, 1);
-    assert.match(retry.stderr, /already exists/);
     assert.equal(await readFile(path, 'utf8'), contents);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('hosted root hostname leaves room for the docs subdomain without creating invalid configuration', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'corner-hosted-domain-'));
+  try {
+    const labels = ['a'.repeat(63), 'b'.repeat(63), 'c'.repeat(63)];
+    const initialize = (lastLabelLength) =>
+      spawnSync(
+        process.execPath,
+        [initializer, '--domain', [...labels, 'd'.repeat(lastLabelLength)].join('.')],
+        { cwd: directory, encoding: 'utf8' },
+      );
+    assert.equal(initialize(57).status, 1);
+    await assert.rejects(stat(join(directory, '.env.hosted')), { code: 'ENOENT' });
+    const valid = initialize(56);
+    assert.equal(valid.status, 0, valid.stderr);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

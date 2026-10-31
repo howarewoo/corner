@@ -15,7 +15,12 @@ const assetRequestHeaders = [
   'If-Range',
 ] as const;
 
-export function secureResponse(response: Response, api: boolean, versionId?: string): Response {
+export function secureResponse(
+  response: Response,
+  api: boolean,
+  versionId?: string,
+  docs = false,
+): Response {
   const result = new Response(response.body, response);
   result.headers.set('Referrer-Policy', 'no-referrer');
   result.headers.set('X-Frame-Options', 'DENY');
@@ -25,7 +30,11 @@ export function secureResponse(response: Response, api: boolean, versionId?: str
   else {
     result.headers.set(
       'Content-Security-Policy',
-      "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
+      // Astro's native meta policy owns generated script hashes; an HTTP script/default
+      // directive would intersect them away. These HTTP-only protections compose with it.
+      docs
+        ? "base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'none'"
+        : "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
     );
     result.headers.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
   }
@@ -35,19 +44,26 @@ export function secureResponse(response: Response, api: boolean, versionId?: str
 /** Asset prefixes are private bundle layout, never public application paths. */
 export async function fetchSiteAssets(
   request: Request,
-  config: Pick<Config, 'origin' | 'landingOrigin'>,
+  config: Pick<Config, 'origin' | 'landingOrigin' | 'docsOrigin'>,
   assets: Assets,
   versionId?: string,
 ): Promise<Response> {
   const url = new URL(request.url);
   const landing = url.origin === config.landingOrigin;
+  const docs = url.origin === config.docsOrigin;
   if (!['GET', 'HEAD'].includes(request.method))
     return secureResponse(new Response(null, { status: 405 }), true, versionId);
-  if (landing && url.pathname === '/open-app')
+  const destination =
+    (landing || docs) && url.pathname === '/open-app'
+      ? config.origin
+      : landing && url.pathname === '/open-docs'
+        ? config.docsOrigin
+        : undefined;
+  if (destination)
     return secureResponse(
       new Response(null, {
         status: 302,
-        headers: { Location: config.origin, 'Cache-Control': 'no-store' },
+        headers: { Location: destination, 'Cache-Control': 'no-store' },
       }),
       true,
       versionId,
@@ -61,10 +77,15 @@ export async function fetchSiteAssets(
   if (
     decoded.includes('\0') ||
     decoded.includes('\\') ||
-    decoded.split('/').some((part) => part.startsWith('.'))
+    decoded.split('/').some((part) => part.startsWith('.')) ||
+    /^\/(?:app|landing|docs)(?:\/|$)/.test(decoded) ||
+    ((landing || docs) &&
+      /^\/(?:api(?:\/|$)|auth(?:\/|$)|account(?:\/|$)|oauth(?:\/|$)|mcp(?:\/|$)|sw\.js$|manifest\.webmanifest$)/.test(
+        decoded,
+      ))
   )
     return secureResponse(new Response(null, { status: 404 }), true, versionId);
-  const prefix = landing ? '/landing' : '/app';
+  const prefix = docs ? '/docs' : landing ? '/landing' : '/app';
   const headers: Record<string, string> = {};
   for (const name of assetRequestHeaders) {
     const value = request.headers.get(name);
@@ -75,9 +96,16 @@ export async function fetchSiteAssets(
     return assets.fetch(new Request(internal, { method: request.method, headers }));
   };
   let response = await fetchAsset(url.pathname === '/' ? '/index.html' : url.pathname);
-  if (!landing && response.status === 404 && !extname(decoded))
+  if (docs && response.status === 404 && !extname(decoded))
+    response = await fetchAsset(`${url.pathname.replace(/\/$/, '')}/index.html`);
+  if (!landing && !docs && response.status === 404 && !extname(decoded))
     response = await fetchAsset('/index.html');
-  const result = secureResponse(response, false, versionId);
+  const result = secureResponse(
+    response,
+    false,
+    versionId,
+    docs && /^text\/html(?:;|$)/i.test(response.headers.get('Content-Type') ?? ''),
+  );
   result.headers.delete('Set-Cookie');
   result.headers.delete('Service-Worker-Allowed');
   result.headers.set(

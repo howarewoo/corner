@@ -27,6 +27,7 @@
       "passThroughEnv": [
         "CORNER_ORIGIN",
         "CORNER_LANDING_ORIGIN",
+        "CORNER_DOCS_ORIGIN",
         "CORNER_DEV_API_PORT",
         "CORNER_DESIGN_PORT"
       ]
