@@ -1,4 +1,4 @@
-import { and, eq, inArray, gte, lte } from 'drizzle-orm';
+import { and, or, eq, inArray, gte, lte } from 'drizzle-orm';
 import type { z } from 'zod';
 import { MutationSchema } from '@packages/workspace/mutations';
 import type { Settings } from '@packages/workspace/types';
@@ -194,7 +194,13 @@ async function executeTrainingCommand(
                     gte(tables.workoutSessions.date, dates[0]),
                     lte(tables.workoutSessions.date, dates[6]),
                   )
-                : inArray(tables.workoutSessions.id, sessionIds),
+                : or(
+                    inArray(tables.workoutSessions.id, sessionIds),
+                    mutation.type === 'training.session.save' &&
+                      mutation.data.session.status === 'in_progress'
+                      ? eq(tables.workoutSessions.status, 'in_progress')
+                      : undefined,
+                  ),
             ),
           )
       : [],

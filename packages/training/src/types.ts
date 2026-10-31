@@ -61,6 +61,22 @@ export type WorkoutSession = {
   changeReason: string;
   createdAt: string;
   updatedAt: string;
+  /** Absent on older/manual records; never inferred from creation time. */
+  timing?: WorkoutTiming;
+};
+export type WorkoutTiming = {
+  startedAt: string;
+  endedAt?: string;
+  rests: Array<{
+    exerciseId: string;
+    setId: string;
+    startedAt: string;
+    /** Only an explicit next-set action measures the end of rest. */
+    endedAt?: string;
+    /** Another set or workout finish occurred without an observed next-set start. */
+    interrupted?: true;
+    targetSeconds: number;
+  }>;
 };
 export type TrainingCheckIn = {
   id: string;

@@ -36,6 +36,12 @@ export function useSessionLifetime() {
   }, sessionLifetime);
 }
 export function clearPrivateState() {
+  try {
+    for (const key of Object.keys(sessionStorage))
+      if (key.startsWith('corner-active-workout:')) sessionStorage.removeItem(key);
+  } catch {
+    /* Browser recovery storage is optional. */
+  }
   lifetime += 1;
   revisionFloors.clear();
   observedRevision = 0;

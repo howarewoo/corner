@@ -72,7 +72,11 @@ export const WorkoutExerciseSchema = ExerciseTargetSchema.extend({
       message: 'Set both rep limits or neither.',
       path: ['repMin'],
     });
-  else if (exercise.repMin !== null && exercise.repMax !== null && exercise.repMin > exercise.repMax)
+  else if (
+    exercise.repMin !== null &&
+    exercise.repMax !== null &&
+    exercise.repMin > exercise.repMax
+  )
     context.addIssue({
       code: 'custom',
       message: 'Minimum reps must not exceed maximum reps.',
@@ -134,6 +138,60 @@ export const WorkoutTemplateSchema = z
         });
     });
   });
+export const WorkoutTimingSchema = z
+  .object({
+    startedAt: timestamp,
+    endedAt: timestamp.optional(),
+    rests: z
+      .array(
+        z
+          .object({
+            exerciseId: id,
+            setId: id,
+            startedAt: timestamp,
+            endedAt: timestamp.optional(),
+            interrupted: z.literal(true).optional(),
+            targetSeconds: number(86400).int(),
+          })
+          .strict(),
+      )
+      .max(750),
+  })
+  .strict()
+  .superRefine((timing, context) => {
+    const start = Date.parse(timing.startedAt);
+    const end = timing.endedAt ? Date.parse(timing.endedAt) : Infinity;
+    const ids = new Set<string>();
+    let open = 0;
+    if (end < start)
+      context.addIssue({ code: 'custom', message: 'Workout end precedes its start.' });
+    for (const rest of timing.rests) {
+      const key = JSON.stringify([rest.exerciseId, rest.setId]);
+      if (
+        ids.has(key) ||
+        Date.parse(rest.startedAt) < start ||
+        Date.parse(rest.startedAt) > end ||
+        (rest.endedAt &&
+          (Date.parse(rest.endedAt) < Date.parse(rest.startedAt) || Date.parse(rest.endedAt) > end))
+      )
+        context.addIssue({
+          code: 'custom',
+          message: 'Rest intervals must be unique and within the workout.',
+        });
+      ids.add(key);
+      if (rest.endedAt && rest.interrupted)
+        context.addIssue({ code: 'custom', message: 'Interrupted rest has no measured end.' });
+      if (!rest.endedAt && !rest.interrupted) open++;
+    }
+    if (timing.endedAt && open)
+      context.addIssue({
+        code: 'custom',
+        message: 'End or mark remaining rest unknown when finishing.',
+      });
+    if (open > 1)
+      context.addIssue({ code: 'custom', message: 'Only one rest interval can be running.' });
+  });
+
 export const WorkoutSessionSchema = z
   .object({
     id,
@@ -145,7 +203,7 @@ export const WorkoutSessionSchema = z
     unit: z.enum(['lb', 'kg']),
     exercises: z.array(WorkoutExerciseSchema).max(25),
     plannedMinutes: number(600).int().nullable(),
-    durationMinutes: number(600).nullable(),
+    durationMinutes: number(525600).nullable(),
     rounds: number(100).int().nullable(),
     sessionRpe: number(10, 1).nullable(),
     readiness: number(5, 1).int().nullable(),
@@ -153,9 +211,22 @@ export const WorkoutSessionSchema = z
     changeReason: text(1600),
     createdAt: timestamp,
     updatedAt: timestamp,
+    timing: WorkoutTimingSchema.optional(),
   })
   .strict()
   .superRefine((session, context) => {
+    if (
+      session.timing &&
+      (session.status === 'planned' ||
+        session.status === 'skipped' ||
+        (session.status === 'in_progress' && session.timing.endedAt) ||
+        (session.status === 'completed' && !session.timing.endedAt))
+    )
+      context.addIssue({
+        code: 'custom',
+        message: 'Workout timing must match its status.',
+        path: ['timing'],
+      });
     if (!unique(session.exercises))
       context.addIssue({
         code: 'custom',
@@ -451,6 +522,20 @@ export function prepareTrainingCommand(
       const { session, expectedUpdatedAt } = mutation.data;
       const existing = dependencies.sessions.find((item) => item.id === session.id);
       checkVersion(existing, expectedUpdatedAt);
+      if (
+        session.status === 'in_progress' &&
+        dependencies.sessions.some(
+          (item) => item.id !== session.id && item.status === 'in_progress',
+        )
+      )
+        throw new Error('Resume or finish your active workout before starting another.');
+      if (
+        existing?.timing &&
+        (!session.timing || session.timing.startedAt !== existing.timing.startedAt)
+      )
+        throw new Error('Keep the recorded workout start time.');
+      if (existing?.timing && session.status !== 'in_progress' && session.status !== 'completed')
+        throw new Error('End the active workout explicitly before changing its status.');
       if (existing?.status === 'completed' && session.status !== 'completed')
         throw new Error(
           'Keep completed history completed. Edit its logged details instead of resetting it to a plan.',

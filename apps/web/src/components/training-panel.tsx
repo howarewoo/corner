@@ -23,7 +23,6 @@ import {
   Plus,
   SkipForward,
   Sparkles,
-  Timer,
   Trash2,
   TrendingUp,
   X,
@@ -47,6 +46,7 @@ import type {
 } from '@packages/training/types';
 import {
   createSessionFromTemplate,
+  WorkoutSessionSchema,
   exerciseHistory,
   trainingStats,
 } from '@packages/training/workouts';
@@ -97,6 +97,7 @@ import {
   WorkspaceHeader,
 } from '@packages/ui';
 import ExercisePicker, { ExerciseReference } from './exercise-picker';
+import { clock, RestControls, finishTimedWorkout, recordSetRest } from './workout-timing';
 import './training.css';
 
 type Props = {
@@ -107,11 +108,16 @@ type Props = {
   mutate: (mutation: WorkspaceMutationInput['mutation'], success?: string) => Promise<boolean>;
   busy: boolean;
   notify: (message: string, error?: boolean) => void;
+  onActivateWorkout?: (
+    session: WorkoutSession,
+    expectedUpdatedAt: string | null,
+  ) => Promise<boolean>;
 };
-type EditorState = {
+export type EditorState = {
   session: WorkoutSession;
   expectedUpdatedAt: string | null;
   template?: WorkoutTemplate;
+  prefillEdits?: Record<string, boolean>;
 };
 const kindLabels: Record<WorkoutKind, string> = {
   strength: 'Strength',
@@ -315,7 +321,9 @@ function sessionError(next: WorkoutSession, templateMode: boolean): string | und
   ) {
     return 'Name each exercise and keep the top rep target at or above the bottom of the range.';
   }
-  if (next.exercises.some((exercise) => (exercise.repMin === null) !== (exercise.repMax === null))) {
+  if (
+    next.exercises.some((exercise) => (exercise.repMin === null) !== (exercise.repMax === null))
+  ) {
     return 'Enter both rep limits, or leave both blank.';
   }
   if ((templateMode || next.status !== 'completed') && !plannedTargets(next)) {
@@ -367,13 +375,14 @@ function sessionError(next: WorkoutSession, templateMode: boolean): string | und
   }
 }
 
-function SessionEditor({
+export function SessionEditor({
   editor,
   history,
   busy,
   onClose,
   onSave,
   onSaveTemplate,
+  active,
 }: {
   editor: EditorState;
   history?: readonly WorkoutSession[];
@@ -381,6 +390,11 @@ function SessionEditor({
   onClose: () => void;
   onSave: (session: WorkoutSession, expectedUpdatedAt: string | null) => Promise<boolean>;
   onSaveTemplate: (template: WorkoutTemplate) => Promise<boolean>;
+  active?: {
+    expanded: boolean;
+    onDraft: (session: WorkoutSession, edits: Record<string, boolean>) => void;
+    onFinishReady: (finish: () => void) => void;
+  };
 }) {
   const formRef = useRef<HTMLFormElement>(null);
   const templateMode = Boolean(editor.template);
@@ -389,7 +403,7 @@ function SessionEditor({
       session: structuredClone(editor.session),
       templateDescription: editor.template?.description ?? '',
       submitStatus: null,
-      prefillEdits: {},
+      prefillEdits: editor.prefillEdits ?? {},
     }),
     [editor],
   );
@@ -398,20 +412,22 @@ function SessionEditor({
     validators: {
       onSubmit: ({ value }) =>
         sessionError(
-          {
-            ...value.session,
-            status: value.submitStatus ?? value.session.status,
-          },
+          active && value.submitStatus === 'completed'
+            ? finishTimedWorkout(value.session)
+            : { ...value.session, status: value.submitStatus ?? value.session.status },
           templateMode,
         ),
     },
     onSubmit: async ({ value }) => {
       if (busy) return;
-      const next = {
-        ...value.session,
-        status: value.submitStatus ?? value.session.status,
-        updatedAt: new Date().toISOString(),
-      };
+      const next =
+        active && value.submitStatus === 'completed'
+          ? finishTimedWorkout(value.session)
+          : {
+              ...value.session,
+              status: value.submitStatus ?? value.session.status,
+              updatedAt: new Date().toISOString(),
+            };
       if (templateMode) {
         const routine = plannedTargets(next);
         if (!routine) return;
@@ -432,8 +448,9 @@ function SessionEditor({
   const targetsRequired = templateMode || (values.submitStatus ?? draft.status) !== 'completed';
   const error = useStore(form.store, (state) => state.errorMap.onSubmit);
   const submitting = useStore(form.store, (state) => state.isSubmitting);
-  const [restEnd, setRestEnd] = useState<number | null>(null);
-  const [remaining, setRemaining] = useState(0);
+  useEffect(() => {
+    active?.onDraft(values.session, values.prefillEdits);
+  }, [values.session, values.prefillEdits, active?.onDraft]);
   const [pickerTarget, setPickerTarget] = useState<string | null>(null);
   const [focusExerciseId, setFocusExerciseId] = useState<string | null>(null);
   const [openTargets, setOpenTargets] = useState<Record<string, boolean>>(() =>
@@ -457,7 +474,9 @@ function SessionEditor({
     !history &&
     !templateMode &&
     prefillContext.eligible &&
-    prefillContext.exercises.some((exercise) => exercise.needsHistory);
+    prefillContext.exercises.some((exercise) => exercise.needsHistory) &&
+    // Prefill validates the whole session; unfinished form rows must stay local.
+    WorkoutSessionSchema.safeParse(draft).success;
   const prefill = useResource(
     'prefill',
     prefillContext,
@@ -465,6 +484,9 @@ function SessionEditor({
     needsPrefill,
   );
   const prefillHistory = history ?? (prefill.isError ? undefined : prefill.data?.sessions);
+  // Let the initial suggestions settle before focus/selection enters a set field.
+  // Otherwise a late prefill can insert its value between selecting and typing.
+  const prefillPending = needsPrefill && prefill.isPending;
   const prefills = useMemo<WorkoutPrefill>(
     () => (templateMode || !prefillHistory ? {} : getWorkoutPrefill(draft, prefillHistory)),
     [draft, prefillHistory, templateMode],
@@ -535,7 +557,9 @@ function SessionEditor({
     }));
     changeSet(exercise.id, set.id, { [field]: nullableNumber(value) });
   };
-  const confirmSet = (exercise: WorkoutExercise, set: WorkoutSet, completed: boolean) =>
+  const confirmSet = (exercise: WorkoutExercise, set: WorkoutSet, completed: boolean) => {
+    if (active && draft.timing)
+      form.setFieldValue('session.timing', recordSetRest(draft.timing, exercise, set, completed));
     changeSet(
       exercise.id,
       set.id,
@@ -548,6 +572,7 @@ function SessionEditor({
           }
         : { completed },
     );
+  };
   const chooseExercise = (entry?: ExerciseCatalogEntry) => {
     const previous = draft.exercises.find((exercise) => exercise.id === pickerTarget);
     const loadType: LoadType = !entry
@@ -595,17 +620,6 @@ function SessionEditor({
     element?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
     setFocusExerciseId(null);
   }, [focusExerciseId]);
-  useEffect(() => {
-    if (restEnd === null) return;
-    const update = () => {
-      const seconds = Math.max(0, Math.ceil((restEnd - Date.now()) / 1000));
-      setRemaining(seconds);
-      if (!seconds) setRestEnd(null);
-    };
-    update();
-    const timer = setInterval(update, 500);
-    return () => clearInterval(timer);
-  }, [restEnd]);
   const save = async (status: WorkoutStatus | null = null) => {
     if (busy || form.state.isSubmitting) return;
     // Native validity must observe this click's lifecycle intent, not the previous render.
@@ -617,18 +631,11 @@ function SessionEditor({
     await form.handleSubmit();
   };
 
-  return (
-    <TrainingDialog
-      title={
-        templateMode
-          ? 'Edit routine'
-          : draft.status === 'completed'
-            ? 'Workout details'
-            : 'Your workout'
-      }
-      onClose={onClose}
-      wide
-    >
+  useEffect(() => {
+    active?.onFinishReady(() => void save('completed'));
+  });
+  const content = (
+    <>
       {needsPrefill && (!prefill.data || prefill.isError) && (
         <ResourceStatus
           error={prefill.error}
@@ -652,74 +659,89 @@ function SessionEditor({
           }
         }}
       >
-        <div className="workout-editor-basics">
-          <FormField label="Workout name">
-            <Input
-              required
-              maxLength={160}
-              value={draft.name}
-              onChange={(event) => patch({ name: event.target.value })}
-            />
-          </FormField>
-          {!templateMode && (
-            <FormField label="Date">
-              <Input
-                required
-                type="date"
-                value={draft.date}
-                onChange={(event) => patch({ date: event.target.value })}
-              />
-            </FormField>
+        {active && draft.timing && (
+          <RestControls timing={draft.timing} onChange={(timing) => patch({ timing })} />
+        )}
+        <Collapsible defaultOpen={!active} className="workout-session-details">
+          {active && (
+            <CollapsibleTrigger className="workout-target-summary">
+              <ChevronDown size={15} />
+              Workout details
+            </CollapsibleTrigger>
           )}
-          <FormField label="Session type">
-            <NativeSelect
-              className="w-full"
-              value={draft.kind}
-              onChange={(event) => patch({ kind: event.target.value as WorkoutKind })}
-            >
-              {Object.entries(kindLabels).map(([value, label]) => (
-                <NativeSelectOption value={value} key={value}>
-                  {label}
-                </NativeSelectOption>
-              ))}
-            </NativeSelect>
-          </FormField>
-          <FormField label="Planned minutes">
-            <Input
-              required={targetsRequired}
-              type="number"
-              min="0"
-              max="600"
-              value={draft.plannedMinutes ?? ''}
-              onChange={(event) => patch({ plannedMinutes: nullableNumber(event.target.value) })}
-            />
-          </FormField>
-          {!templateMode && (
-            <FormField label="Status">
-              <NativeSelect
-                className="w-full"
-                value={draft.status}
-                onChange={(event) => patch({ status: event.target.value as WorkoutStatus })}
-              >
-                {Object.entries(statusLabels).map(([value, label]) => (
-                  <NativeSelectOption value={value} key={value}>
-                    {label}
-                  </NativeSelectOption>
-                ))}
-              </NativeSelect>
-            </FormField>
-          )}
-          <FormField label="Load unit" hint="Entered loads convert when you switch units.">
-            <NativeSelect
-              className="w-full"
-              value={draft.unit}
-              onChange={(event) => changeUnit(event.target.value as 'lb' | 'kg')}
-            >
-              <NativeSelectOption value="lb">Pounds (lb)</NativeSelectOption>
-              <NativeSelectOption value="kg">Kilograms (kg)</NativeSelectOption>
-            </NativeSelect>
-          </FormField>
-        </div>
+          <CollapsibleContent keepMounted>
+            <div className="workout-editor-basics">
+              <FormField label="Workout name">
+                <Input
+                  required
+                  maxLength={160}
+                  value={draft.name}
+                  onChange={(event) => patch({ name: event.target.value })}
+                />
+              </FormField>
+              {!templateMode && (
+                <FormField label="Date">
+                  <Input
+                    required
+                    type="date"
+                    value={draft.date}
+                    onChange={(event) => patch({ date: event.target.value })}
+                  />
+                </FormField>
+              )}
+              <FormField label="Session type">
+                <NativeSelect
+                  className="w-full"
+                  value={draft.kind}
+                  onChange={(event) => patch({ kind: event.target.value as WorkoutKind })}
+                >
+                  {Object.entries(kindLabels).map(([value, label]) => (
+                    <NativeSelectOption value={value} key={value}>
+                      {label}
+                    </NativeSelectOption>
+                  ))}
+                </NativeSelect>
+              </FormField>
+              <FormField label="Planned minutes">
+                <Input
+                  required={targetsRequired}
+                  type="number"
+                  min="0"
+                  max="600"
+                  value={draft.plannedMinutes ?? ''}
+                  onChange={(event) =>
+                    patch({ plannedMinutes: nullableNumber(event.target.value) })
+                  }
+                />
+              </FormField>
+              {!templateMode && !active && (
+                <FormField label="Status">
+                  <NativeSelect
+                    className="w-full"
+                    value={draft.status}
+                    onChange={(event) => patch({ status: event.target.value as WorkoutStatus })}
+                  >
+                    {Object.entries(statusLabels).map(([value, label]) => (
+                      <NativeSelectOption value={value} key={value}>
+                        {label}
+                      </NativeSelectOption>
+                    ))}
+                  </NativeSelect>
+                </FormField>
+              )}
+              <FormField label="Load unit" hint="Entered loads convert when you switch units.">
+                <NativeSelect
+                  className="w-full"
+                  value={draft.unit}
+                  onChange={(event) => changeUnit(event.target.value as 'lb' | 'kg')}
+                >
+                  <NativeSelectOption value="lb">Pounds (lb)</NativeSelectOption>
+                  <NativeSelectOption value="kg">Kilograms (kg)</NativeSelectOption>
+                </NativeSelect>
+              </FormField>
+            </div>
+          </CollapsibleContent>
+        </Collapsible>
         {templateMode ? (
           <FormField label="Routine notes">
             <Textarea
@@ -739,416 +761,437 @@ function SessionEditor({
           {draft.exercises.map((exercise, index) => {
             const targets = targetSummary(exercise);
             return (
-            <section
-              className="workout-exercise"
-              key={exercise.id}
-              id={`workout-exercise-${exercise.id}`}
-              tabIndex={-1}
-            >
-              <div className="workout-exercise-heading">
-                <div>
-                  <span className="training-eyebrow">Exercise {index + 1}</span>
-                  <h3>{exercise.name || 'New exercise'}</h3>
-                  <p>
-                    {targets && `${targets} reps · `}
-                    {exercise.targetRir === null ? 'RIR not set' : `${exercise.targetRir} RIR`} ·{' '}
-                    {loadLabels[exercise.loadType]}
-                  </p>
-                </div>
-                <div className="workout-exercise-actions">
-                  <IconAction
-                    label={`Move ${exercise.name || 'exercise'} up`}
-                    disabled={index === 0}
-                    onClick={() =>
-                      form.moveFieldValues(
-                        'session.exercises',
-                        index,
-                        index - 1,
-                        workoutRowValueOptions,
-                      )
-                    }
-                  >
-                    <ArrowUp size={16} />
-                  </IconAction>
-                  <IconAction
-                    label={`Move ${exercise.name || 'exercise'} down`}
-                    disabled={index === draft.exercises.length - 1}
-                    onClick={() =>
-                      form.moveFieldValues(
-                        'session.exercises',
-                        index,
-                        index + 1,
-                        workoutRowValueOptions,
-                      )
-                    }
-                  >
-                    <ArrowDown size={16} />
-                  </IconAction>
-                  <IconAction
-                    label={`Remove ${exercise.name || 'exercise'}`}
-                    onClick={() =>
-                      void form.removeFieldValue('session.exercises', index, workoutRowValueOptions)
-                    }
-                  >
-                    <Trash2 size={17} />
-                  </IconAction>
-                </div>
-              </div>
-              <Collapsible
-                open={openTargets[exercise.id] ?? false}
-                onOpenChange={(isOpen) =>
-                  setOpenTargets((prev) => ({ ...prev, [exercise.id]: isOpen }))
-                }
-                className="workout-target-details"
+              <section
+                className="workout-exercise"
+                key={exercise.id}
+                id={`workout-exercise-${exercise.id}`}
+                tabIndex={-1}
               >
-                <CollapsibleTrigger className="workout-target-summary">
-                  <ChevronDown size={15} />
-                  {templateMode ? 'Exercise & targets' : 'Edit exercise or targets'}
-                </CollapsibleTrigger>
-                <CollapsibleContent>
-                  <div className="workout-target-fields">
-                    <FormField
-                      label="Exercise name"
-                      hint={
-                        exercise.catalogId
-                          ? 'Use the exercise library to choose a different movement.'
-                          : undefined
-                      }
-                    >
-                      <Input
-                        required
-                        readOnly={Boolean(exercise.catalogId)}
-                        maxLength={160}
-                        value={exercise.name}
-                        onChange={(event) =>
-                          changeExercise(exercise.id, {
-                            name: event.target.value,
-                            targetLoad: undefined,
-                          })
-                        }
-                      />
-                    </FormField>
-                    <FormField label="How to record load">
-                      <NativeSelect
-                        className="w-full"
-                        value={exercise.loadType}
-                        onChange={(event) =>
-                          changeExercise(exercise.id, {
-                            loadType: event.target.value as LoadType,
-                            targetLoad: undefined,
-                          })
-                        }
-                      >
-                        {Object.entries(loadLabels).map(([value, label]) => (
-                          <NativeSelectOption value={value} key={value}>
-                            {label}
-                          </NativeSelectOption>
-                        ))}
-                      </NativeSelect>
-                    </FormField>
-                    <FormField label="Target sets">
-                      <Input
-                        required={targetsRequired}
-                        type="number"
-                        min="1"
-                        max="20"
-                        value={exercise.targetSets ?? ''}
-                        onChange={(event) =>
-                          changeExercise(exercise.id, {
-                            targetSets: nullableNumber(event.target.value),
-                          })
-                        }
-                      />
-                    </FormField>
-                    <FormField label="Reps from">
-                      <Input
-                        required={targetsRequired}
-                        type="number"
-                        min="1"
-                        max="200"
-                        value={exercise.repMin ?? ''}
-                        onChange={(event) =>
-                          changeExercise(exercise.id, { repMin: nullableNumber(event.target.value) })
-                        }
-                      />
-                    </FormField>
-                    <FormField label="Reps to">
-                      <Input
-                        required={targetsRequired}
-                        type="number"
-                        min="1"
-                        max="200"
-                        value={exercise.repMax ?? ''}
-                        onChange={(event) =>
-                          changeExercise(exercise.id, { repMax: nullableNumber(event.target.value) })
-                        }
-                      />
-                    </FormField>
-                    <FormField label="Target RIR">
-                      <Input
-                        type="number"
-                        min="0"
-                        max="10"
-                        step="0.5"
-                        value={exercise.targetRir ?? ''}
-                        onChange={(event) =>
-                          changeExercise(exercise.id, {
-                            targetRir: nullableNumber(event.target.value),
-                          })
-                        }
-                      />
-                    </FormField>
-                    <FormField
-                      label={`Starting load · ${draft.unit}${exercise.loadType === 'per_hand' ? ' / hand' : ''}`}
-                      hint="Used when there is no previous logged load. Optional."
-                    >
-                      <Input
-                        type="number"
-                        min="0"
-                        max="2000"
-                        step="any"
-                        placeholder="Set once, or enter in your first workout"
-                        value={
-                          exercise.targetLoad
-                            ? convertTrainingWeight(
-                                exercise.targetLoad.weight,
-                                exercise.targetLoad.unit,
-                                draft.unit,
-                              )
-                            : ''
-                        }
-                        onChange={(event) =>
-                          changeExercise(exercise.id, {
-                            targetLoad:
-                              event.target.value === ''
-                                ? undefined
-                                : { weight: Number(event.target.value), unit: draft.unit },
-                          })
-                        }
-                      />
-                    </FormField>
-                    <FormField label="Rest seconds">
-                      <Input
-                        required={targetsRequired}
-                        type="number"
-                        min="0"
-                        max="900"
-                        step="1"
-                        value={exercise.restSeconds ?? ''}
-                        onChange={(event) =>
-                          changeExercise(exercise.id, {
-                            restSeconds: nullableNumber(event.target.value),
-                          })
-                        }
-                      />
-                    </FormField>
-                    <FormField label="Exercise notes">
-                      <Input
-                        maxLength={1200}
-                        value={exercise.notes}
-                        placeholder="Grip, equipment, or each-side notes"
-                        onChange={(event) =>
-                          changeExercise(exercise.id, { notes: event.target.value })
-                        }
-                      />
-                    </FormField>
-                  </div>
-                  <div className="workout-catalog-actions">
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      disabled={exercise.sets.some(
-                        (set) =>
-                          set.completed ||
-                          set.weight !== null ||
-                          set.reps !== null ||
-                          set.rir !== null,
-                      )}
-                      onClick={() => setPickerTarget(exercise.id)}
-                    >
-                      <Dumbbell size={15} />
-                      Choose from exercise library
-                    </Button>
-                    {exercise.catalogId && (
-                      <span className="training-small-note">Linked to exercise database</span>
-                    )}
-                  </div>
-                </CollapsibleContent>
-              </Collapsible>
-              {exercise.catalogId && <ExerciseReference id={exercise.catalogId} />}
-              {!templateMode && (
-                <>
-                  {Object.keys(prefills[exercise.id] ?? {}).length > 0 && (
-                    <p className="workout-prefill-note">
-                      <Sparkles size={15} />
-                      <span>
-                        {Object.values(prefills[exercise.id])[0]?.source === 'history'
-                          ? `Suggested from ${todayLabel(Object.values(prefills[exercise.id])[0].sourceDate!, { month: 'short', day: 'numeric' })} and your targets.`
-                          : 'Prefilled from your plan targets.'}{' '}
-                        Review the numbers, then check Done after each set.
-                      </span>
+                <div className="workout-exercise-heading">
+                  <div>
+                    <h3>{exercise.name || 'New exercise'}</h3>
+                    <p>
+                      {targets && `${targets} reps · `}
+                      {exercise.targetRir === null
+                        ? 'RIR not set'
+                        : `${exercise.targetRir} RIR`} ·{' '}
+                      {loadLabels[exercise.loadType]}
                     </p>
-                  )}
-                  <div className="workout-set-scroll">
-                    <Table className="workout-set-table">
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead scope="col">Set</TableHead>
-                          <TableHead scope="col">
-                            {exercise.loadType === 'per_hand'
-                              ? `${draft.unit} / hand`
-                              : exercise.loadType === 'assistance'
-                                ? `${draft.unit} assist`
-                                : exercise.loadType === 'bodyweight'
-                                  ? `Added ${draft.unit}`
-                                  : draft.unit}
-                          </TableHead>
-                          <TableHead scope="col">Reps</TableHead>
-                          <TableHead scope="col">RIR</TableHead>
-                          <TableHead scope="col">Done</TableHead>
-                          <TableHead scope="col">
-                            <span className="sr-only">Remove</span>
-                          </TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {exercise.sets.map((set, setIndex) => (
-                          <TableRow
-                            key={set.id}
-                            className={set.completed ? 'workout-set-done' : ''}
-                          >
-                            <TableCell className="workout-set-type-cell">
-                              <span>{setIndex + 1}</span>
-                              <NativeSelect
-                                size="sm"
-                                aria-label={`${exercise.name} set ${setIndex + 1} type`}
-                                value={set.kind}
-                                onChange={(event) =>
-                                  changeSet(exercise.id, set.id, {
-                                    kind: event.target.value as 'working' | 'warmup',
-                                  })
-                                }
-                              >
-                                <NativeSelectOption value="working">Work</NativeSelectOption>
-                                <NativeSelectOption value="warmup">Warm-up</NativeSelectOption>
-                              </NativeSelect>
-                            </TableCell>
-                            <TableCell>
-                              <Input
-                                aria-label={`${exercise.name} set ${setIndex + 1} weight ${draft.unit}${exercise.loadType === 'per_hand' ? ' per hand' : ''}`}
-                                type="number"
-                                min="0"
-                                max="2000"
-                                step="any"
-                                placeholder={exercise.loadType === 'bodyweight' ? 'BW' : '—'}
-                                data-suggested={
-                                  set.weight === null && setValue(exercise, set, 'weight') !== null
-                                }
-                                value={setValue(exercise, set, 'weight') ?? ''}
-                                onChange={(event) =>
-                                  editSetValue(exercise, set, 'weight', event.target.value)
-                                }
-                              />
-                            </TableCell>
-                            <TableCell>
-                              <Input
-                                aria-label={`${exercise.name} set ${setIndex + 1} reps`}
-                                type="number"
-                                min="0"
-                                max="500"
-                                step="1"
-                                placeholder="—"
-                                data-suggested={
-                                  set.reps === null && setValue(exercise, set, 'reps') !== null
-                                }
-                                value={setValue(exercise, set, 'reps') ?? ''}
-                                onChange={(event) =>
-                                  editSetValue(exercise, set, 'reps', event.target.value)
-                                }
-                              />
-                            </TableCell>
-                            <TableCell>
-                              <Input
-                                aria-label={`${exercise.name} set ${setIndex + 1} reps in reserve`}
-                                type="number"
-                                min="0"
-                                max="10"
-                                step="0.5"
-                                placeholder="—"
-                                data-suggested={
-                                  set.rir === null && setValue(exercise, set, 'rir') !== null
-                                }
-                                value={setValue(exercise, set, 'rir') ?? ''}
-                                onChange={(event) =>
-                                  editSetValue(exercise, set, 'rir', event.target.value)
-                                }
-                              />
-                            </TableCell>
-                            <TableCell>
-                              <Checkbox
-                                aria-label={`${exercise.name} set ${setIndex + 1} completed`}
-                                checked={set.completed}
-                                onCheckedChange={(checked) =>
-                                  confirmSet(exercise, set, Boolean(checked))
-                                }
-                                className="workout-done-checkbox"
-                              />
-                            </TableCell>
-                            <TableCell>
-                              <IconAction
-                                label={`Remove ${exercise.name} set ${setIndex + 1}`}
-                                onClick={() =>
-                                  void form.removeFieldValue(
-                                    `session.exercises[${index}].sets`,
-                                    setIndex,
-                                    workoutRowValueOptions,
-                                  )
-                                }
-                              >
-                                <X size={16} />
-                              </IconAction>
-                            </TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
                   </div>
-                  <div className="workout-set-tools">
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      disabled={exercise.sets.length >= 30}
+                  <div className="workout-exercise-actions">
+                    <IconAction
+                      label={`Move ${exercise.name || 'exercise'} up`}
+                      disabled={index === 0}
                       onClick={() =>
-                        form.pushFieldValue(
-                          `session.exercises[${index}].sets`,
-                          blankSet(),
+                        form.moveFieldValues(
+                          'session.exercises',
+                          index,
+                          index - 1,
                           workoutRowValueOptions,
                         )
                       }
                     >
-                      <Plus size={15} />
-                      Add set
-                    </Button>
-                    {exercise.restSeconds !== null && (
+                      <ArrowUp size={16} />
+                    </IconAction>
+                    <IconAction
+                      label={`Move ${exercise.name || 'exercise'} down`}
+                      disabled={index === draft.exercises.length - 1}
+                      onClick={() =>
+                        form.moveFieldValues(
+                          'session.exercises',
+                          index,
+                          index + 1,
+                          workoutRowValueOptions,
+                        )
+                      }
+                    >
+                      <ArrowDown size={16} />
+                    </IconAction>
+                    <IconAction
+                      label={`Remove ${exercise.name || 'exercise'}`}
+                      onClick={() =>
+                        void form.removeFieldValue(
+                          'session.exercises',
+                          index,
+                          workoutRowValueOptions,
+                        )
+                      }
+                    >
+                      <Trash2 size={17} />
+                    </IconAction>
+                  </div>
+                </div>
+                <Collapsible
+                  open={openTargets[exercise.id] ?? false}
+                  onOpenChange={(isOpen) =>
+                    setOpenTargets((prev) => ({ ...prev, [exercise.id]: isOpen }))
+                  }
+                  className="workout-target-details"
+                >
+                  <CollapsibleTrigger className="workout-target-summary">
+                    <ChevronDown size={15} />
+                    {templateMode ? 'Exercise & targets' : 'Edit exercise or targets'}
+                  </CollapsibleTrigger>
+                  <CollapsibleContent>
+                    <div className="workout-target-fields">
+                      <FormField
+                        label="Exercise name"
+                        hint={
+                          exercise.catalogId
+                            ? 'Use the exercise library to choose a different movement.'
+                            : undefined
+                        }
+                      >
+                        <Input
+                          required
+                          readOnly={Boolean(exercise.catalogId)}
+                          maxLength={160}
+                          value={exercise.name}
+                          onChange={(event) =>
+                            changeExercise(exercise.id, {
+                              name: event.target.value,
+                              targetLoad: undefined,
+                            })
+                          }
+                        />
+                      </FormField>
+                      <FormField label="How to record load">
+                        <NativeSelect
+                          className="w-full"
+                          value={exercise.loadType}
+                          onChange={(event) =>
+                            changeExercise(exercise.id, {
+                              loadType: event.target.value as LoadType,
+                              targetLoad: undefined,
+                            })
+                          }
+                        >
+                          {Object.entries(loadLabels).map(([value, label]) => (
+                            <NativeSelectOption value={value} key={value}>
+                              {label}
+                            </NativeSelectOption>
+                          ))}
+                        </NativeSelect>
+                      </FormField>
+                      <FormField label="Target sets">
+                        <Input
+                          required={targetsRequired}
+                          type="number"
+                          min="1"
+                          max="20"
+                          value={exercise.targetSets ?? ''}
+                          onChange={(event) =>
+                            changeExercise(exercise.id, {
+                              targetSets: nullableNumber(event.target.value),
+                            })
+                          }
+                        />
+                      </FormField>
+                      <FormField label="Reps from">
+                        <Input
+                          required={targetsRequired}
+                          type="number"
+                          min="1"
+                          max="200"
+                          value={exercise.repMin ?? ''}
+                          onChange={(event) =>
+                            changeExercise(exercise.id, {
+                              repMin: nullableNumber(event.target.value),
+                            })
+                          }
+                        />
+                      </FormField>
+                      <FormField label="Reps to">
+                        <Input
+                          required={targetsRequired}
+                          type="number"
+                          min="1"
+                          max="200"
+                          value={exercise.repMax ?? ''}
+                          onChange={(event) =>
+                            changeExercise(exercise.id, {
+                              repMax: nullableNumber(event.target.value),
+                            })
+                          }
+                        />
+                      </FormField>
+                      <FormField label="Target RIR">
+                        <Input
+                          type="number"
+                          min="0"
+                          max="10"
+                          step="0.5"
+                          value={exercise.targetRir ?? ''}
+                          onChange={(event) =>
+                            changeExercise(exercise.id, {
+                              targetRir: nullableNumber(event.target.value),
+                            })
+                          }
+                        />
+                      </FormField>
+                      <FormField
+                        label={`Starting load · ${draft.unit}${exercise.loadType === 'per_hand' ? ' / hand' : ''}`}
+                        hint="Used when there is no previous logged load. Optional."
+                      >
+                        <Input
+                          type="number"
+                          min="0"
+                          max="2000"
+                          step="any"
+                          placeholder="Set once, or enter in your first workout"
+                          value={
+                            exercise.targetLoad
+                              ? convertTrainingWeight(
+                                  exercise.targetLoad.weight,
+                                  exercise.targetLoad.unit,
+                                  draft.unit,
+                                )
+                              : ''
+                          }
+                          onChange={(event) =>
+                            changeExercise(exercise.id, {
+                              targetLoad:
+                                event.target.value === ''
+                                  ? undefined
+                                  : { weight: Number(event.target.value), unit: draft.unit },
+                            })
+                          }
+                        />
+                      </FormField>
+                      <FormField label="Rest seconds">
+                        <Input
+                          required={targetsRequired}
+                          type="number"
+                          min="0"
+                          max="900"
+                          step="1"
+                          value={exercise.restSeconds ?? ''}
+                          onChange={(event) =>
+                            changeExercise(exercise.id, {
+                              restSeconds: nullableNumber(event.target.value),
+                            })
+                          }
+                        />
+                      </FormField>
+                      <FormField label="Exercise notes">
+                        <Input
+                          maxLength={1200}
+                          value={exercise.notes}
+                          placeholder="Grip, equipment, or each-side notes"
+                          onChange={(event) =>
+                            changeExercise(exercise.id, { notes: event.target.value })
+                          }
+                        />
+                      </FormField>
+                    </div>
+                    <div className="workout-catalog-actions">
                       <Button
                         type="button"
                         variant="ghost"
                         size="sm"
-                        onClick={() => {
-                          setRemaining(exercise.restSeconds!);
-                          setRestEnd(Date.now() + exercise.restSeconds! * 1000);
-                        }}
+                        disabled={exercise.sets.some(
+                          (set) =>
+                            set.completed ||
+                            set.weight !== null ||
+                            set.reps !== null ||
+                            set.rir !== null,
+                        )}
+                        onClick={() => setPickerTarget(exercise.id)}
                       >
-                        <Timer size={15} />
-                        Rest {exercise.restSeconds}s
+                        <Dumbbell size={15} />
+                        Choose from exercise library
                       </Button>
+                      {exercise.catalogId && (
+                        <span className="training-small-note">Linked to exercise database</span>
+                      )}
+                    </div>
+                  </CollapsibleContent>
+                </Collapsible>
+                {exercise.catalogId && <ExerciseReference id={exercise.catalogId} />}
+                {!templateMode && (
+                  <>
+                    {Object.keys(prefills[exercise.id] ?? {}).length > 0 && (
+                      <p className="workout-prefill-note">
+                        <Sparkles size={15} />
+                        <span>
+                          {Object.values(prefills[exercise.id])[0]?.source === 'history'
+                            ? `Suggested from ${todayLabel(Object.values(prefills[exercise.id])[0].sourceDate!, { month: 'short', day: 'numeric' })} and your targets.`
+                            : 'Prefilled from your plan targets.'}{' '}
+                          Review the numbers, then check Done after each set.
+                        </span>
+                      </p>
                     )}
-                  </div>
-                </>
-              )}
-            </section>
+                    <div className="workout-set-scroll">
+                      <Table className="workout-set-table">
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead scope="col">Set</TableHead>
+                            <TableHead scope="col">
+                              {exercise.loadType === 'per_hand'
+                                ? `${draft.unit} / hand`
+                                : exercise.loadType === 'assistance'
+                                  ? `${draft.unit} assist`
+                                  : exercise.loadType === 'bodyweight'
+                                    ? `Added ${draft.unit}`
+                                    : draft.unit}
+                            </TableHead>
+                            <TableHead scope="col">Reps</TableHead>
+                            <TableHead scope="col">RIR</TableHead>
+                            <TableHead scope="col">Done</TableHead>
+                            <TableHead scope="col">
+                              <span className="sr-only">Remove</span>
+                            </TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {exercise.sets.map((set, setIndex) => (
+                            <TableRow
+                              key={set.id}
+                              className={set.completed ? 'workout-set-done' : ''}
+                            >
+                              <TableCell className="workout-set-type-cell">
+                                <span>{setIndex + 1}</span>
+                                <NativeSelect
+                                  size="sm"
+                                  aria-label={`${exercise.name} set ${setIndex + 1} type`}
+                                  value={set.kind}
+                                  onChange={(event) =>
+                                    changeSet(exercise.id, set.id, {
+                                      kind: event.target.value as 'working' | 'warmup',
+                                    })
+                                  }
+                                >
+                                  <NativeSelectOption value="working">Work</NativeSelectOption>
+                                  <NativeSelectOption value="warmup">Warm-up</NativeSelectOption>
+                                </NativeSelect>
+                              </TableCell>
+                              <TableCell>
+                                <Input
+                                  aria-label={`${exercise.name} set ${setIndex + 1} weight ${draft.unit}${exercise.loadType === 'per_hand' ? ' per hand' : ''}`}
+                                  disabled={prefillPending}
+                                  type="number"
+                                  min="0"
+                                  max="2000"
+                                  step="any"
+                                  placeholder={exercise.loadType === 'bodyweight' ? 'BW' : '—'}
+                                  data-suggested={
+                                    set.weight === null &&
+                                    setValue(exercise, set, 'weight') !== null
+                                  }
+                                  value={setValue(exercise, set, 'weight') ?? ''}
+                                  onChange={(event) =>
+                                    editSetValue(exercise, set, 'weight', event.target.value)
+                                  }
+                                />
+                              </TableCell>
+                              <TableCell>
+                                <Input
+                                  aria-label={`${exercise.name} set ${setIndex + 1} reps`}
+                                  disabled={prefillPending}
+                                  type="number"
+                                  min="0"
+                                  max="500"
+                                  step="1"
+                                  placeholder="—"
+                                  data-suggested={
+                                    set.reps === null && setValue(exercise, set, 'reps') !== null
+                                  }
+                                  value={setValue(exercise, set, 'reps') ?? ''}
+                                  onChange={(event) =>
+                                    editSetValue(exercise, set, 'reps', event.target.value)
+                                  }
+                                />
+                              </TableCell>
+                              <TableCell>
+                                <Input
+                                  aria-label={`${exercise.name} set ${setIndex + 1} reps in reserve`}
+                                  disabled={prefillPending}
+                                  type="number"
+                                  min="0"
+                                  max="10"
+                                  step="0.5"
+                                  placeholder="—"
+                                  data-suggested={
+                                    set.rir === null && setValue(exercise, set, 'rir') !== null
+                                  }
+                                  value={setValue(exercise, set, 'rir') ?? ''}
+                                  onChange={(event) =>
+                                    editSetValue(exercise, set, 'rir', event.target.value)
+                                  }
+                                />
+                              </TableCell>
+                              <TableCell>
+                                <Checkbox
+                                  aria-label={`${exercise.name} set ${setIndex + 1} completed`}
+                                  checked={set.completed}
+                                  onCheckedChange={(checked) =>
+                                    confirmSet(exercise, set, Boolean(checked))
+                                  }
+                                  className="workout-done-checkbox"
+                                />
+                              </TableCell>
+                              <TableCell>
+                                <IconAction
+                                  label={`Remove ${exercise.name} set ${setIndex + 1}`}
+                                  onClick={() =>
+                                    void form.removeFieldValue(
+                                      `session.exercises[${index}].sets`,
+                                      setIndex,
+                                      workoutRowValueOptions,
+                                    )
+                                  }
+                                >
+                                  <X size={16} />
+                                </IconAction>
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </div>
+                    <div className="workout-set-tools">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        disabled={exercise.sets.length >= 30}
+                        onClick={() =>
+                          form.pushFieldValue(
+                            `session.exercises[${index}].sets`,
+                            blankSet(),
+                            workoutRowValueOptions,
+                          )
+                        }
+                      >
+                        <Plus size={15} />
+                        Add set
+                      </Button>
+                      {exercise.restSeconds !== null && (
+                        <span className="workout-rest-target">
+                          Rest target {exercise.restSeconds}s
+                        </span>
+                      )}
+                      {draft.status === 'completed' &&
+                        draft.timing?.rests.some((rest) => rest.exerciseId === exercise.id) && (
+                          <span className="workout-rest-target">
+                            Rest recorded:{' '}
+                            {draft.timing.rests
+                              .filter((rest) => rest.exerciseId === exercise.id)
+                              .map((rest) =>
+                                rest.endedAt
+                                  ? clock(
+                                      (Date.parse(rest.endedAt) - Date.parse(rest.startedAt)) /
+                                        1000,
+                                    )
+                                  : 'Not measured',
+                              )
+                              .join(' · ')}
+                          </span>
+                        )}
+                    </div>
+                  </>
+                )}
+              </section>
             );
           })}
         </div>
@@ -1183,12 +1226,18 @@ function SessionEditor({
             <section className="workout-session-feedback">
               <h3>How did it go?</h3>
               <div className="workout-feedback-grid">
-                <FormField label="Actual minutes">
+                <FormField
+                  label="Actual minutes"
+                  hint={
+                    active && draft.timing ? 'Recorded automatically when you finish.' : undefined
+                  }
+                >
                   <Input
+                    readOnly={Boolean(active && draft.timing)}
                     type="number"
                     min="0"
-                    max="600"
-                    step="0.5"
+                    max="525600"
+                    step={draft.timing ? 'any' : '0.5'}
                     value={draft.durationMinutes ?? ''}
                     placeholder="Not logged"
                     onChange={(event) =>
@@ -1265,7 +1314,7 @@ function SessionEditor({
           {!templateMode && <span>{doneSets(draft)} working sets checked</span>}
           <div className="button-row">
             <Button type="button" variant="ghost" onClick={onClose} disabled={busy || submitting}>
-              Cancel
+              {active ? 'Collapse' : 'Cancel'}
             </Button>
             <Button
               type="submit"
@@ -1275,32 +1324,45 @@ function SessionEditor({
               {busy ? <Loader2 className="spin" size={16} /> : <Check size={16} />}
               {templateMode ? 'Save routine' : 'Save workout'}
             </Button>
-            {!templateMode && draft.status !== 'completed' && draft.status !== 'skipped' && (
-              <Button
-                type="button"
-                variant="default"
-                disabled={busy || submitting}
-                onClick={() => void save('completed')}
-              >
-                <CheckCircle2 size={16} />
-                Complete workout
-              </Button>
-            )}
+            {!templateMode &&
+              !active &&
+              draft.status !== 'completed' &&
+              draft.status !== 'skipped' && (
+                <Button
+                  type="button"
+                  variant="default"
+                  disabled={busy || submitting}
+                  onClick={() =>
+                    void save(active || draft.status !== 'planned' ? 'completed' : 'in_progress')
+                  }
+                >
+                  <CheckCircle2 size={16} />
+                  {active
+                    ? 'Finish workout'
+                    : draft.status === 'planned'
+                      ? 'Start workout'
+                      : 'Complete workout'}
+                </Button>
+              )}
           </div>
         </div>
-        {!templateMode && restEnd !== null && (
-          <div className="workout-rest-timer" role="timer" aria-label="Rest timer">
-            <Timer size={17} />
-            <b>
-              {Math.floor(remaining / 60)}:{String(remaining % 60).padStart(2, '0')}
-            </b>
-            <span>Rest remaining</span>
-            <IconAction label="Stop rest timer" onClick={() => setRestEnd(null)}>
-              <X size={17} />
-            </IconAction>
-          </div>
-        )}
       </form>
+    </>
+  );
+  if (active) return content;
+  return (
+    <TrainingDialog
+      title={
+        templateMode
+          ? 'Edit routine'
+          : draft.status === 'completed'
+            ? 'Workout details'
+            : 'Your workout'
+      }
+      onClose={onClose}
+      wide
+    >
+      {content}
     </TrainingDialog>
   );
 }
@@ -1567,6 +1629,7 @@ export default function TrainingPanel({
   mutate,
   busy,
   notify,
+  onActivateWorkout,
 }: Props) {
   const generation = useRef(sessionLifetime()).current;
   const [tab, setTab] = useState<'week' | 'progress'>('week');
@@ -1666,8 +1729,11 @@ export default function TrainingPanel({
     : (progress.data?.weekly ?? []).map((week) => ({ start: week.week, stats: week.stats }));
   const peakSessions = Math.max(1, ...fourWeeks.map((week) => week.stats.sessions));
   const templates = state?.training.templates ?? templatePage.data?.items ?? [];
-  const openSession = (session: WorkoutSession) =>
-    setEditor({ session: structuredClone(session), expectedUpdatedAt: session.updatedAt });
+  const openSession = (session: WorkoutSession) => {
+    if (session.status === 'in_progress' && onActivateWorkout) {
+      void onActivateWorkout(session, session.updatedAt);
+    } else setEditor({ session: structuredClone(session), expectedUpdatedAt: session.updatedAt });
+  };
   const openSessionId = async (id: string) => {
     if (state) {
       const session = state.training.sessions.find((item) => item.id === id);
@@ -1755,10 +1821,12 @@ export default function TrainingPanel({
     setManageTemplates(false);
   };
   const saveSession = (session: WorkoutSession, expectedUpdatedAt: string | null) =>
-    mutate(
-      { type: 'training.session.save', data: { session, expectedUpdatedAt } },
-      session.status === 'completed' ? 'Workout logged' : 'Workout saved',
-    );
+    session.status === 'in_progress' && onActivateWorkout
+      ? onActivateWorkout(session, expectedUpdatedAt)
+      : mutate(
+          { type: 'training.session.save', data: { session, expectedUpdatedAt } },
+          session.status === 'completed' ? 'Workout logged' : 'Workout saved',
+        );
   const activeQueries =
     tab === 'week' ? [calendar] : [calendar, progress, completedPage, checkInPage];
   const activeError = activeQueries.find((query) => query.isError)?.error;
@@ -1984,9 +2052,16 @@ export default function TrainingPanel({
                           }
                           disabled={busy}
                           onClick={() => {
-                            const copy = structuredClone(session);
-                            if (copy.status === 'planned') copy.status = 'in_progress';
-                            setEditor({ session: copy, expectedUpdatedAt: session.updatedAt });
+                            if (
+                              onActivateWorkout &&
+                              ['planned', 'in_progress'].includes(session.status)
+                            ) {
+                              void onActivateWorkout(session, session.updatedAt);
+                            } else {
+                              const copy = structuredClone(session);
+                              if (copy.status === 'planned') copy.status = 'in_progress';
+                              setEditor({ session: copy, expectedUpdatedAt: session.updatedAt });
+                            }
                           }}
                         >
                           {session.status === 'planned' ? <Play size={16} /> : <Pencil size={16} />}
