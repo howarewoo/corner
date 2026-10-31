@@ -536,17 +536,23 @@ test.describe('active workout recovery', () => {
     await expect(sheet.getByRole('button', { name: 'Finish workout', exact: true })).toBeEnabled();
     await page.unroute('**/api/rpc/workspace/mutate');
     // The server commits, but its response is lost. Read back before declaring failure.
-    await page.route(
-      '**/api/rpc/workspace/mutate',
-      async (route) => {
+    let lostFinish = false;
+    await page.route('**/api/rpc/workspace/mutate', async (route) => {
+      const mutation = route.request().postDataJSON().json.mutation;
+      if (
+        !lostFinish &&
+        mutation.type === 'training.session.save' &&
+        mutation.data.session.status === 'completed'
+      ) {
         await route.fetch();
+        lostFinish = true;
         await route.abort();
-      },
-      { times: 1 },
-    );
+      } else await route.continue();
+    });
     await sheet.getByRole('button', { name: 'Finish workout', exact: true }).click();
     await expect(sheet).not.toBeVisible();
     await expect(dock).toHaveCount(0);
+    expect(lostFinish).toBe(true);
     const saved = (await account.api.workspace.details({ sessionIds: [active.id] })).sessions[0];
     expect(saved.status).toBe('completed');
     expect(saved.timing?.endedAt).toBeTruthy();

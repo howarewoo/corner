@@ -76,14 +76,12 @@ function recover(key: string, saved: WorkoutSession): Recovery | undefined {
         return;
       pendingSave = pending.data;
     }
-    const confirmed =
-      comparable(saved) === comparable(candidate) ||
-      (pendingSave && comparable(saved) === comparable(pendingSave));
+    const confirmed = comparable(saved) === comparable(pendingSave ?? candidate);
     return {
       session: candidate,
       expectedUpdatedAt: confirmed ? saved.updatedAt : raw.expectedUpdatedAt,
       prefillEdits: raw.prefillEdits,
-      pendingSave: confirmed || saved.updatedAt === raw.expectedUpdatedAt ? undefined : pendingSave,
+      pendingSave: confirmed ? undefined : pendingSave,
     };
   } catch {
     return;
@@ -209,10 +207,8 @@ export function useActiveWorkout({
     setSaving(true);
     try {
       if (pendingSave.current) {
-        const saved = await readSaved(session.id);
-        // A prior write either committed our exact snapshot, or did not advance
-        // its original version. Anything else is an unrelated edit, not a token
-        // we can safely adopt for replacing it with our newer draft.
+        let saved = await readSaved(session.id);
+        // A different version is safe only when it contains our submitted write.
         if (
           saved &&
           comparable(saved) !== comparable(pendingSave.current) &&
@@ -221,6 +217,22 @@ export function useActiveWorkout({
           throw new Error(
             'This workout changed elsewhere. Your local draft is kept; reload the saved version before replacing it.',
           );
+        if (saved && comparable(saved) !== comparable(pendingSave.current)) {
+          // Reading the old version does not prove the earlier request is over.
+          // Settle that same snapshot against its original version before any
+          // newer content. Both copies contend on the server's version check;
+          // after one commits, neither can later overwrite the newer draft.
+          await mutate({
+            type: 'training.session.save',
+            data: {
+              session: pendingSave.current,
+              expectedUpdatedAt: expected.current,
+            },
+          });
+          saved = await readSaved(session.id);
+          if (!saved || comparable(saved) !== comparable(pendingSave.current))
+            throw new Error('The earlier save is not confirmed. Your local draft is kept.');
+        }
         if (saved) expected.current = saved.updatedAt;
         pendingSave.current = undefined;
         checkpoint();
@@ -330,7 +342,7 @@ export function useActiveWorkout({
     if (!draft || busy || saving || draft.status !== 'in_progress') return;
     const serialized = comparable(draft);
     if (
-      serialized === savedContent.current ||
+      (serialized === savedContent.current && !pendingSave.current) ||
       serialized === attempted.current ||
       !WorkoutSessionSchema.safeParse(draft).success
     )

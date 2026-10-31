@@ -7,7 +7,8 @@ export default defineConfig({
   workers: 1,
   retries: 0,
   timeout: 30_000,
-  globalTimeout: 180_000,
+  // The expanded serial desktop/phone suite exceeds three minutes on CI.
+  globalTimeout: 300_000,
   forbidOnly: Boolean(process.env.CI),
   reporter: [['list'], ['html', { open: 'never' }]],
   use: {
